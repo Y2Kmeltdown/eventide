@@ -5,6 +5,8 @@
 # Raspi Config
 # Prepare /boot/firmware/config.txt
 # Prepare /boot/firmware/cmdline.txt
+# Set up SSD
+# Set up hard drive otg gadget
 
 # x11 Set up
 # Install Prerequisites

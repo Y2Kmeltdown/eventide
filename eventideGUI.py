@@ -19,6 +19,7 @@ from PyQt5.QtGui import QImage, QPixmap
 
 import numpy as np
 import neuromorphic_drivers as nd
+import event_frame_gen
 
 logging.basicConfig()
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -40,7 +41,7 @@ PREVIEW_W = W - CONTROLS_W
 PREVIEW_H = H
 
 # Poll the shared memory at 50fps
-POLL_INTERVAL_MS = 20
+POLL_INTERVAL_MS = 33
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +49,8 @@ POLL_INTERVAL_MS = 20
 # ---------------------------------------------------------------------------
 
 def eventProducer(serial, config, dims, event_shared_memory):
+    
+
     frame = np.zeros((dims[1], dims[0]), dtype=np.uint8) + 127
     oldTime = time.monotonic_ns()
     with nd.open(serial=serial, configuration=config) as device:
@@ -55,12 +58,19 @@ def eventProducer(serial, config, dims, event_shared_memory):
         for status, packet in device:
             if packet and packet.polarity_events is not None:
                 if packet.polarity_events.size != 0:
-                    frame[
-                        packet.polarity_events["y"],
-                        packet.polarity_events["x"],
-                    ] = packet.polarity_events["on"] * 255
+                    events = packet.polarity_events
+                    # frame[
+                    #     packet.polarity_events["y"],
+                    #     packet.polarity_events["x"],
+                    # ] = packet.polarity_events["on"] * 255
+                    event_frame_gen.apply_events(
+                        frame,
+                        events.view(np.uint8),  # reinterpret structured array as raw bytes
+                        len(events),
+                    )
+                
 
-                    if time.monotonic_ns() - oldTime >= (1 / 50) * 1_000_000_000:
+                    if time.monotonic_ns() - oldTime >= (1 / 30) * 1_000_000_000:
                         with data_lock:
                             event_shared_memory.buf[:] = frame.tobytes()
                         frame = np.zeros((dims[1], dims[0]), dtype=np.uint8) + 127
@@ -241,7 +251,7 @@ if __name__ == "__main__":
         ),
         rate_limiter=nd.prophesee_evk4.RateLimiter(
             reference_period_us=200,
-            maximum_events_per_period=6000,
+            maximum_events_per_period=2000,
         ),
     )
 

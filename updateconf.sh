@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "[INFO] copying supervisor config"
-sudo cp config/supervisor.conf /etc/supervisor/conf.d/supervisor.conf
+sudo cp config/supervisor.conf /etc/supervisor/conf.d/supervisord.conf
 echo "[INFO] DONE"
 
 echo "[INFO] Reloading supervisor daemon"

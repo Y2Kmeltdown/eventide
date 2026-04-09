@@ -207,7 +207,7 @@ def _list_recordings_for(cam: str):
         return jsonify({"files": []})
     files = sorted(
         [{"name": f.name, "size": f.stat().st_size}
-         for f in recordings_dir.glob("*.raw") if f.is_file()],
+         for f in recordings_dir.glob("*") if f.is_file()],
         key=lambda x: x["name"],
         reverse=True,
     )

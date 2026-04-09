@@ -201,17 +201,21 @@ def list_recordings_cam(cam):
     return _list_recordings_for(cam)
 
 
+RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264")
+
 def _list_recordings_for(cam: str):
     recordings_dir = _recordings_dir(cam)
     if not recordings_dir.exists():
         return jsonify({"files": []})
-    files = sorted(
-        [{"name": f.name, "size": f.stat().st_size}
-         for f in recordings_dir.glob("*") if f.is_file()],
-        key=lambda x: x["name"],
-        reverse=True,
-    )
-    return jsonify({"files": files})
+    seen = set()
+    entries = []
+    for pattern in RECORDING_EXTENSIONS:
+        for f in recordings_dir.glob(pattern):
+            if f.is_file() and f.name not in seen:
+                seen.add(f.name)
+                entries.append({"name": f.name, "size": f.stat().st_size, "ext": f.suffix.lstrip(".")})
+    entries.sort(key=lambda x: x["name"], reverse=True)
+    return jsonify({"files": entries})
 
 
 @app.route("/api/recordings/<cam>/<filename>/download")

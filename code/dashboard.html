@@ -45,21 +45,7 @@ body {
   grid-template-rows: 52px 40px 1fr;
 }
 
-/* ── SCANLINE OVERLAY ── */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 2px,
-    rgba(0,0,0,0.08) 2px,
-    rgba(0,0,0,0.08) 4px
-  );
-  pointer-events: none;
-  z-index: 9999;
-}
+
 
 /* ── HEADER ── */
 header {
@@ -1149,10 +1135,32 @@ function fmtSize(b) {
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
   return (b / 1048576).toFixed(1) + ' MB';
 }
+// Parse <UTC_TIMESTAMP>_<CAMERA>.<EXT>
+// Timestamp may be:  20240315T142500Z  or  2024-03-15T14:25:00Z  or similar ISO forms
 function fmtName(name) {
-  const m = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.raw$/);
-  if (!m) return name;
-  return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
+  // New format: <timestamp>_<camera>.<ext>
+  const newFmt = name.match(/^(\d{4}[-]?\d{2}[-]?\d{2})[T_](\d{2}[:]?\d{2}[:]?\d{2})Z?_([^.]+)\.[^.]+$/i);
+  if (newFmt) {
+    // Normalise date/time parts by stripping separators
+    const datePart = newFmt[1].replace(/-/g, '');
+    const timePart = newFmt[2].replace(/:/g, '');
+    const camPart  = newFmt[3].toUpperCase();
+    const y = datePart.slice(0,4), mo = datePart.slice(4,6), d = datePart.slice(6,8);
+    const h = timePart.slice(0,2), mi = timePart.slice(2,4), s = timePart.slice(4,6);
+    return `${y}-${mo}-${d} ${h}:${mi}:${s} · ${camPart}`;
+  }
+  // Legacy format: 20240315T142500Z.raw
+  const legacy = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.[^.]+$/);
+  if (legacy) return `${legacy[1]}-${legacy[2]}-${legacy[3]} ${legacy[4]}:${legacy[5]}:${legacy[6]}`;
+  return name;
+}
+
+const EXT_COLORS = { mp4: 'var(--green)', h264: 'var(--amber)', raw: 'var(--accent)' };
+
+function extBadge(ext) {
+  const color = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
+  return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;
+    border:1px solid ${color};color:${color};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;
 }
 
 async function loadRecordings(cam) {
@@ -1169,7 +1177,10 @@ async function loadRecordings(cam) {
         <span class="rec-icon">◈</span>
         <div class="rec-info">
           <div class="rec-name" title="${f.name}">${fmtName(f.name)}</div>
-          <div class="rec-meta">${fmtSize(f.size)}</div>
+          <div class="rec-meta" style="display:flex;align-items:center;gap:5px;margin-top:3px">
+            ${extBadge(f.ext)}
+            <span>${fmtSize(f.size)}</span>
+          </div>
         </div>
         <div class="rec-btns">
           <button class="icon-btn play-btn ${playingFile===f.name?'playing-btn':''}"

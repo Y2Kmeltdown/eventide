@@ -5,8 +5,6 @@
 # Raspi Config
 # Prepare /boot/firmware/config.txt
 # Prepare /boot/firmware/cmdline.txt
-# Set up SSD
-# Set up hard drive otg gadget
 
 # x11 Set up
 # Install Prerequisites
@@ -19,12 +17,17 @@
 # install python
 # install python packages
 
-# Eventide Rust Compile
-
 # Neuromorphic Drivers Set up
 
-# Picamera/libcamera Set up
+# Picamera Set up
 
 # Watchdog Set up
+
+# RTC Setup
+
+# nginx config
+
+# sudo cp config/streams /etc/nginx/sites-available/streams
+# sudo nginx -t && sudo systemctl reload nginx
 
 # Supervisor Set up

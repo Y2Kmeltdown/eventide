@@ -1073,14 +1073,78 @@ function switchInnerTab(cam) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  MJPEG SERVER API HELPERS
+//  nginx routes:
+//    GET/PUT /settings/<cam>/  →  mjpeg_server /api/settings
+//    GET/PUT /view/<cam>/      →  mjpeg_server /api/streaming
+//    GET/PUT /settings/pb/<cam>/  →  playback mjpeg_server /api/settings
+//    GET/PUT /view/pb/<cam>/      →  playback mjpeg_server /api/streaming
+// ═══════════════════════════════════════════════════════════
+
+async function mjpegGetSettings(cam, isPlayback = false) {
+  const prefix = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
+  try {
+    const r = await fetch(prefix);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function mjpegPutSettings(cam, out_width, out_height, quality, isPlayback = false) {
+  const prefix = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
+  const r = await fetch(prefix, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ out_width, out_height, quality }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error((body.errors || [r.statusText]).join('; '));
+  }
+  return await r.json();
+}
+
+async function mjpegPutStreaming(cam, streaming, isPlayback = false) {
+  const prefix = isPlayback ? `/view/pb/${cam}/` : `/view/${cam}/`;
+  const r = await fetch(prefix, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ streaming }),
+  });
+  if (!r.ok) throw new Error(r.statusText);
+  return await r.json();
+}
+
+// Populate a camera's settings inputs from its live mjpeg_server values
+async function fetchAndPopulateSettings(cam, isPlayback = false) {
+  const s = await mjpegGetSettings(cam, isPlayback);
+  if (!s) return;
+  const pfx = isPlayback ? 'pb' : cam;
+  const qEl = document.getElementById(pfx + '-quality');
+  const wEl = document.getElementById(pfx + '-width');
+  const hEl = document.getElementById(pfx + '-height');
+  const qv  = document.getElementById(pfx + '-q-val');
+  if (qEl) { qEl.value = s.quality; if (qv) qv.textContent = s.quality; }
+  if (wEl) wEl.value = s.out_width;
+  if (hEl) hEl.value = s.out_height;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  STREAM CONTROLS
 // ═══════════════════════════════════════════════════════════
-function toggleStream(cam, on) {
+async function toggleStream(cam, on) {
   const cell = document.getElementById('cell-' + cam);
   const img  = document.getElementById('img-' + cam);
+  // Gate the mjpeg_server fan-out directly
+  try {
+    await mjpegPutStreaming(cam, on);
+  } catch(e) {
+    toast(cam.toUpperCase() + ' streaming toggle failed: ' + e.message, 'err');
+  }
   if (on) {
     cell.classList.replace('off', 'on');
-    img.src = STREAM_ENDPOINTS[cam];
+    // Brief delay so the server resumes before we reload the img
+    setTimeout(() => { img.src = STREAM_ENDPOINTS[cam] + '?t=' + Date.now(); }, 150);
     toast(cam.toUpperCase() + ' stream enabled', 'ok');
   } else {
     cell.classList.replace('on', 'off');
@@ -1090,32 +1154,20 @@ function toggleStream(cam, on) {
   updateHeaderDots();
 }
 
-function applyStream(cam) {
-  const quality = document.getElementById(cam + '-quality').value;
-  const width   = document.getElementById(cam + '-width').value;
-  const height  = document.getElementById(cam + '-height').value;
-  // POST settings to backend
-  fetch('/api/stream/' + cam + '/config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quality: parseInt(quality), width: parseInt(width), height: parseInt(height) }),
-  }).then(r => {
-    if (r.ok) {
-      toast(cam.toUpperCase() + ' settings applied', 'ok');
-      // Reload stream
-      const img = document.getElementById('img-' + cam);
-      const src = img.src;
-      img.src = 'about:blank';
-      setTimeout(() => { img.src = src; }, 100);
-    } else {
-      toast('Failed to apply settings', 'err');
-    }
-  }).catch(() => {
-    // If endpoint doesn't exist yet, still reload the stream with cache-bust
-    toast(cam.toUpperCase() + ' settings applied (local)', 'ok');
+async function applyStream(cam) {
+  const quality = parseInt(document.getElementById(cam + '-quality').value);
+  const width   = parseInt(document.getElementById(cam + '-width').value);
+  const height  = parseInt(document.getElementById(cam + '-height').value);
+  try {
+    await mjpegPutSettings(cam, width, height, quality);
+    toast(cam.toUpperCase() + ' settings applied', 'ok');
+    // Reconnect the img so the browser picks up the new resolution
     const img = document.getElementById('img-' + cam);
-    img.src = STREAM_ENDPOINTS[cam] + '?q=' + quality + '&w=' + width + '&h=' + height + '&t=' + Date.now();
-  });
+    img.src = 'about:blank';
+    setTimeout(() => { img.src = STREAM_ENDPOINTS[cam] + '?t=' + Date.now(); }, 100);
+  } catch(e) {
+    toast(cam.toUpperCase() + ' apply failed: ' + e.message, 'err');
+  }
 }
 
 function updateHeaderDots() {
@@ -1259,23 +1311,30 @@ async function stopPlayback() {
   toast('Playback stopped.');
 }
 
-function selectPlaybackCam(cam) {
+async function selectPlaybackCam(cam) {
   playbackCam = cam;
   document.getElementById('pb-endpoint-label').textContent = 'ENDPOINT: ' + PLAYBACK_ENDPOINTS[cam];
+  // Populate playback settings inputs from the live playback server
+  await fetchAndPopulateSettings(cam, true);
 }
 
-function applyPlaybackSettings() {
-  const quality = document.getElementById('pb-quality').value;
-  const width   = document.getElementById('pb-width').value;
-  const height  = document.getElementById('pb-height').value;
-  fetch('/api/viewfinder/replay/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quality: parseInt(quality), width: parseInt(width), height: parseInt(height), fps: 50 }),
-  }).then(r => {
-    if (r.ok) toast('Playback settings applied', 'ok');
-    else      toast('Failed to apply settings', 'err');
-  }).catch(() => toast('Playback settings applied (local)', 'ok'));
+async function applyPlaybackSettings() {
+  const quality = parseInt(document.getElementById('pb-quality').value);
+  const width   = parseInt(document.getElementById('pb-width').value);
+  const height  = parseInt(document.getElementById('pb-height').value);
+  try {
+    await mjpegPutSettings(playbackCam, width, height, quality, true);
+    toast('Playback settings applied', 'ok');
+    // Reconnect the playback img if active
+    const img = document.getElementById('pb-img');
+    if (img.style.display !== 'none') {
+      const src = PLAYBACK_ENDPOINTS[playbackCam];
+      img.src = 'about:blank';
+      setTimeout(() => { img.src = src + '?t=' + Date.now(); }, 100);
+    }
+  } catch(e) {
+    toast('Playback apply failed: ' + e.message, 'err');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1346,6 +1405,10 @@ function toast(msg, type = '') {
 //  INIT
 // ═══════════════════════════════════════════════════════════
 updateHeaderDots();
+// Populate stream settings inputs from live mjpeg_server values
+['evk', 'picam', 'ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
+// Populate playback settings for the default selected playback cam
+fetchAndPopulateSettings(playbackCam, true);
 setInterval(loadAllRecordings, 15000);
 </script>
 </body>

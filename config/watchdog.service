@@ -1,0 +1,16 @@
+[Unit]
+Description=watchdog
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/eventide
+ExecStart=/usr/bin/python3 /usr/local/eventide/code/watchdog.py
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

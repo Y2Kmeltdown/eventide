@@ -1,0 +1,15 @@
+[Unit]
+Description=rtc_sync
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/usr/local/eventide
+ExecStart=/usr/sbin/hwclock -s -f /dev/rtc1
+StandardOutput=journal
+StandardError=journal
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

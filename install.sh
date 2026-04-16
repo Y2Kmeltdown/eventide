@@ -33,7 +33,8 @@ sudo mkdir -p /usr/local/eventide
 sudo cp -a code /usr/local/eventide/code
 sudo cp -a config /usr/local/eventide/config
 
-sudo sed -i "s@/usr/local/eventide/data@$EVENTIDE_DIR@g" /usr/local/eventide/config/supervisord.conf
+## Fix this 
+##sudo sed -i "s@/usr/local/eventide/data@$EVENTIDE_DIR@g" /usr/local/eventide/config/supervisord.conf
 
 
 ## Get Repo Updates
@@ -61,9 +62,7 @@ pip install --break-system-packages -r /usr/local/eventide/config/requirements.t
 
 ## DRIVER INSTALLATION
 sudo neuromorphic-drivers-install-udev-rules
-sudo /usr/bin/python3 /usr/local/lib/python3/dist-packages/neuromorphic_drivers/udev.py
-sudo cp /usr/local/eventide/config/65-neuromorphic-drivers.rules /etc/udev/rules.d/65-neuromorphic-drivers.rules
-sudo cp /usr/local/eventide/config/99-camera.rules /etc/udev/rules.d/99-camera.rules
+/usr/bin/python3 /usr/local/lib/python3/dist-packages/neuromorphic_drivers/udev.py
 
 ## Service Installations
 

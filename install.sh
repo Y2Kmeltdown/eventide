@@ -82,15 +82,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable rtc.service
 
 ## Dashboard
-sudo apt install python3-flask
+sudo apt install -y python3-flask
 sudo cp /usr/local/eventide/config/dashboard.service /lib/systemd/system/dashboard.service
 sudo chmod 644 /lib/systemd/system/dashboard.service
 sudo systemctl daemon-reload
 sudo systemctl enable dashboard.service
 
 ## NGINX Installation
-sudo apt install -y \
-    nginx
+sudo apt install -y nginx
 sudo cp /usr/local/eventide/config/streams /etc/nginx/sites-available/streams
 sudo ln -s /etc/nginx/sites-available/streams /etc/nginx/sites-enabled/
 sudo nginx -t

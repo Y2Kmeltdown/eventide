@@ -92,6 +92,7 @@ sudo systemctl enable dashboard.service
 sudo apt install -y nginx
 sudo cp /usr/local/eventide/config/streams /etc/nginx/sites-available/streams
 sudo ln -s /etc/nginx/sites-available/streams /etc/nginx/sites-enabled/
+sudo rm -rf /etc/nginx/sites-available/default
 sudo nginx -t
 sudo systemctl reload nginx
 

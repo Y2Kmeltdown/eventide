@@ -1,6 +1,14 @@
 # Eventide
 
-### TO-DO
+## Quick Install
+
+Run the following command to install eventide on a raspberry pi with a clean install of raspbian lite 64-bit
+
+``` bash
+sudo apt update && sudo apt install -y git && git clone https://github.com/Y2Kmeltdown/eventide.git && cd eventide && sudo chmod +x install.sh && ./install.sh
+```
+
+## TO-DO
 
 1. Set up datalogging Scripts
     1. Set up IR Camera

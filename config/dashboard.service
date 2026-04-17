@@ -1,0 +1,16 @@
+[Unit]
+Description=dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/eventide
+ExecStart=/usr/bin/python3 /usr/local/eventide/code/dashboard.py --html-file /usr/local/eventide/code/dashboard.html --recordings-dir SEDPLACEHOLDER
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -20,7 +20,7 @@ server {
     }
 
     location /stream/ircam/ {
-        proxy_pass http://127.0.0.1:8083;
+        proxy_pass http://127.0.0.1:8083/stream;
         proxy_buffering off;
         proxy_cache off;
         proxy_set_header Connection '';

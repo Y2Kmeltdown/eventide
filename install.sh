@@ -79,8 +79,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable watchdog.service
 
 ## RTC
-sudo hwclock -w -f /dev/rtc1
-sudo timedatectl set-ntp false
+#sudo hwclock -w -f /dev/rtc1
+#sudo timedatectl set-ntp false
 sudo cp /usr/local/eventide/config/rtc.service /lib/systemd/system/rtc.service
 sudo chmod 644 /lib/systemd/system/rtc.service
 sudo systemctl daemon-reload
@@ -124,6 +124,7 @@ cd aravis-ir
 sudo chmod +x install.sh 
 /usr/bin/bash install.sh
 sudo cp ircam /usr/local/eventide/code/
+sudo cp ir_mjpeg.py /usr/local/eventide/code/
 
 ## SUPERVISOR INSTALLATION
 sudo mkdir -p /etc/supervisor/conf.d

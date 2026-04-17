@@ -62,8 +62,8 @@ sudo apt install -y python3-picamera2 --no-install-recommends
 pip install --break-system-packages -r /usr/local/eventide/config/requirements.txt
 
 ## DRIVER INSTALLATION
-sudo neuromorphic-drivers-install-udev-rules
-/usr/bin/python3 /usr/local/lib/python3/dist-packages/neuromorphic_drivers/udev.py
+/home/$USER/.local/bin/neuromorphic-drivers-install-udev-rules
+sudo /usr/bin/python3.13 /home/$USER/.local/lib/python3.13/site-packages/neuromorphic_drivers/udev.p
 
 ## Service Installations
 
@@ -82,6 +82,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable rtc.service
 
 ## Dashboard
+sudo apt install python3-flask
 sudo cp /usr/local/eventide/config/dashboard.service /lib/systemd/system/dashboard.service
 sudo chmod 644 /lib/systemd/system/dashboard.service
 sudo systemctl daemon-reload

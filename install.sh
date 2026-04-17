@@ -133,7 +133,7 @@ sleep 10
 
 sudo chmod -R 777 $EVENTIDE_DIR
 
-#sudo reboot
+sudo reboot
 
 # x11 Set up
 # Install Prerequisites

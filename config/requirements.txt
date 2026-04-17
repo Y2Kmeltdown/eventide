@@ -1,0 +1,8 @@
+neuromorphic_drivers==0.17.0
+pyserial
+smbus2
+opencv-python-headless
+aiohttp
+gpiozero
+spidev
+pymavlink

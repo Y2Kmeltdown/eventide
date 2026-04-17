@@ -30,12 +30,14 @@ fi
 mkdir -p $EVENTIDE_DIR
 
 sudo mkdir -p /usr/local/eventide
+sudo mkdir -p /usr/local/eventide/packages
 sudo cp -a code /usr/local/eventide/code
 sudo cp -a config /usr/local/eventide/config
 
-## Fix this 
-##sudo sed -i "s@/usr/local/eventide/data@$EVENTIDE_DIR@g" /usr/local/eventide/config/supervisord.conf
+sudo chown -R $USER:$USER /usr/local/eventide
 
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/daedalus/config/supervisord.conf
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/daedalus/config/dashboard.service
 
 ## Get Repo Updates
 
@@ -87,10 +89,28 @@ sudo systemctl enable dashboard.service
 ## NGINX Installation
 
 ## Event Camera Data Logger
+cd /usr/local/eventide/packages
+git clone https://github.com/Y2Kmeltdown/evk_datalogger.git
+cd evk_datalogger
+cargo run --release
+sudo cp target/release/evk_datalogger /usr/local/eventide/code/
+sudo cp target/release/viewfinder /usr/local/eventide/code/
 
 ## Pi Camera Datalogger
+cd /usr/local/eventide/packages
+git clone https://github.com/Y2Kmeltdown/picam_datalogger.git
+cd picam_datalogger
+sudo cp camera_config.json /usr/local/eventide/config/
+sudo cp camera_app.py /usr/local/eventide/code/
+sudo cp mjpeg_server.py /usr/local/eventide/code/
 
 ## IR Camera Datalogger
+cd /usr/local/eventide/packages
+git clone https://github.com/ericltb15/aravis-ir.git
+cd aravis-ir
+sudo chmod +x install.sh 
+/usr/bin/bash install.sh
+sudo cp ircam /usr/local/eventide/code/
 
 ## SUPERVISOR INSTALLATION
 sudo mkdir -p /etc/supervisor/conf.d

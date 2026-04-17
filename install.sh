@@ -63,7 +63,8 @@ sudo apt install -y \
     python3-pip
 
 sudo apt install -y python3-picamera2 --no-install-recommends
-pip install --break-system-packages -r /usr/local/eventide/config/requirements.txt
+sudo apt install -y python3-aiohttp
+sudo pip install --break-system-packages -r /usr/local/eventide/config/requirements.txt
 
 ## DRIVER INSTALLATION
 /home/$USER/.local/bin/neuromorphic-drivers-install-udev-rules

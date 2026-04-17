@@ -7,7 +7,6 @@ sudo raspi-config nonint do_spi 0
 sudo raspi-config nonint do_i2c 0
 sudo raspi-config nonint do_serial_hw 0
 sudo raspi-config nonint do_serial_cons 0
-sudo raspi-config nonint do_rgpio 0
 sudo raspi-config nonint do_change_timezone Australia/Sydney
 
 sudo sed -i 's/dtparam=i2c_arm=on/dtparam=i2c_arm=on,i2c_arm_baudrate=400000/g' /boot/firmware/config.txt

@@ -87,6 +87,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable dashboard.service
 
 ## NGINX Installation
+sudo apt install -y \
+    nginx
+sudo cp /usr/local/eventide/config/streams /etc/nginx/sites-available/streams
+sudo ln -s /etc/nginx/sites-available/streams /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
 
 ## Event Camera Data Logger
 cd /usr/local/eventide/packages
@@ -133,22 +139,3 @@ sudo reboot
 # Prepare ~/.bash_profile
 # Set up non root use
 # Set up autologin
-
-# Set up applications
-# install python
-# install python packages
-
-# Neuromorphic Drivers Set up
-
-# Picamera Set up
-
-# Watchdog Set up
-
-# RTC Setup
-
-# nginx config
-
-# sudo cp config/streams /etc/nginx/sites-available/streams
-# sudo nginx -t && sudo systemctl reload nginx
-
-# Supervisor Set up

@@ -24,6 +24,7 @@
 # Watchdog Set up
 
 # RTC Setup
+# sudo timedatectl set-ntp false
 
 # nginx config
 

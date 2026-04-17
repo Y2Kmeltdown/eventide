@@ -18,7 +18,6 @@
   --border2:    #234059;
   --accent:     #00cfff;
   --accent-dim: #00cfff18;
-  --accent2:    #0088bb;
   --green:      #00e89d;
   --green-dim:  #00e89d18;
   --warn:       #ff5b6b;
@@ -32,838 +31,391 @@
   --display:    'Orbitron', sans-serif;
   --r:          3px;
 }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:11px;display:grid;grid-template-rows:52px 40px 1fr}
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
+/* HEADER */
+header{display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent,var(--accent),transparent);opacity:.6}
+.logo{font-family:var(--display);font-size:17px;letter-spacing:.2em;color:var(--accent);text-shadow:0 0 20px rgba(0,207,255,.4)}
+.logo span{color:var(--text-dim);font-size:11px;letter-spacing:.15em;margin-left:8px}
+.hdr-right{display:flex;align-items:center;gap:16px;font-size:9px;letter-spacing:.15em;color:var(--text-dim)}
+.hdr-time{color:var(--text-mid);font-size:10px}
+.status-pill{display:flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid var(--border2);border-radius:20px;font-size:9px;letter-spacing:.12em}
+.status-pill .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
+.status-pill .dot.on{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 11px;
-  display: grid;
-  grid-template-rows: 52px 40px 1fr;
-}
+/* TABS */
+.tab-bar{display:flex;align-items:stretch;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:2px}
+.tab-btn{display:flex;align-items:center;gap:7px;padding:0 18px;font-family:var(--display);font-size:9px;letter-spacing:.18em;color:var(--text-dim);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;transition:all .2s;position:relative;top:1px}
+.tab-btn:hover{color:var(--text-mid)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);text-shadow:0 0 12px rgba(0,207,255,.5)}
+.tab-btn.active.t-playback{color:var(--amber);border-bottom-color:var(--amber);text-shadow:0 0 12px rgba(255,184,48,.5)}
+.tab-btn.active.t-super{color:var(--warn);border-bottom-color:var(--warn);text-shadow:0 0 12px rgba(255,91,107,.5)}
+.tab-icon{font-size:12px}
 
+/* WORKSPACES */
+.workspace{display:none;overflow:hidden;min-height:0}
+.workspace.active{display:grid}
 
+/* ════════════════════════════════════════
+   TAB 1 — MAIN
+   [cam-ctrl 200px | streams 1fr | map 280px | nav 175px]
+════════════════════════════════════════ */
+#ws-main{grid-template-columns:200px 1fr 1000px 175px}
 
-/* ── HEADER ── */
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  position: relative;
-  overflow: hidden;
-}
-header::after {
-  content: '';
-  position: absolute;
-  bottom: 0; left: 0; right: 0;
-  height: 1px;
-  background: linear-gradient(to right, transparent, var(--accent), transparent);
-  opacity: 0.6;
-}
+/* Camera controls column */
+.cam-controls{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sidebar-header{padding:10px 12px 8px;border-bottom:1px solid var(--border);font-family:var(--display);font-size:8px;letter-spacing:.2em;color:var(--text-dim);flex-shrink:0}
+.sidebar-scroll{flex:1;overflow-y:auto;min-height:0}
+.sidebar-scroll::-webkit-scrollbar{width:3px}
+.sidebar-scroll::-webkit-scrollbar-thumb{background:var(--border2)}
+.cam-block{border-bottom:1px solid var(--border);padding:10px 12px}
+.cam-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cam-name{font-family:var(--display);font-size:9px;letter-spacing:.15em;color:var(--accent)}
+.cam-name.picam{color:var(--green)}
+.cam-name.ircam{color:var(--amber)}
+.toggle-switch{position:relative;width:32px;height:17px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-track{position:absolute;inset:0;background:var(--surface3);border:1px solid var(--border2);border-radius:17px;cursor:pointer;transition:all .2s}
+.toggle-track::after{content:'';position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--text-dim);transition:all .2s}
+.toggle-switch input:checked+.toggle-track{background:var(--accent-dim);border-color:var(--accent)}
+.toggle-switch input:checked+.toggle-track::after{left:17px;background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.form-label{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:3px;display:block}
+.form-input{width:100%;background:var(--bg);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:10px;padding:4px 6px;border-radius:var(--r);outline:none;transition:border-color .15s}
+.form-input:focus{border-color:var(--accent)}
+.form-input[type=range]{padding:0;height:16px;accent-color:var(--accent);cursor:pointer}
+.form-input option{background:var(--surface2)}
+.form-row{display:flex;gap:5px;margin-bottom:6px}
+.form-col{flex:1;min-width:0}
+.apply-btn{width:100%;margin-top:3px;padding:5px 0;font-family:var(--mono);font-size:8px;letter-spacing:.12em;border-radius:var(--r);cursor:pointer;border:1px solid var(--accent);color:var(--accent);background:var(--accent-dim);transition:all .15s}
+.apply-btn:hover{background:rgba(0,207,255,.12)}
+.apply-btn.amber{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
+.apply-btn.green{border-color:var(--green);color:var(--green);background:var(--green-dim)}
 
-.logo {
-  font-family: var(--display);
-  font-size: 17px;
-  letter-spacing: .2em;
-  color: var(--accent);
-  text-shadow: 0 0 20px rgba(0,207,255,0.4);
-}
-.logo span { color: var(--text-dim); font-size: 11px; letter-spacing: .15em; margin-left: 8px; }
+/* Streams column */
+.stream-main{display:grid;grid-template-rows:1fr 1fr 1fr;background:#020810;overflow:hidden;gap:1px}
+.stream-cell{position:relative;background:#020810;overflow:hidden;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border)}
+.stream-cell:last-child{border-bottom:none}
+.stream-cell img{width:100%;height:100%;object-fit:contain;display:block}
+.stream-label{position:absolute;top:6px;left:6px;font-family:var(--display);font-size:7px;letter-spacing:.2em;color:var(--accent);background:rgba(4,10,15,.85);padding:2px 6px;border:1px solid var(--border2);border-radius:2px}
+.stream-offline{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--text-dim);font-size:9px;letter-spacing:.1em}
+.stream-offline .icon{font-size:20px;opacity:.3}
+.stream-cell.off .stream-offline{display:flex}
+.stream-cell.on  .stream-offline{display:none}
+.stream-status-dot{position:absolute;top:8px;right:8px;width:5px;height:5px;border-radius:50%;background:var(--text-dim)}
+.stream-cell.on .stream-status-dot{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
 
-.hdr-right {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  font-size: 9px;
-  letter-spacing: .15em;
-  color: var(--text-dim);
-}
-.hdr-time { color: var(--text-mid); font-size: 10px; }
-.status-pill {
-  display: flex; align-items: center; gap: 5px;
-  padding: 3px 10px;
-  border: 1px solid var(--border2);
-  border-radius: 20px;
-  font-size: 9px; letter-spacing: .12em;
-}
-.status-pill .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-dim); }
-.status-pill .dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+/* Map column */
+.map-panel{position:relative;overflow:hidden;background:#020810;border-left:1px solid var(--border)}
+#map{width:100%;height:100%;filter:invert(1) hue-rotate(180deg) saturate(.7) brightness(.75)}
+.map-crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:1000}
+.map-crosshair::before,.map-crosshair::after{content:'';position:absolute;background:var(--green)}
+.map-crosshair::before{width:1px;height:14px;top:-7px;left:0}
+.map-crosshair::after{width:14px;height:1px;left:-7px;top:0}
 
-/* ── TAB BAR ── */
-.tab-bar {
-  display: flex;
-  align-items: stretch;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 0 16px;
-  gap: 2px;
-}
+/* Nav panel */
+.nav-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.position-section{padding:10px 12px;border-bottom:1px solid var(--border)}
+.section-title{font-family:var(--display);font-size:7px;letter-spacing:.18em;color:var(--text-dim);margin-bottom:8px}
+.placeholder-item{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:9px}
+.placeholder-item:last-child{border-bottom:none}
+.ph-icon{width:18px;height:18px;border:1px solid var(--border2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0}
+.placeholder-badge{margin-left:auto;font-size:6px;letter-spacing:.1em;color:var(--text-dim);border:1px solid var(--border);padding:1px 4px;border-radius:2px}
 
-.tab-btn {
-  display: flex; align-items: center; gap: 7px;
-  padding: 0 18px;
-  font-family: var(--display);
-  font-size: 9px;
-  letter-spacing: .18em;
-  color: var(--text-dim);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: all .2s;
-  position: relative;
-  top: 1px;
-}
-.tab-btn:hover { color: var(--text-mid); }
-.tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  text-shadow: 0 0 12px rgba(0,207,255,0.5);
-}
-.tab-btn.active.replay-tab { color: var(--amber); border-bottom-color: var(--amber); text-shadow: 0 0 12px rgba(255,184,48,0.5); }
-.tab-btn.active.position-tab { color: var(--green); border-bottom-color: var(--green); text-shadow: 0 0 12px rgba(0,232,157,0.5); }
-.tab-icon { font-size: 12px; }
+/* ════════════════════════════════════════
+   TAB 2 — PLAYBACK
+════════════════════════════════════════ */
+#ws-playback{grid-template-columns:220px 1fr 220px}
+.playback-left{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.inner-tab-bar{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.inner-tab{flex:1;padding:8px 4px;font-family:var(--display);font-size:7px;letter-spacing:.12em;text-align:center;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;transition:all .2s;position:relative;top:1px}
+.inner-tab:hover{color:var(--text-mid)}
+.inner-tab.active{color:var(--amber);border-bottom-color:var(--amber)}
+.inner-tab.active.green{color:var(--green);border-bottom-color:var(--green)}
+.inner-tab.active.cyan{color:var(--accent);border-bottom-color:var(--accent)}
+.inner-panel{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+.inner-panel.active{display:flex}
+.rec-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1}
+.rec-title{font-family:var(--display);font-size:7px;letter-spacing:.15em;color:var(--text-dim)}
+.btn-sm{background:none;border:1px solid var(--border2);color:var(--text-dim);padding:2px 7px;font-family:var(--mono);font-size:8px;letter-spacing:.1em;cursor:pointer;border-radius:var(--r);transition:all .15s}
+.btn-sm:hover{border-color:var(--accent);color:var(--accent)}
+.rec-scroll{flex:1;overflow-y:auto;min-height:0}
+.rec-scroll::-webkit-scrollbar{width:3px}
+.rec-scroll::-webkit-scrollbar-thumb{background:var(--border2)}
+.rec-list{padding:4px 0}
+.rec-item{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid #0a1520;cursor:pointer;transition:background .1s}
+.rec-item:hover{background:var(--surface2)}
+.rec-item.playing{background:#0a1a12;border-left:2px solid var(--green)}
+.rec-icon{color:var(--text-dim);font-size:12px;flex-shrink:0}
+.rec-info{flex:1;min-width:0}
+.rec-name{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec-meta{font-size:8px;color:var(--text-dim);margin-top:1px}
+.rec-btns{display:flex;gap:3px;flex-shrink:0}
+.icon-btn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:none;border:1px solid var(--border2);color:var(--text-dim);cursor:pointer;border-radius:var(--r);font-size:10px;transition:all .15s}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.icon-btn.play-btn:hover{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
+.icon-btn.playing-btn{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
+.empty{padding:20px 12px;text-align:center;color:var(--text-dim);line-height:1.8;font-size:10px}
+.playback-main{background:#020810;display:flex;flex-direction:column;overflow:hidden}
+.playback-screen{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.playback-screen img{width:100%;height:100%;object-fit:contain}
+.playback-bar{display:flex;align-items:center;gap:12px;padding:8px 14px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
+.speed-row{display:flex;align-items:center;gap:8px;flex:1}
+.speed-label{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);white-space:nowrap}
+.speed-row input{flex:1;accent-color:var(--amber)}
+.speed-val{font-size:10px;color:var(--amber);white-space:nowrap;min-width:32px;text-align:right}
+.playback-pill{font-size:8px;letter-spacing:.15em;text-transform:uppercase;padding:2px 8px;border-radius:10px;border:1px solid var(--border2);color:var(--text-dim)}
+.playback-pill.active{border-color:rgba(0,232,157,.4);color:var(--green)}
+.playback-right{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.panel{border-bottom:1px solid var(--border);padding:12px 14px}
+.label-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 
-/* ── MAIN WORKSPACE ── */
-.workspace {
-  display: none;
-  overflow: hidden;
-  min-height: 0;
-}
-.workspace.active { display: grid; }
+/* ════════════════════════════════════════
+   TAB 3 — SUPERVISORD
+════════════════════════════════════════ */
+#ws-super{grid-template-columns:1fr}
+.super-layout{display:grid;grid-template-columns:1fr 300px;overflow:hidden;min-height:0}
+.super-main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.super-toolbar{display:flex;align-items:center;gap:8px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.super-toolbar-title{font-family:var(--display);font-size:9px;letter-spacing:.2em;color:var(--text-mid)}
+.super-spacer{flex:1}
+.super-btn{display:flex;align-items:center;gap:5px;padding:4px 12px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .15s}
+.super-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.super-btn.s-warn:hover{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
+.super-btn.s-green:hover{border-color:var(--green);color:var(--green);background:var(--green-dim)}
+.super-table-wrap{flex:1;overflow-y:auto;min-height:0}
+.super-table-wrap::-webkit-scrollbar{width:3px}
+.super-table-wrap::-webkit-scrollbar-thumb{background:var(--border2)}
+table.proc-table{width:100%;border-collapse:collapse}
+table.proc-table thead tr{background:var(--surface);border-bottom:1px solid var(--border2);position:sticky;top:0;z-index:1}
+table.proc-table th{padding:7px 14px;text-align:left;font-family:var(--display);font-size:7px;letter-spacing:.2em;color:var(--text-dim);font-weight:normal}
+table.proc-table td{padding:8px 14px;border-bottom:1px solid #0a1520;font-size:10px;vertical-align:middle}
+table.proc-table tbody tr{cursor:pointer}
+table.proc-table tbody tr:hover{background:var(--surface2)}
+table.proc-table tbody tr.selected{background:var(--surface3)}
+.proc-name{font-weight:700;color:var(--text)}
+.proc-group{color:var(--text-dim);font-size:9px;margin-top:1px}
+.state-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:2px;font-size:9px;letter-spacing:.1em;border:1px solid var(--border2);color:var(--text-dim)}
+.state-badge .dot{width:4px;height:4px;border-radius:50%;background:currentColor;flex-shrink:0}
+.state-badge.running{border-color:rgba(0,232,157,.4);color:var(--green);background:var(--green-dim)}
+.state-badge.running .dot{animation:pulse 2s infinite}
+.state-badge.stopped{border-color:rgba(255,91,107,.3);color:var(--warn)}
+.state-badge.starting{border-color:rgba(255,184,48,.4);color:var(--amber)}
+.state-badge.fatal{border-color:rgba(255,91,107,.6);color:var(--warn);background:var(--warn-dim)}
+.state-badge.exited{border-color:rgba(255,91,107,.3);color:var(--warn)}
+.proc-actions{display:flex;gap:4px}
+.proc-btn{padding:2px 8px;font-family:var(--mono);font-size:8px;letter-spacing:.08em;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
+.proc-btn.start:hover{border-color:var(--green);color:var(--green);background:var(--green-dim)}
+.proc-btn.stop:hover{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
+.proc-btn.restart:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
+.super-status-bar{padding:6px 14px;border-top:1px solid var(--border);font-size:8px;color:var(--text-dim);letter-spacing:.1em;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.super-status-bar .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
+.super-status-bar .dot.on{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
 
-/* ── STREAM TAB LAYOUT ── */
-#ws-stream {
-  grid-template-columns: 1fr 240px;
-}
+/* Log panel */
+.super-log{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+.log-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.log-title{font-family:var(--display);font-size:8px;letter-spacing:.18em;color:var(--text-dim)}
+.log-scroll{flex:1;overflow-y:auto;min-height:0;padding:10px 14px}
+.log-scroll::-webkit-scrollbar{width:3px}
+.log-scroll::-webkit-scrollbar-thumb{background:var(--border2)}
+#log-output{font-family:var(--mono);font-size:9px;line-height:1.7;color:var(--text-mid);white-space:pre-wrap;word-break:break-all}
 
-.stream-main {
-  display: grid;
-  grid-template-rows: 1fr 1fr 1fr;
-  background: #020810;
-  overflow: hidden;
-  gap: 1px;
-}
+/* TOAST */
+#toast{position:fixed;bottom:16px;right:16px;background:var(--surface2);border:1px solid var(--border2);padding:8px 14px;font-size:10px;border-radius:var(--r);opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;z-index:99999;max-width:300px}
+#toast.show{opacity:1;transform:translateY(0)}
+#toast.err{border-color:var(--warn);color:var(--warn)}
+#toast.ok{border-color:var(--green);color:var(--green)}
 
-.stream-cell {
-  position: relative;
-  background: #020810;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid var(--border);
-}
-.stream-cell:last-child { border-bottom: none; }
-
-.stream-cell img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-.stream-label {
-  position: absolute;
-  top: 8px; left: 8px;
-  font-family: var(--display);
-  font-size: 8px;
-  letter-spacing: .2em;
-  color: var(--accent);
-  background: rgba(4,10,15,0.85);
-  padding: 3px 8px;
-  border: 1px solid var(--border2);
-  border-radius: 2px;
-}
-.stream-offline {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--text-dim);
-  font-size: 10px;
-  letter-spacing: .1em;
-}
-.stream-offline .icon { font-size: 24px; opacity: .3; }
-.stream-cell.off .stream-offline { display: flex; }
-.stream-cell.on .stream-offline { display: none; }
-
-.stream-status-dot {
-  position: absolute;
-  top: 10px; right: 10px;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--text-dim);
-}
-.stream-cell.on .stream-status-dot {
-  background: var(--green);
-  box-shadow: 0 0 8px var(--green);
-  animation: pulse 2s infinite;
-}
-
-/* ── STREAM SIDEBAR ── */
-.stream-sidebar {
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.sidebar-scroll {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-.sidebar-scroll::-webkit-scrollbar { width: 3px; }
-.sidebar-scroll::-webkit-scrollbar-thumb { background: var(--border2); }
-
-.sidebar-header {
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid var(--border);
-  font-family: var(--display);
-  font-size: 8px;
-  letter-spacing: .2em;
-  color: var(--text-dim);
-}
-
-.cam-block {
-  border-bottom: 1px solid var(--border);
-  padding: 12px 14px;
-}
-.cam-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.cam-name {
-  font-family: var(--display);
-  font-size: 9px;
-  letter-spacing: .15em;
-  color: var(--accent);
-}
-.cam-name.ircam { color: var(--amber); }
-.cam-name.picam { color: var(--green); }
-
-.toggle-switch {
-  position: relative;
-  width: 32px;
-  height: 17px;
-  flex-shrink: 0;
-}
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-track {
-  position: absolute;
-  inset: 0;
-  background: var(--surface3);
-  border: 1px solid var(--border2);
-  border-radius: 17px;
-  cursor: pointer;
-  transition: all .2s;
-}
-.toggle-track::after {
-  content: '';
-  position: absolute;
-  top: 2px; left: 2px;
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  transition: all .2s;
-}
-.toggle-switch input:checked + .toggle-track {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-}
-.toggle-switch input:checked + .toggle-track::after {
-  left: 17px;
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-}
-
-.form-label {
-  font-size: 8px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 4px;
-  display: block;
-}
-.form-input {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border2);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 5px 7px;
-  border-radius: var(--r);
-  outline: none;
-  transition: border-color .15s;
-}
-.form-input:focus { border-color: var(--accent); }
-.form-input[type=range] {
-  padding: 0;
-  height: 18px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.form-row { display: flex; gap: 6px; margin-bottom: 8px; }
-.form-col { flex: 1; min-width: 0; }
-
-.apply-btn {
-  width: 100%;
-  margin-top: 4px;
-  padding: 6px 0;
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: .12em;
-  border-radius: var(--r);
-  cursor: pointer;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  background: var(--accent-dim);
-  transition: all .15s;
-}
-.apply-btn:hover { background: rgba(0,207,255,0.12); }
-.apply-btn.amber { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
-.apply-btn.green { border-color: var(--green); color: var(--green); background: var(--green-dim); }
-
-/* ── PLAYBACK TAB LAYOUT ── */
-#ws-playback {
-  grid-template-columns: 220px 1fr 220px;
-}
-
-.playback-left {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* Nested tabs in playback left */
-.inner-tab-bar {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.inner-tab {
-  flex: 1;
-  padding: 8px 4px;
-  font-family: var(--display);
-  font-size: 7px;
-  letter-spacing: .12em;
-  text-align: center;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: all .2s;
-  position: relative;
-  top: 1px;
-}
-.inner-tab:hover { color: var(--text-mid); }
-.inner-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
-.inner-tab.active.green { color: var(--green); border-bottom-color: var(--green); }
-.inner-tab.active.cyan { color: var(--accent); border-bottom-color: var(--accent); }
-
-.inner-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
-.inner-panel.active { display: flex; }
-
-.rec-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: var(--surface);
-  z-index: 1;
-}
-.rec-title {
-  font-family: var(--display);
-  font-size: 7px;
-  letter-spacing: .15em;
-  color: var(--text-dim);
-}
-.btn-sm {
-  background: none;
-  border: 1px solid var(--border2);
-  color: var(--text-dim);
-  padding: 2px 7px;
-  font-family: var(--mono);
-  font-size: 8px;
-  letter-spacing: .1em;
-  cursor: pointer;
-  border-radius: var(--r);
-  transition: all .15s;
-}
-.btn-sm:hover { border-color: var(--accent); color: var(--accent); }
-
-.rec-scroll { flex: 1; overflow-y: auto; min-height: 0; }
-.rec-scroll::-webkit-scrollbar { width: 3px; }
-.rec-scroll::-webkit-scrollbar-thumb { background: var(--border2); }
-
-.rec-list { padding: 4px 0; }
-.rec-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  border-bottom: 1px solid #0a1520;
-  cursor: pointer;
-  transition: background .1s;
-}
-.rec-item:hover { background: var(--surface2); }
-.rec-item.playing { background: #0a1a12; border-left: 2px solid var(--green); }
-.rec-icon { color: var(--text-dim); font-size: 12px; flex-shrink: 0; }
-.rec-info { flex: 1; min-width: 0; }
-.rec-name { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rec-meta { font-size: 8px; color: var(--text-dim); margin-top: 1px; }
-.rec-btns { display: flex; gap: 3px; flex-shrink: 0; }
-.icon-btn {
-  width: 22px; height: 22px;
-  display: flex; align-items: center; justify-content: center;
-  background: none;
-  border: 1px solid var(--border2);
-  color: var(--text-dim);
-  cursor: pointer;
-  border-radius: var(--r);
-  font-size: 10px;
-  transition: all .15s;
-}
-.icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-.icon-btn.play-btn:hover { border-color: var(--warn); color: var(--warn); background: var(--warn-dim); }
-.icon-btn.playing-btn { border-color: var(--warn); color: var(--warn); background: var(--warn-dim); }
-.empty { padding: 20px 12px; text-align: center; color: var(--text-dim); line-height: 1.8; font-size: 10px; }
-
-/* ── PLAYBACK MAIN ── */
-.playback-main {
-  background: #020810;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-}
-
-.playback-screen {
-  flex: 1;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-.playback-screen img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-.playback-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 14px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.speed-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-.speed-label {
-  font-size: 8px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-.speed-row input { flex: 1; accent-color: var(--amber); }
-.speed-val { font-size: 10px; color: var(--amber); white-space: nowrap; min-width: 32px; text-align: right; }
-
-.playback-pill {
-  font-size: 8px;
-  letter-spacing: .15em;
-  text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 10px;
-  border: 1px solid var(--border2);
-  color: var(--text-dim);
-}
-.playback-pill.active { border-color: rgba(0,232,157,0.4); color: var(--green); }
-
-/* ── PLAYBACK SIDEBAR RIGHT ── */
-.playback-right {
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* ── POSITION TAB ── */
-#ws-position {
-  grid-template-columns: 200px 1fr;
-}
-
-.position-left {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.position-section {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
-.section-title {
-  font-family: var(--display);
-  font-size: 8px;
-  letter-spacing: .18em;
-  color: var(--text-dim);
-  margin-bottom: 10px;
-}
-.placeholder-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 9px;
-  letter-spacing: .05em;
-}
-.placeholder-item:last-child { border-bottom: none; }
-.ph-icon { width: 20px; height: 20px; border: 1px solid var(--border2); border-radius: 2px; display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
-.placeholder-badge {
-  margin-left: auto;
-  font-size: 7px;
-  letter-spacing: .1em;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  padding: 1px 5px;
-  border-radius: 2px;
-}
-
-.position-main {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-}
-#map {
-  width: 100%;
-  height: 100%;
-  background: #040a0f;
-  filter: invert(1) hue-rotate(180deg) saturate(0.7) brightness(0.75);
-}
-
-/* ── SHARED PANEL STYLING ── */
-.panel {
-  border-bottom: 1px solid var(--border);
-  padding: 12px 14px;
-}
-
-/* ── CROSSHAIR on map ── */
-.map-crosshair {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 1000;
-}
-.map-crosshair::before, .map-crosshair::after {
-  content: '';
-  position: absolute;
-  background: var(--green);
-}
-.map-crosshair::before { width: 1px; height: 14px; top: -7px; left: 0; }
-.map-crosshair::after  { width: 14px; height: 1px; left: -7px; top: 0; }
-
-/* ── TOAST ── */
-#toast {
-  position: fixed;
-  bottom: 16px; right: 16px;
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  padding: 8px 14px;
-  font-size: 10px;
-  border-radius: var(--r);
-  opacity: 0;
-  transform: translateY(6px);
-  transition: all .2s;
-  pointer-events: none;
-  z-index: 99999;
-  max-width: 280px;
-}
-#toast.show { opacity: 1; transform: translateY(0); }
-#toast.err  { border-color: var(--warn); color: var(--warn); }
-#toast.ok   { border-color: var(--green); color: var(--green); }
-
-/* ── ANIMS ── */
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-/* ── DIVIDERS ── */
-.label-row {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 8px;
-}
-.label-row .badge {
-  font-size: 7px; letter-spacing: .15em; text-transform: uppercase;
-  padding: 1px 6px; border-radius: 2px;
-  background: var(--surface3); border: 1px solid var(--border2);
-  color: var(--text-mid);
-}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 </style>
 </head>
 <body>
 
-<!-- ── HEADER ── -->
+<!-- HEADER -->
 <header>
   <div class="logo">EVENTIDE <span>/ COMMAND CENTRE</span></div>
   <div class="hdr-right">
-    <div class="status-pill">
-      <div class="dot on" id="hdr-dot-evk"></div>
-      EVK
-    </div>
-    <div class="status-pill">
-      <div class="dot" id="hdr-dot-picam"></div>
-      PICAM
-    </div>
-    <div class="status-pill">
-      <div class="dot" id="hdr-dot-ircam"></div>
-      IRCAM
-    </div>
+    <div class="status-pill"><div class="dot on" id="hdr-dot-evk"></div>EVK</div>
+    <div class="status-pill"><div class="dot" id="hdr-dot-picam"></div>PICAM</div>
+    <div class="status-pill"><div class="dot" id="hdr-dot-ircam"></div>IRCAM</div>
+    <div class="status-pill"><div class="dot" id="hdr-dot-super"></div>SUPERVISOR</div>
     <div class="hdr-time" id="hdr-clock">--:--:--</div>
   </div>
 </header>
 
-<!-- ── TAB BAR ── -->
+<!-- TAB BAR -->
 <div class="tab-bar">
-  <button class="tab-btn active" id="tab-stream" onclick="switchTab('stream')">
-    <span class="tab-icon">◉</span> STREAMS
-  </button>
-  <button class="tab-btn replay-tab" id="tab-playback" onclick="switchTab('playback')">
-    <span class="tab-icon">◈</span> PLAYBACK
-  </button>
-  <button class="tab-btn position-tab" id="tab-position" onclick="switchTab('position')">
-    <span class="tab-icon">◎</span> POSITIONING
-  </button>
+  <button class="tab-btn active"     id="tab-main"     onclick="switchTab('main')"><span class="tab-icon">◉</span> MAIN</button>
+  <button class="tab-btn t-playback" id="tab-playback" onclick="switchTab('playback')"><span class="tab-icon">◈</span> PLAYBACK</button>
+  <button class="tab-btn t-super"    id="tab-super"    onclick="switchTab('super')"><span class="tab-icon">⬡</span> SUPERVISOR</button>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════
-     TAB 1: STREAMS
+<!-- ═════════════════════════════════════════════════════════
+     TAB 1 — MAIN  [cam-ctrl | streams | map | nav]
 ════════════════════════════════════════════════════════════ -->
-<div class="workspace active" id="ws-stream">
+<div class="workspace active" id="ws-main">
 
-  <!-- Main: 3 stream cells stacked -->
-  <div class="stream-main">
-
-    <!-- EVK stream -->
-    <div class="stream-cell on" id="cell-evk">
-      <img id="img-evk" src="/stream/evk/" alt="EVK stream">
-      <div class="stream-label">EVK4</div>
-      <div class="stream-status-dot"></div>
-      <div class="stream-offline">
-        <div class="icon">⬡</div>
-        <div>STREAM OFFLINE</div>
-      </div>
-    </div>
-
-    <!-- PiCam stream -->
-    <div class="stream-cell on" id="cell-picam">
-      <img id="img-picam" src="/stream/picam/" alt="PiCam stream">
-      <div class="stream-label" style="color:var(--green)">PICAM</div>
-      <div class="stream-status-dot"></div>
-      <div class="stream-offline">
-        <div class="icon">⬡</div>
-        <div>STREAM OFFLINE</div>
-      </div>
-    </div>
-
-    <!-- IR Cam stream -->
-    <div class="stream-cell on" id="cell-ircam">
-      <img id="img-ircam" src="/stream/ircam/" alt="IR Cam stream">
-      <div class="stream-label" style="color:var(--amber)">IRCAM</div>
-      <div class="stream-status-dot"></div>
-      <div class="stream-offline">
-        <div class="icon">⬡</div>
-        <div>STREAM OFFLINE</div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- Right sidebar: stream controls -->
-  <div class="stream-sidebar">
+  <!-- Column 1: camera stream controls -->
+  <div class="cam-controls">
     <div class="sidebar-header">STREAM CONTROLS</div>
     <div class="sidebar-scroll">
 
-      <!-- EVK4 controls -->
       <div class="cam-block">
         <div class="cam-title-row">
           <div class="cam-name">EVK4</div>
           <label class="toggle-switch">
-            <input type="checkbox" id="tog-evk" checked onchange="toggleStream('evk', this.checked)">
+            <input type="checkbox" id="tog-evk" checked onchange="toggleStream('evk',this.checked)">
             <div class="toggle-track"></div>
           </label>
         </div>
+        <div class="form-row"><div class="form-col">
+          <label class="form-label">Quality — <span id="evk-q-val">80</span></label>
+          <input class="form-input" type="range" id="evk-quality" min="1" max="100" value="80"
+                 oninput="document.getElementById('evk-q-val').textContent=this.value">
+        </div></div>
         <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Quality — <span id="evk-q-val">80</span></label>
-            <input class="form-input" type="range" id="evk-quality" min="1" max="100" value="80"
-                   oninput="document.getElementById('evk-q-val').textContent=this.value">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Width</label>
-            <input class="form-input" type="number" id="evk-width" value="1280" min="1">
-          </div>
-          <div class="form-col">
-            <label class="form-label">Height</label>
-            <input class="form-input" type="number" id="evk-height" value="720" min="1">
-          </div>
+          <div class="form-col"><label class="form-label">W</label><input class="form-input" type="number" id="evk-width" value="1280" min="1"></div>
+          <div class="form-col"><label class="form-label">H</label><input class="form-input" type="number" id="evk-height" value="720" min="1"></div>
         </div>
         <button class="apply-btn" onclick="applyStream('evk')">↺ APPLY</button>
       </div>
 
-      <!-- PiCam controls -->
       <div class="cam-block">
         <div class="cam-title-row">
           <div class="cam-name picam">PICAM</div>
           <label class="toggle-switch">
-            <input type="checkbox" id="tog-picam" checked onchange="toggleStream('picam', this.checked)">
+            <input type="checkbox" id="tog-picam" checked onchange="toggleStream('picam',this.checked)">
             <div class="toggle-track"></div>
           </label>
         </div>
+        <div class="form-row"><div class="form-col">
+          <label class="form-label">Quality — <span id="picam-q-val">80</span></label>
+          <input class="form-input" type="range" id="picam-quality" min="1" max="100" value="80"
+                 oninput="document.getElementById('picam-q-val').textContent=this.value">
+        </div></div>
         <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Quality — <span id="picam-q-val">80</span></label>
-            <input class="form-input" type="range" id="picam-quality" min="1" max="100" value="80"
-                   oninput="document.getElementById('picam-q-val').textContent=this.value">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Width</label>
-            <input class="form-input" type="number" id="picam-width" value="1280" min="1">
-          </div>
-          <div class="form-col">
-            <label class="form-label">Height</label>
-            <input class="form-input" type="number" id="picam-height" value="720" min="1">
-          </div>
+          <div class="form-col"><label class="form-label">W</label><input class="form-input" type="number" id="picam-width" value="1280" min="1"></div>
+          <div class="form-col"><label class="form-label">H</label><input class="form-input" type="number" id="picam-height" value="720" min="1"></div>
         </div>
         <button class="apply-btn green" onclick="applyStream('picam')">↺ APPLY</button>
       </div>
 
-      <!-- IR Cam controls -->
       <div class="cam-block">
         <div class="cam-title-row">
           <div class="cam-name ircam">IRCAM</div>
           <label class="toggle-switch">
-            <input type="checkbox" id="tog-ircam" checked onchange="toggleStream('ircam', this.checked)">
+            <input type="checkbox" id="tog-ircam" checked onchange="toggleStream('ircam',this.checked)">
             <div class="toggle-track"></div>
           </label>
         </div>
+        <div class="form-row"><div class="form-col">
+          <label class="form-label">Quality — <span id="ircam-q-val">80</span></label>
+          <input class="form-input" type="range" id="ircam-quality" min="1" max="100" value="80"
+                 oninput="document.getElementById('ircam-q-val').textContent=this.value">
+        </div></div>
         <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Quality — <span id="ircam-q-val">80</span></label>
-            <input class="form-input" type="range" id="ircam-quality" min="1" max="100" value="80"
-                   oninput="document.getElementById('ircam-q-val').textContent=this.value">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Width</label>
-            <input class="form-input" type="number" id="ircam-width" value="1280" min="1">
-          </div>
-          <div class="form-col">
-            <label class="form-label">Height</label>
-            <input class="form-input" type="number" id="ircam-height" value="720" min="1">
-          </div>
+          <div class="form-col"><label class="form-label">W</label><input class="form-input" type="number" id="ircam-width" value="1280" min="1"></div>
+          <div class="form-col"><label class="form-label">H</label><input class="form-input" type="number" id="ircam-height" value="720" min="1"></div>
         </div>
         <button class="apply-btn amber" onclick="applyStream('ircam')">↺ APPLY</button>
       </div>
 
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════════════
-     TAB 2: PLAYBACK
-════════════════════════════════════════════════════════════ -->
-<div class="workspace" id="ws-playback">
-
-  <!-- Left: nested camera tabs + recordings -->
-  <div class="playback-left">
-    <div class="inner-tab-bar">
-      <button class="inner-tab cyan active" id="pb-tab-evk" onclick="switchInnerTab('evk')">EVK4</button>
-      <button class="inner-tab green" id="pb-tab-picam" onclick="switchInnerTab('picam')">PICAM</button>
-      <button class="inner-tab" id="pb-tab-ircam" onclick="switchInnerTab('ircam')">IRCAM</button>
+  <!-- Column 2: 3 stacked live streams -->
+  <div class="stream-main">
+    <div class="stream-cell on" id="cell-evk">
+      <img id="img-evk" src="/stream/evk/" alt="EVK4">
+      <div class="stream-label">EVK4</div>
+      <div class="stream-status-dot"></div>
+      <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
     </div>
-
-    <!-- EVK recordings -->
-    <div class="inner-panel active" id="pb-panel-evk">
-      <div class="rec-header">
-        <span class="rec-title">EVK4 RECORDINGS</span>
-        <button class="btn-sm" onclick="loadRecordings('evk')">↻</button>
-      </div>
-      <div class="rec-scroll">
-        <div id="rec-list-evk" class="rec-list">
-          <div class="empty">Loading…</div>
-        </div>
-      </div>
+    <div class="stream-cell on" id="cell-picam">
+      <img id="img-picam" src="/stream/picam/" alt="PICAM">
+      <div class="stream-label" style="color:var(--green)">PICAM</div>
+      <div class="stream-status-dot"></div>
+      <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
     </div>
-
-    <!-- PiCam recordings -->
-    <div class="inner-panel" id="pb-panel-picam">
-      <div class="rec-header">
-        <span class="rec-title">PICAM RECORDINGS</span>
-        <button class="btn-sm" onclick="loadRecordings('picam')">↻</button>
-      </div>
-      <div class="rec-scroll">
-        <div id="rec-list-picam" class="rec-list">
-          <div class="empty">Loading…</div>
-        </div>
-      </div>
+    <div class="stream-cell on" id="cell-ircam">
+      <img id="img-ircam" src="/stream/ircam/" alt="IRCAM">
+      <div class="stream-label" style="color:var(--amber)">IRCAM</div>
+      <div class="stream-status-dot"></div>
+      <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
     </div>
+  </div>
 
-    <!-- IRCAM recordings -->
-    <div class="inner-panel" id="pb-panel-ircam">
-      <div class="rec-header">
-        <span class="rec-title">IRCAM RECORDINGS</span>
-        <button class="btn-sm" onclick="loadRecordings('ircam')">↻</button>
+  <!-- Column 3: OpenStreetMap -->
+  <div class="map-panel">
+    <div id="map"></div>
+    <div class="map-crosshair"></div>
+  </div>
+
+  <!-- Column 4: Navigation / telemetry -->
+  <div class="nav-panel">
+    <div class="sidebar-scroll">
+      <div class="position-section">
+        <div class="section-title">NAVIGATION</div>
+        <div class="placeholder-item"><div class="ph-icon">⊕</div>Waypoints<span class="placeholder-badge">TBD</span></div>
+        <div class="placeholder-item"><div class="ph-icon">◎</div>Track Log<span class="placeholder-badge">TBD</span></div>
+        <div class="placeholder-item"><div class="ph-icon">→</div>Route Plan<span class="placeholder-badge">TBD</span></div>
       </div>
-      <div class="rec-scroll">
-        <div id="rec-list-ircam" class="rec-list">
-          <div class="empty">Loading…</div>
+      <div class="position-section">
+        <div class="section-title">TELEMETRY</div>
+        <div class="placeholder-item"><div class="ph-icon">↑</div>Altitude<span class="placeholder-badge">TBD</span></div>
+        <div class="placeholder-item"><div class="ph-icon">⇶</div>Heading<span class="placeholder-badge">TBD</span></div>
+        <div class="placeholder-item"><div class="ph-icon">⚡</div>Speed<span class="placeholder-badge">TBD</span></div>
+      </div>
+      <div class="position-section">
+        <div class="section-title">MAP OPTIONS</div>
+        <div class="placeholder-item"><div class="ph-icon">⬡</div>Overlay<span class="placeholder-badge">TBD</span></div>
+        <div class="placeholder-item"><div class="ph-icon">◫</div>Grid<span class="placeholder-badge">TBD</span></div>
+        <div class="placeholder-item"><div class="ph-icon">◌</div>Geofence<span class="placeholder-badge">TBD</span></div>
+      </div>
+      <div class="position-section">
+        <div style="font-size:8px;color:var(--text-dim);letter-spacing:.1em;line-height:2" id="pos-coords">
+          LAT: —<br>LON: —<br>ACC: —
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Centre: single playback viewer -->
+</div><!-- /ws-main -->
+
+
+<!-- ═════════════════════════════════════════════════════════
+     TAB 2 — PLAYBACK
+════════════════════════════════════════════════════════════ -->
+<div class="workspace" id="ws-playback">
+
+  <div class="playback-left">
+    <div class="inner-tab-bar">
+      <button class="inner-tab cyan active" id="pb-tab-evk"   onclick="switchInnerTab('evk')">EVK4</button>
+      <button class="inner-tab green"       id="pb-tab-picam" onclick="switchInnerTab('picam')">PICAM</button>
+      <button class="inner-tab"             id="pb-tab-ircam" onclick="switchInnerTab('ircam')">IRCAM</button>
+    </div>
+    <div class="inner-panel active" id="pb-panel-evk">
+      <div class="rec-header"><span class="rec-title">EVK4 RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('evk')">↻</button></div>
+      <div class="rec-scroll"><div id="rec-list-evk" class="rec-list"><div class="empty">Loading…</div></div></div>
+    </div>
+    <div class="inner-panel" id="pb-panel-picam">
+      <div class="rec-header"><span class="rec-title">PICAM RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('picam')">↻</button></div>
+      <div class="rec-scroll"><div id="rec-list-picam" class="rec-list"><div class="empty">Loading…</div></div></div>
+    </div>
+    <div class="inner-panel" id="pb-panel-ircam">
+      <div class="rec-header"><span class="rec-title">IRCAM RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('ircam')">↻</button></div>
+      <div class="rec-scroll"><div id="rec-list-ircam" class="rec-list"><div class="empty">Loading…</div></div></div>
+    </div>
+  </div>
+
   <div class="playback-main">
     <div class="playback-screen" id="pb-screen">
       <img id="pb-img" src="about:blank" alt="Playback" style="display:none">
       <div class="stream-offline" id="pb-offline" style="display:flex">
-        <div class="icon">◈</div>
-        <div>SELECT A RECORDING</div>
+        <div class="icon">◈</div><div>SELECT A RECORDING</div>
       </div>
     </div>
     <div class="playback-bar">
@@ -878,51 +430,34 @@ header::after {
     </div>
   </div>
 
-  <!-- Right: playback settings -->
   <div class="playback-right">
     <div class="sidebar-header">PLAYBACK SETTINGS</div>
     <div class="sidebar-scroll">
       <div class="panel">
-        <div class="label-row">
-          <span class="form-label" style="margin:0">JPEG COMPRESSION</span>
-        </div>
-        <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Quality — <span id="pb-q-val">80</span></label>
-            <input class="form-input" type="range" id="pb-quality" min="1" max="100" value="80"
-                   oninput="document.getElementById('pb-q-val').textContent=this.value">
-          </div>
-        </div>
+        <div class="label-row"><span class="form-label" style="margin:0">JPEG COMPRESSION</span></div>
+        <div class="form-row"><div class="form-col">
+          <label class="form-label">Quality — <span id="pb-q-val">80</span></label>
+          <input class="form-input" type="range" id="pb-quality" min="1" max="100" value="80"
+                 oninput="document.getElementById('pb-q-val').textContent=this.value">
+        </div></div>
       </div>
       <div class="panel">
-        <div class="label-row">
-          <span class="form-label" style="margin:0">RESOLUTION</span>
-        </div>
+        <div class="label-row"><span class="form-label" style="margin:0">RESOLUTION</span></div>
         <div class="form-row">
-          <div class="form-col">
-            <label class="form-label">Width</label>
-            <input class="form-input" type="number" id="pb-width" value="1280" min="1">
-          </div>
-          <div class="form-col">
-            <label class="form-label">Height</label>
-            <input class="form-input" type="number" id="pb-height" value="720" min="1">
-          </div>
+          <div class="form-col"><label class="form-label">Width</label><input class="form-input" type="number" id="pb-width" value="1280" min="1"></div>
+          <div class="form-col"><label class="form-label">Height</label><input class="form-input" type="number" id="pb-height" value="720" min="1"></div>
         </div>
         <button class="apply-btn amber" onclick="applyPlaybackSettings()">↺ APPLY</button>
       </div>
       <div class="panel">
-        <div class="label-row">
-          <span class="form-label" style="margin:0">PLAYBACK SOURCE</span>
-        </div>
-        <div style="margin-top:6px">
-          <div class="form-col" style="margin-bottom:8px">
-            <label class="form-label">Camera</label>
-            <select class="form-input" id="pb-cam-select" onchange="selectPlaybackCam(this.value)">
-              <option value="evk">EVK4  — /playback/evk/</option>
-              <option value="picam">PiCam — /playback/picam/</option>
-              <option value="ircam">IRCam — /playback/ircam/</option>
-            </select>
-          </div>
+        <div class="label-row"><span class="form-label" style="margin:0">PLAYBACK SOURCE</span></div>
+        <div class="form-col" style="margin-top:6px;margin-bottom:8px">
+          <label class="form-label">Camera</label>
+          <select class="form-input" id="pb-cam-select" onchange="selectPlaybackCam(this.value)">
+            <option value="evk">EVK4  — /playback/evk/</option>
+            <option value="picam">PiCam — /playback/picam/</option>
+            <option value="ircam">IRCam — /playback/ircam/</option>
+          </select>
         </div>
         <div style="font-size:8px;color:var(--text-dim);letter-spacing:.08em;line-height:1.8" id="pb-endpoint-label">
           ENDPOINT: /playback/evk/
@@ -930,92 +465,76 @@ header::after {
       </div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════════════
-     TAB 3: POSITIONING
+</div><!-- /ws-playback -->
+
+
+<!-- ═════════════════════════════════════════════════════════
+     TAB 3 — SUPERVISORD  (XML-RPC via nginx proxy)
+     ─────────────────────────────────────────────────────────
+     Requires supervisord.conf:
+       [inet_http_server]
+       port = 127.0.0.1:9001
+
+     Add to nginx streams config:
+       location /supervisor/ {
+           proxy_pass http://127.0.0.1:9001/RPC2;
+           proxy_set_header Content-Type text/xml;
+       }
 ════════════════════════════════════════════════════════════ -->
-<div class="workspace" id="ws-position">
+<div class="workspace" id="ws-super">
+  <div class="super-layout">
 
-  <!-- Left: placeholder options panel -->
-  <div class="position-left">
-    <div class="sidebar-scroll">
-      <div class="position-section">
-        <div class="section-title">NAVIGATION</div>
-        <div class="placeholder-item">
-          <div class="ph-icon">⊕</div>
-          Waypoints
-          <span class="placeholder-badge">TBD</span>
-        </div>
-        <div class="placeholder-item">
-          <div class="ph-icon">◎</div>
-          Track Log
-          <span class="placeholder-badge">TBD</span>
-        </div>
-        <div class="placeholder-item">
-          <div class="ph-icon">→</div>
-          Route Plan
-          <span class="placeholder-badge">TBD</span>
-        </div>
+    <div class="super-main">
+      <div class="super-toolbar">
+        <span class="super-toolbar-title">PROCESSES</span>
+        <div class="super-spacer"></div>
+        <button class="super-btn s-green" onclick="superStartAll()">▶ START ALL</button>
+        <button class="super-btn s-warn"  onclick="superStopAll()">■ STOP ALL</button>
+        <button class="super-btn"         onclick="loadSuperProcesses()">↻ REFRESH</button>
       </div>
-      <div class="position-section">
-        <div class="section-title">TELEMETRY</div>
-        <div class="placeholder-item">
-          <div class="ph-icon">↑</div>
-          Altitude
-          <span class="placeholder-badge">TBD</span>
-        </div>
-        <div class="placeholder-item">
-          <div class="ph-icon">⇶</div>
-          Heading
-          <span class="placeholder-badge">TBD</span>
-        </div>
-        <div class="placeholder-item">
-          <div class="ph-icon">⚡</div>
-          Speed
-          <span class="placeholder-badge">TBD</span>
-        </div>
+      <div class="super-table-wrap">
+        <table class="proc-table">
+          <thead><tr>
+            <th>PROCESS</th><th>STATE</th><th>PID</th><th>UPTIME</th><th>ACTIONS</th>
+          </tr></thead>
+          <tbody id="proc-tbody">
+            <tr><td colspan="5" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
       </div>
-      <div class="position-section">
-        <div class="section-title">MAP OPTIONS</div>
-        <div class="placeholder-item">
-          <div class="ph-icon">⬡</div>
-          Overlay
-          <span class="placeholder-badge">TBD</span>
-        </div>
-        <div class="placeholder-item">
-          <div class="ph-icon">◫</div>
-          Grid
-          <span class="placeholder-badge">TBD</span>
-        </div>
-        <div class="placeholder-item">
-          <div class="ph-icon">◌</div>
-          Geofence
-          <span class="placeholder-badge">TBD</span>
-        </div>
-      </div>
-      <div class="position-section">
-        <div style="font-size:8px;color:var(--text-dim);letter-spacing:.1em;line-height:1.9" id="pos-coords">
-          LAT: —<br>LON: —<br>ACC: —
-        </div>
+      <div class="super-status-bar">
+        <div class="dot" id="super-conn-dot"></div>
+        <span id="super-conn-label">Connecting to supervisord…</span>
       </div>
     </div>
-  </div>
 
-  <!-- Map -->
-  <div class="position-main">
-    <div id="map"></div>
-    <div class="map-crosshair"></div>
-  </div>
-</div>
+    <div class="super-log">
+      <div class="log-header">
+        <span class="log-title" id="log-title">STDOUT LOG</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn-sm" onclick="clearLog()">✕ CLEAR</button>
+          <button class="btn-sm" onclick="refreshLog()">↻ REFRESH</button>
+        </div>
+      </div>
+      <div class="log-scroll" id="log-scroll">
+        <pre id="log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Select a process to view its log.</pre>
+      </div>
+    </div>
 
-<!-- ── TOAST ── -->
+  </div>
+</div><!-- /ws-super -->
+
 <div id="toast"></div>
 
 <script>
 // ═══════════════════════════════════════════════════════════
-//  STATE
+//  CONFIG
 // ═══════════════════════════════════════════════════════════
+// nginx proxies /supervisor/ → http://127.0.0.1:9001/RPC2
+// See comment in the supervisor tab HTML above for setup.
+const SUPERVISOR_URL = '/supervisor/';
+
 const STREAM_ENDPOINTS = {
   evk:   '/stream/evk/',
   picam: '/stream/picam/',
@@ -1027,20 +546,21 @@ const PLAYBACK_ENDPOINTS = {
   ircam: '/playback/ircam/',
 };
 
-let activeTab     = 'stream';
+let activeTab      = 'main';
 let activeInnerTab = 'evk';
-let playbackCam   = 'evk';
-let playingFile   = null;
-let mapInstance   = null;
-let mapMarker     = null;
+let playbackCam    = 'evk';
+let playingFile    = null;
+let mapInstance    = null;
+let mapMarker      = null;
+let selectedProc   = null;
+let superPollTimer = null;
 
 // ═══════════════════════════════════════════════════════════
 //  CLOCK
 // ═══════════════════════════════════════════════════════════
 function tickClock() {
-  const now = new Date();
   document.getElementById('hdr-clock').textContent =
-    now.toUTCString().split(' ')[4] + ' UTC';
+    new Date().toUTCString().split(' ')[4] + ' UTC';
 }
 tickClock();
 setInterval(tickClock, 1000);
@@ -1055,67 +575,64 @@ function switchTab(tab) {
   document.getElementById('ws-' + tab).classList.add('active');
   document.getElementById('tab-' + tab).classList.add('active');
 
-  if (tab === 'position' && !mapInstance) initMap();
-  if (tab === 'playback') { loadAllRecordings(); }
+  if (tab === 'playback') loadAllRecordings();
+  if (tab === 'super') {
+    loadSuperProcesses();
+    if (!superPollTimer) superPollTimer = setInterval(loadSuperProcesses, 5000);
+  } else {
+    clearInterval(superPollTimer);
+    superPollTimer = null;
+  }
+  // Invalidate map size if switching back to main
+  if (tab === 'main' && mapInstance) setTimeout(() => mapInstance.invalidateSize(), 50);
 }
 
 // ═══════════════════════════════════════════════════════════
-//  INNER TAB SWITCHING (Playback)
+//  INNER TABS (Playback)
 // ═══════════════════════════════════════════════════════════
 function switchInnerTab(cam) {
   activeInnerTab = cam;
   document.querySelectorAll('.inner-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.inner-panel').forEach(p => p.classList.remove('active'));
-
-  const tabEl = document.getElementById('pb-tab-' + cam);
-  tabEl.classList.add('active');
+  document.getElementById('pb-tab-' + cam).classList.add('active');
   document.getElementById('pb-panel-' + cam).classList.add('active');
 }
 
 // ═══════════════════════════════════════════════════════════
 //  MJPEG SERVER API HELPERS
-//  nginx routes:
-//    GET/PUT /settings/<cam>/  →  mjpeg_server /api/settings
-//    GET/PUT /view/<cam>/      →  mjpeg_server /api/streaming
-//    GET/PUT /settings/pb/<cam>/  →  playback mjpeg_server /api/settings
-//    GET/PUT /view/pb/<cam>/      →  playback mjpeg_server /api/streaming
+//  GET/PUT /settings/<cam>/       → live mjpeg_server /api/settings
+//  GET/PUT /view/<cam>/           → live mjpeg_server /api/streaming
+//  GET/PUT /settings/pb/<cam>/    → playback mjpeg_server /api/settings
+//  GET/PUT /view/pb/<cam>/        → playback mjpeg_server /api/streaming
 // ═══════════════════════════════════════════════════════════
-
 async function mjpegGetSettings(cam, isPlayback = false) {
-  const prefix = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
-  try {
-    const r = await fetch(prefix);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
+  const url = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
+  try { const r = await fetch(url); return r.ok ? r.json() : null; }
+  catch { return null; }
 }
-
 async function mjpegPutSettings(cam, out_width, out_height, quality, isPlayback = false) {
-  const prefix = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
-  const r = await fetch(prefix, {
+  const url = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
+  const r = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ out_width, out_height, quality }),
   });
   if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw new Error((body.errors || [r.statusText]).join('; '));
+    const b = await r.json().catch(() => ({}));
+    throw new Error((b.errors || [r.statusText]).join('; '));
   }
-  return await r.json();
+  return r.json();
 }
-
 async function mjpegPutStreaming(cam, streaming, isPlayback = false) {
-  const prefix = isPlayback ? `/view/pb/${cam}/` : `/view/${cam}/`;
-  const r = await fetch(prefix, {
+  const url = isPlayback ? `/view/pb/${cam}/` : `/view/${cam}/`;
+  const r = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ streaming }),
   });
   if (!r.ok) throw new Error(r.statusText);
-  return await r.json();
+  return r.json();
 }
-
-// Populate a camera's settings inputs from its live mjpeg_server values
 async function fetchAndPopulateSettings(cam, isPlayback = false) {
   const s = await mjpegGetSettings(cam, isPlayback);
   if (!s) return;
@@ -1133,17 +650,12 @@ async function fetchAndPopulateSettings(cam, isPlayback = false) {
 //  STREAM CONTROLS
 // ═══════════════════════════════════════════════════════════
 async function toggleStream(cam, on) {
+  try { await mjpegPutStreaming(cam, on); }
+  catch(e) { toast(cam.toUpperCase() + ' toggle failed: ' + e.message, 'err'); }
   const cell = document.getElementById('cell-' + cam);
   const img  = document.getElementById('img-' + cam);
-  // Gate the mjpeg_server fan-out directly
-  try {
-    await mjpegPutStreaming(cam, on);
-  } catch(e) {
-    toast(cam.toUpperCase() + ' streaming toggle failed: ' + e.message, 'err');
-  }
   if (on) {
     cell.classList.replace('off', 'on');
-    // Brief delay so the server resumes before we reload the img
     setTimeout(() => { img.src = STREAM_ENDPOINTS[cam] + '?t=' + Date.now(); }, 150);
     toast(cam.toUpperCase() + ' stream enabled', 'ok');
   } else {
@@ -1153,7 +665,6 @@ async function toggleStream(cam, on) {
   }
   updateHeaderDots();
 }
-
 async function applyStream(cam) {
   const quality = parseInt(document.getElementById(cam + '-quality').value);
   const width   = parseInt(document.getElementById(cam + '-width').value);
@@ -1161,21 +672,16 @@ async function applyStream(cam) {
   try {
     await mjpegPutSettings(cam, width, height, quality);
     toast(cam.toUpperCase() + ' settings applied', 'ok');
-    // Reconnect the img so the browser picks up the new resolution
     const img = document.getElementById('img-' + cam);
     img.src = 'about:blank';
     setTimeout(() => { img.src = STREAM_ENDPOINTS[cam] + '?t=' + Date.now(); }, 100);
-  } catch(e) {
-    toast(cam.toUpperCase() + ' apply failed: ' + e.message, 'err');
-  }
+  } catch(e) { toast(cam.toUpperCase() + ' apply failed: ' + e.message, 'err'); }
 }
-
 function updateHeaderDots() {
-  const cams = ['evk', 'picam', 'ircam'];
-  cams.forEach(cam => {
+  ['evk','picam','ircam'].forEach(cam => {
     const on  = document.getElementById('tog-' + cam).checked;
     const dot = document.getElementById('hdr-dot-' + cam);
-    if (dot) { dot.className = 'dot' + (on ? ' on' : ''); }
+    if (dot) dot.className = 'dot' + (on ? ' on' : '');
   });
 }
 
@@ -1184,121 +690,81 @@ function updateHeaderDots() {
 // ═══════════════════════════════════════════════════════════
 function fmtSize(b) {
   if (b < 1024)    return b + ' B';
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
-  return (b / 1048576).toFixed(1) + ' MB';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
 }
-// Parse <UTC_TIMESTAMP>_<CAMERA>.<EXT>
-// Timestamp may be:  20240315T142500Z  or  2024-03-15T14:25:00Z  or similar ISO forms
 function fmtName(name) {
-  // New format: <timestamp>_<camera>.<ext>
-  const newFmt = name.match(/^(\d{4}[-]?\d{2}[-]?\d{2})[T_](\d{2}[:]?\d{2}[:]?\d{2})Z?_([^.]+)\.[^.]+$/i);
-  if (newFmt) {
-    // Normalise date/time parts by stripping separators
-    const datePart = newFmt[1].replace(/-/g, '');
-    const timePart = newFmt[2].replace(/:/g, '');
-    const camPart  = newFmt[3].toUpperCase();
-    const y = datePart.slice(0,4), mo = datePart.slice(4,6), d = datePart.slice(6,8);
-    const h = timePart.slice(0,2), mi = timePart.slice(2,4), s = timePart.slice(4,6);
-    return `${y}-${mo}-${d} ${h}:${mi}:${s} · ${camPart}`;
+  const nf = name.match(/^(\d{4}[-]?\d{2}[-]?\d{2})[T_](\d{2}[:]?\d{2}[:]?\d{2})Z?_([^.]+)\.[^.]+$/i);
+  if (nf) {
+    const d = nf[1].replace(/-/g,''), t = nf[2].replace(/:/g,'');
+    return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)} ${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)} · ${nf[3].toUpperCase()}`;
   }
-  // Legacy format: 20240315T142500Z.raw
-  const legacy = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.[^.]+$/);
-  if (legacy) return `${legacy[1]}-${legacy[2]}-${legacy[3]} ${legacy[4]}:${legacy[5]}:${legacy[6]}`;
+  const lg = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.[^.]+$/);
+  if (lg) return `${lg[1]}-${lg[2]}-${lg[3]} ${lg[4]}:${lg[5]}:${lg[6]}`;
   return name;
 }
-
-const EXT_COLORS = { mp4: 'var(--green)', h264: 'var(--amber)', raw: 'var(--accent)' };
-
+const EXT_COLORS = { mp4:'var(--green)', h264:'var(--amber)', raw:'var(--accent)' };
 function extBadge(ext) {
-  const color = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
-  return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;
-    border:1px solid ${color};color:${color};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;
+  const c = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
+  return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;border:1px solid ${c};color:${c};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;
 }
-
 async function loadRecordings(cam) {
-  const listEl = document.getElementById('rec-list-' + cam);
+  const el = document.getElementById('rec-list-' + cam);
   try {
     const res  = await fetch('/api/recordings/' + cam);
     const data = await res.json();
-    if (!data.files?.length) {
-      listEl.innerHTML = '<div class="empty">No recordings found.</div>';
-      return;
-    }
-    listEl.innerHTML = data.files.map(f => `
+    if (!data.files?.length) { el.innerHTML = '<div class="empty">No recordings found.</div>'; return; }
+    el.innerHTML = data.files.map(f => `
       <div class="rec-item ${playingFile===f.name?'playing':''}" id="ri-${CSS.escape(f.name)}">
         <span class="rec-icon">◈</span>
         <div class="rec-info">
           <div class="rec-name" title="${f.name}">${fmtName(f.name)}</div>
           <div class="rec-meta" style="display:flex;align-items:center;gap:5px;margin-top:3px">
-            ${extBadge(f.ext)}
-            <span>${fmtSize(f.size)}</span>
+            ${extBadge(f.ext)}<span>${fmtSize(f.size)}</span>
           </div>
         </div>
         <div class="rec-btns">
           <button class="icon-btn play-btn ${playingFile===f.name?'playing-btn':''}"
-                  title="${playingFile===f.name?'Stop':'Play'}"
-                  onclick="startReplay('${cam}','${f.name}')">
-            ${playingFile===f.name ? '■' : '▶'}
-          </button>
+                  onclick="startReplay('${cam}','${f.name}')">${playingFile===f.name?'■':'▶'}</button>
           <button class="icon-btn" title="Download"
                   onclick="window.location.href='/api/recordings/${cam}/${encodeURIComponent(f.name)}/download'">↓</button>
         </div>
-      </div>
-    `).join('');
-  } catch(e) {
-    listEl.innerHTML = `<div class="empty">Error loading recordings</div>`;
-  }
+      </div>`).join('');
+  } catch { el.innerHTML = '<div class="empty">Error loading recordings</div>'; }
 }
-
-function loadAllRecordings() {
-  ['evk','picam','ircam'].forEach(cam => loadRecordings(cam));
-}
+function loadAllRecordings() { ['evk','picam','ircam'].forEach(loadRecordings); }
 
 async function startReplay(cam, filename) {
   const speed   = parseFloat(document.getElementById('pb-speed').value);
   const quality = parseInt(document.getElementById('pb-quality').value);
   const width   = parseInt(document.getElementById('pb-width').value);
   const height  = parseInt(document.getElementById('pb-height').value);
-
   if (playingFile === filename) { stopPlayback(); return; }
-
-  // Start viewfinder for playback
-  const vfRes = await fetch('/api/viewfinder/replay/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quality, width, height, fps: 50 }),
+  await fetch('/api/viewfinder/replay/start', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ quality, width, height, fps:50 }),
   });
-
-  // Start replay file
-  const res = await fetch('/api/replay/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const res  = await fetch('/api/replay/start', {
+    method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ filename, speed, cam }),
   });
   const data = await res.json();
   if (!res.ok) { toast(data.error || 'Replay failed', 'err'); return; }
-
-  playingFile = filename;
-  playbackCam = cam;
-
-  // Show stream
-  const endpoint = PLAYBACK_ENDPOINTS[cam];
-  document.getElementById('pb-img').src = endpoint + '?t=' + Date.now();
-  document.getElementById('pb-img').style.display = 'block';
+  playingFile = filename; playbackCam = cam;
+  const img = document.getElementById('pb-img');
+  img.src = PLAYBACK_ENDPOINTS[cam] + '?t=' + Date.now();
+  img.style.display = 'block';
   document.getElementById('pb-offline').style.display = 'none';
   document.getElementById('pb-pill').textContent = cam.toUpperCase() + ' PLAYING';
   document.getElementById('pb-pill').className = 'playback-pill active';
   document.getElementById('pb-stop-btn').style.display = '';
-
   loadAllRecordings();
-  toast(`Playing: ${fmtName(filename)}`, 'ok');
+  toast('Playing: ' + fmtName(filename), 'ok');
 }
-
 async function stopPlayback() {
-  await fetch('/api/replay/stop', { method: 'POST' });
-  await fetch('/api/viewfinder/replay/stop', { method: 'POST' });
+  await fetch('/api/replay/stop', {method:'POST'});
+  await fetch('/api/viewfinder/replay/stop', {method:'POST'});
   playingFile = null;
-
   document.getElementById('pb-img').src = 'about:blank';
   document.getElementById('pb-img').style.display = 'none';
   document.getElementById('pb-offline').style.display = 'flex';
@@ -1306,18 +772,14 @@ async function stopPlayback() {
   document.getElementById('pb-pill').textContent = 'IDLE';
   document.getElementById('pb-pill').className = 'playback-pill';
   document.getElementById('pb-stop-btn').style.display = 'none';
-
   loadAllRecordings();
   toast('Playback stopped.');
 }
-
 async function selectPlaybackCam(cam) {
   playbackCam = cam;
   document.getElementById('pb-endpoint-label').textContent = 'ENDPOINT: ' + PLAYBACK_ENDPOINTS[cam];
-  // Populate playback settings inputs from the live playback server
   await fetchAndPopulateSettings(cam, true);
 }
-
 async function applyPlaybackSettings() {
   const quality = parseInt(document.getElementById('pb-quality').value);
   const width   = parseInt(document.getElementById('pb-width').value);
@@ -1325,78 +787,221 @@ async function applyPlaybackSettings() {
   try {
     await mjpegPutSettings(playbackCam, width, height, quality, true);
     toast('Playback settings applied', 'ok');
-    // Reconnect the playback img if active
     const img = document.getElementById('pb-img');
     if (img.style.display !== 'none') {
-      const src = PLAYBACK_ENDPOINTS[playbackCam];
       img.src = 'about:blank';
-      setTimeout(() => { img.src = src + '?t=' + Date.now(); }, 100);
+      setTimeout(() => { img.src = PLAYBACK_ENDPOINTS[playbackCam] + '?t=' + Date.now(); }, 100);
     }
-  } catch(e) {
-    toast('Playback apply failed: ' + e.message, 'err');
-  }
+  } catch(e) { toast('Playback apply failed: ' + e.message, 'err'); }
 }
 
 // ═══════════════════════════════════════════════════════════
 //  MAP
 // ═══════════════════════════════════════════════════════════
 function initMap() {
-  const defaultLat = -33.8688, defaultLon = 151.2093; // fallback: Sydney
-
-  mapInstance = L.map('map', {
-    center: [defaultLat, defaultLon],
-    zoom: 15,
-    zoomControl: true,
-    attributionControl: true,
-  });
-
+  const lat0 = -33.8688, lon0 = 151.2093;
+  mapInstance = L.map('map', { center:[lat0,lon0], zoom:15, zoomControl:true });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
-    maxZoom: 19,
+    attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom:19,
   }).addTo(mapInstance);
-
-  // Custom marker
-  const markerIcon = L.divIcon({
-    className: '',
-    html: `<div style="
-      width:14px;height:14px;
-      background:var(--green,#00e89d);
-      border:2px solid #040a0f;
-      border-radius:50%;
-      box-shadow:0 0 12px var(--green,#00e89d);
-    "></div>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
+  const icon = L.divIcon({
+    className:'',
+    html:`<div style="width:14px;height:14px;background:var(--green,#00e89d);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 12px var(--green,#00e89d)"></div>`,
+    iconSize:[14,14], iconAnchor:[7,7],
   });
-
-  mapMarker = L.marker([defaultLat, defaultLon], { icon: markerIcon }).addTo(mapInstance);
-
-  // Request geolocation
+  mapMarker = L.marker([lat0,lon0],{icon}).addTo(mapInstance);
   if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
-        mapInstance.setView([lat, lon], 16);
-        mapMarker.setLatLng([lat, lon]);
-        document.getElementById('pos-coords').innerHTML =
-          `LAT: ${lat.toFixed(6)}<br>LON: ${lon.toFixed(6)}<br>ACC: ±${acc.toFixed(0)}m`;
-      },
-      () => {
-        document.getElementById('pos-coords').innerHTML =
-          'LAT: —<br>LON: —<br>ACC: Location unavailable';
-      }
-    );
+    navigator.geolocation.getCurrentPosition(pos => {
+      const {latitude:lat,longitude:lon,accuracy:acc} = pos.coords;
+      mapInstance.setView([lat,lon],16);
+      mapMarker.setLatLng([lat,lon]);
+      document.getElementById('pos-coords').innerHTML =
+        `LAT: ${lat.toFixed(6)}<br>LON: ${lon.toFixed(6)}<br>ACC: ±${acc.toFixed(0)}m`;
+    }, () => {
+      document.getElementById('pos-coords').innerHTML = 'LAT: —<br>LON: —<br>ACC: Location unavailable';
+    });
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SUPERVISORD — XML-RPC
+//
+//  supervisord exposes XML-RPC at /RPC2 on its inet_http_server.
+//  We proxy it through nginx at /supervisor/ to avoid CORS.
+//
+//  Methods used:
+//    supervisor.getAllProcessInfo  → array of process info structs
+//    supervisor.startProcess(name) → bool
+//    supervisor.stopProcess(name)  → bool
+//    supervisor.startAllProcesses  → array
+//    supervisor.stopAllProcesses   → array
+//    supervisor.tailProcessStdoutLog(name, offset, length) → [data, offset, overflow]
+// ═══════════════════════════════════════════════════════════
+function xmlrpcCall(method, ...params) {
+  const paramXml = params.map(p => {
+    if (typeof p === 'string')  return `<param><value><string>${p}</string></value></param>`;
+    if (typeof p === 'boolean') return `<param><value><boolean>${p?1:0}</boolean></value></param>`;
+    return `<param><value><int>${p}</int></value></param>`;
+  }).join('');
+  const body = `<?xml version="1.0"?><methodCall><methodName>${method}</methodName><params>${paramXml}</params></methodCall>`;
+  return fetch(SUPERVISOR_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/xml' },
+    body,
+  }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(xml => parseXmlRpcResponse(xml));
+}
+
+function parseXmlRpcResponse(xmlStr) {
+  const doc = new DOMParser().parseFromString(xmlStr, 'text/xml');
+  const fault = doc.querySelector('fault');
+  if (fault) throw new Error('Fault: ' + (fault.querySelector('string')?.textContent || ''));
+  return parseXmlRpcValue(doc.querySelector('params > param > value'));
+}
+function parseXmlRpcValue(el) {
+  if (!el) return null;
+  const c = el.children[0];
+  if (!c) return el.textContent.trim();
+  switch (c.tagName) {
+    case 'string':  return c.textContent;
+    case 'int': case 'i4': return parseInt(c.textContent);
+    case 'boolean': return c.textContent.trim() === '1';
+    case 'double':  return parseFloat(c.textContent);
+    case 'array': return Array.from(c.querySelector('data').children).map(v => parseXmlRpcValue(v));
+    case 'struct': {
+      const obj = {};
+      c.querySelectorAll(':scope > member').forEach(m => {
+        obj[m.querySelector('name').textContent] = parseXmlRpcValue(m.querySelector('value'));
+      });
+      return obj;
+    }
+    default: return c.textContent;
+  }
+}
+
+function fmtUptime(secs) {
+  if (!secs || secs < 0) return '—';
+  const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+function stateBadge(state) {
+  const cls = state.toLowerCase();
+  return `<span class="state-badge ${cls}"><span class="dot"></span>${state}</span>`;
+}
+
+async function loadSuperProcesses() {
+  try {
+    const procs = await xmlrpcCall('supervisor.getAllProcessInfo');
+    renderProcTable(procs);
+    setSuperConn(true);
+    if (selectedProc) refreshLog();
+  } catch(e) { setSuperConn(false, e.message); }
+}
+
+function renderProcTable(procs) {
+  const tbody = document.getElementById('proc-tbody');
+  if (!procs?.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No processes found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = procs.map(p => {
+    const fullName = (p.group && p.group !== p.name) ? `${p.group}:${p.name}` : p.name;
+    const canStart = ['STOPPED','EXITED','FATAL','UNKNOWN'].includes(p.statename);
+    const canStop  = ['RUNNING','STARTING'].includes(p.statename);
+    const uptime   = fmtUptime(p.now - p.start);
+    return `<tr class="${selectedProc===fullName?'selected':''}" onclick="selectProcess('${fullName}')">
+      <td>
+        <div class="proc-name">${p.name}</div>
+        ${p.group&&p.group!==p.name?`<div class="proc-group">${p.group}</div>`:''}
+      </td>
+      <td>${stateBadge(p.statename)}</td>
+      <td style="color:var(--text-mid)">${p.pid||'—'}</td>
+      <td style="color:var(--text-mid)">${uptime}</td>
+      <td>
+        <div class="proc-actions">
+          ${canStart?`<button class="proc-btn start" onclick="superStart('${fullName}',event)">▶</button>`:''}
+          ${canStop ?`<button class="proc-btn stop"  onclick="superStop('${fullName}',event)">■</button>` :''}
+          <button class="proc-btn restart" onclick="superRestart('${fullName}',event)">↺</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function setSuperConn(ok, errMsg) {
+  document.getElementById('super-conn-dot').className = 'dot' + (ok?' on':'');
+  document.getElementById('super-conn-label').textContent =
+    ok ? 'Connected to supervisord' : 'supervisord unavailable' + (errMsg ? ': ' + errMsg : '');
+  const hdr = document.getElementById('hdr-dot-super');
+  if (hdr) hdr.className = 'dot' + (ok?' on':'');
+}
+
+function selectProcess(name) {
+  selectedProc = name;
+  document.getElementById('log-title').textContent = name.toUpperCase() + ' — STDOUT';
+  // Update selection highlight without full re-render
+  document.querySelectorAll('#proc-tbody tr').forEach(tr => {
+    const onclick = tr.getAttribute('onclick') || '';
+    tr.classList.toggle('selected', onclick.includes(`'${name}'`));
+  });
+  refreshLog();
+}
+
+async function refreshLog() {
+  if (!selectedProc) return;
+  try {
+    const result = await xmlrpcCall('supervisor.tailProcessStdoutLog', selectedProc, 0, 8192);
+    const text = Array.isArray(result) ? result[0] : result;
+    const el = document.getElementById('log-output');
+    el.style.color = 'var(--text-mid)'; el.style.fontStyle = 'normal';
+    el.textContent = text || '(no output)';
+    const scroll = document.getElementById('log-scroll');
+    scroll.scrollTop = scroll.scrollHeight;
+  } catch(e) {
+    document.getElementById('log-output').textContent = 'Error: ' + e.message;
+  }
+}
+function clearLog() {
+  document.getElementById('log-output').textContent = '';
+}
+
+async function superStart(name, e) {
+  e?.stopPropagation();
+  try { await xmlrpcCall('supervisor.startProcess', name); toast(name + ' started', 'ok'); loadSuperProcesses(); }
+  catch(e) { toast('Start failed: ' + e.message, 'err'); }
+}
+async function superStop(name, e) {
+  e?.stopPropagation();
+  try { await xmlrpcCall('supervisor.stopProcess', name); toast(name + ' stopped'); loadSuperProcesses(); }
+  catch(e) { toast('Stop failed: ' + e.message, 'err'); }
+}
+async function superRestart(name, e) {
+  e?.stopPropagation();
+  try {
+    await xmlrpcCall('supervisor.stopProcess', name).catch(() => {});
+    await xmlrpcCall('supervisor.startProcess', name);
+    toast(name + ' restarted', 'ok');
+    loadSuperProcesses();
+  } catch(e) { toast('Restart failed: ' + e.message, 'err'); }
+}
+async function superStartAll() {
+  try { await xmlrpcCall('supervisor.startAllProcesses'); toast('All processes started', 'ok'); loadSuperProcesses(); }
+  catch(e) { toast('Start all failed: ' + e.message, 'err'); }
+}
+async function superStopAll() {
+  try { await xmlrpcCall('supervisor.stopAllProcesses'); toast('All processes stopped'); loadSuperProcesses(); }
+  catch(e) { toast('Stop all failed: ' + e.message, 'err'); }
 }
 
 // ═══════════════════════════════════════════════════════════
 //  TOAST
 // ═══════════════════════════════════════════════════════════
 let toastTimer;
-function toast(msg, type = '') {
+function toast(msg, type='') {
   const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = 'show' + (type ? ' ' + type : '');
+  el.textContent = msg; el.className = 'show' + (type?' '+type:'');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.className = ''; }, 3000);
 }
@@ -1405,9 +1010,8 @@ function toast(msg, type = '') {
 //  INIT
 // ═══════════════════════════════════════════════════════════
 updateHeaderDots();
-// Populate stream settings inputs from live mjpeg_server values
-['evk', 'picam', 'ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
-// Populate playback settings for the default selected playback cam
+initMap();
+['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
 fetchAndPopulateSettings(playbackCam, true);
 setInterval(loadAllRecordings, 15000);
 </script>

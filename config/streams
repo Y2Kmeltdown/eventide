@@ -105,6 +105,16 @@ server {
         proxy_pass http://127.0.0.1:8086/api/streaming;
     }
 
+    # --- Supervisord XML-RPC proxy ---
+    # Requires in supervisord.conf:
+    #   [inet_http_server]
+    #   port = 127.0.0.1:8080
+    location /supervisor/ {
+        proxy_pass http://127.0.0.1:8080/RPC2;
+        proxy_set_header Content-Type text/xml;
+        proxy_set_header Host $host;
+    }
+
 
     # --- API endpoints ---
     location / {

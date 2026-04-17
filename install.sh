@@ -26,7 +26,10 @@ else
     touch /usr/local/eventide/data/where_are_my_files.txt
     echo "Data Files have been set to $1 during installation" >> /usr/local/eventide/data/where_are_my_files.txt
 fi
-mkdir -p $EVENTIDE_DIR
+sudo mkdir -p $EVENTIDE_DIR
+sudo mkdir -p $EVENTIDE_DIR/evk
+sudo mkdir -p $EVENTIDE_DIR/picam
+sudo mkdir -p $EVENTIDE_DIR/ircam
 
 sudo mkdir -p /usr/local/eventide
 sudo mkdir -p /usr/local/eventide/packages
@@ -34,6 +37,7 @@ sudo cp -a code /usr/local/eventide/code
 sudo cp -a config /usr/local/eventide/config
 
 sudo chown -R $USER:$USER /usr/local/eventide
+sudo chown -R $USER:$USER $EVENTIDE_DIR
 
 sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/supervisor.conf
 sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/dashboard.service

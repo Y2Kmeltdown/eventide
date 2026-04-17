@@ -11,12 +11,12 @@ sudo raspi-config nonint do_rgpio 0
 sudo raspi-config nonint do_change_timezone Australia/Sydney
 
 sudo sed -i 's/dtparam=i2c_arm=on/dtparam=i2c_arm=on,i2c_arm_baudrate=400000/g' /boot/firmware/config.txt
-sudo echo "usb_max_current_enable=1" >> /boot/firmware/config.txt
-sudo echo "dtoverlay=i2c-rtc,ds3231" >> /boot/firmware/config.txt
+echo "usb_max_current_enable=1" | sudo tee -a /boot/firmware/config.txt > /dev/null
+echo "dtoverlay=i2c-rtc,ds3231" | sudo tee -a /boot/firmware/config.txt > /dev/null
 
 sudo sed -i 's/#HandlePowerKey=poweroff/HandlePowerKey=ignore/g' /etc/systemd/logind.conf
 
-sudo echo "RuntimeWatchdogSec=15" >> /etc/systemd/system.conf
+echo "RuntimeWatchdogSec=15" | sudo tee -a /etc/systemd/system.conf > /dev/null
 
 ## DIRECTORY SETUP
 if [ -z "${1}" ]; then
@@ -36,8 +36,8 @@ sudo cp -a config /usr/local/eventide/config
 
 sudo chown -R $USER:$USER /usr/local/eventide
 
-sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/daedalus/config/supervisord.conf
-sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/daedalus/config/dashboard.service
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/supervisor.conf
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/dashboard.service
 
 ## Get Repo Updates
 
@@ -75,6 +75,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable watchdog.service
 
 ## RTC
+sudo hwclock -w -f /dev/rtc1
+sudo timedatectl set-ntp false
 sudo cp /usr/local/eventide/config/rtc.service /lib/systemd/system/rtc.service
 sudo chmod 644 /lib/systemd/system/rtc.service
 sudo systemctl daemon-reload
@@ -98,7 +100,7 @@ sudo systemctl reload nginx
 cd /usr/local/eventide/packages
 git clone https://github.com/Y2Kmeltdown/evk_datalogger.git
 cd evk_datalogger
-cargo run --release
+cargo build --release
 sudo cp target/release/evk_datalogger /usr/local/eventide/code/
 sudo cp target/release/viewfinder /usr/local/eventide/code/
 
@@ -120,7 +122,7 @@ sudo cp ircam /usr/local/eventide/code/
 
 ## SUPERVISOR INSTALLATION
 sudo mkdir -p /etc/supervisor/conf.d
-sudo cp /usr/local/eventide/config/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+sudo cp /usr/local/eventide/config/supervisor.conf /etc/supervisor/conf.d/supervisor.conf
 
 sudo apt install -y \
     supervisor
@@ -131,7 +133,7 @@ sleep 10
 
 sudo chmod -R 777 $EVENTIDE_DIR
 
-sudo reboot
+#sudo reboot
 
 # x11 Set up
 # Install Prerequisites

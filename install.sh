@@ -67,7 +67,7 @@ pip install --break-system-packages -r /usr/local/eventide/config/requirements.t
 
 ## DRIVER INSTALLATION
 /home/$USER/.local/bin/neuromorphic-drivers-install-udev-rules
-sudo /usr/bin/python3.13 /home/$USER/.local/lib/python3.13/site-packages/neuromorphic_drivers/udev.p
+sudo /usr/bin/python3.13 /home/$USER/.local/lib/python3.13/site-packages/neuromorphic_drivers/udev.py
 
 ## Service Installations
 

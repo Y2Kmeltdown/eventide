@@ -114,6 +114,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .map-crosshair::before,.map-crosshair::after{content:'';position:absolute;background:var(--green)}
 .map-crosshair::before{width:1px;height:14px;top:-7px;left:0}
 .map-crosshair::after{width:14px;height:1px;left:-7px;top:0}
+.dev-marker{position:relative;width:18px;height:18px}
+.dev-dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:var(--green,#00e89d);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 12px var(--green,#00e89d)}
+.dev-heading{position:absolute;left:50%;top:50%;width:0;height:0;transform-origin:50% 100%}
+.dev-heading::before{content:'';position:absolute;left:-5px;top:-14px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:12px solid rgba(0,232,157,.95);filter:drop-shadow(0 0 6px rgba(0,232,157,.55))}
+.tgt-marker{position:relative;width:14px;height:14px;background:var(--accent,#00cfff);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 10px rgba(0,207,255,.55)}
 
 /* Nav panel */
 .nav-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
@@ -600,7 +605,9 @@ let activeInnerTab = 'evk';
 let playbackCam    = 'evk';
 let playingFile    = null;
 let mapInstance    = null;
-let mapMarker      = null;
+let deviceMarker   = null;
+let targetMarker   = null;
+let hasDeviceFix   = false;
 let selectedProc   = null;
 let superPollTimer = null;
 
@@ -854,23 +861,72 @@ function initMap() {
     attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(mapInstance);
-  const icon = L.divIcon({
+  const devIcon = L.divIcon({
     className:'',
-    html:`<div style="width:14px;height:14px;background:var(--green,#00e89d);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 12px var(--green,#00e89d)"></div>`,
+    html:`<div class="dev-marker"><div class="dev-heading" data-role="dev-heading" style="transform:translate(-50%,-50%) rotate(0deg)"></div><div class="dev-dot"></div></div>`,
+    iconSize:[18,18], iconAnchor:[9,9],
+  });
+  deviceMarker = L.marker([lat0,lon0],{icon:devIcon, interactive:false}).addTo(mapInstance);
+  deviceMarker.bindTooltip('DEVICE', { direction:'top', opacity:0.9 });
+
+  const tgtIcon = L.divIcon({
+    className:'',
+    html:`<div class="tgt-marker"></div>`,
     iconSize:[14,14], iconAnchor:[7,7],
   });
-  mapMarker = L.marker([lat0,lon0],{icon}).addTo(mapInstance);
+  targetMarker = L.marker([lat0,lon0],{icon:tgtIcon, interactive:false, opacity:0}).addTo(mapInstance);
+  targetMarker.bindTooltip('TARGET', { direction:'top', opacity:0.9 });
+
+  mapInstance.on('click', e => {
+    const { lat, lng } = e.latlng;
+    setSelectedTarget(lat, lng, true);
+  });
+
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(pos => {
       const {latitude:lat,longitude:lon,accuracy:acc} = pos.coords;
       mapInstance.setView([lat,lon],16);
-      mapMarker.setLatLng([lat,lon]);
+      deviceMarker.setLatLng([lat,lon]);
       document.getElementById('pos-coords').innerHTML =
         `LAT: ${lat.toFixed(6)}<br>LON: ${lon.toFixed(6)}<br>ACC: ±${acc.toFixed(0)}m`;
     }, () => {
       document.getElementById('pos-coords').innerHTML = 'LAT: —<br>LON: —<br>ACC: Location unavailable';
     });
   }
+}
+
+function setSelectedTarget(lat, lon, updateInputs) {
+  if (!mapInstance) return;
+  if (!targetMarker) return;
+  targetMarker.setLatLng([lat, lon]);
+  targetMarker.setOpacity(1);
+  targetMarker.setTooltipContent(`TARGET\n${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`);
+  if (updateInputs) {
+    const latEl = document.getElementById('gimbal-lat');
+    const lonEl = document.getElementById('gimbal-lon');
+    if (latEl) latEl.value = Number(lat).toFixed(6);
+    if (lonEl) lonEl.value = Number(lon).toFixed(6);
+  }
+}
+
+function updateDeviceMarker(lat, lon, yawDeg) {
+  if (!mapInstance || !deviceMarker) return;
+  if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+  deviceMarker.setLatLng([lat, lon]);
+  deviceMarker.setTooltipContent(`DEVICE\n${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`);
+
+  // Only auto-center the first time we get a real telemetry fix.
+  if (!hasDeviceFix) {
+    hasDeviceFix = true;
+    mapInstance.setView([lat, lon], Math.max(mapInstance.getZoom(), 16));
+  }
+
+  const y = (typeof yawDeg === 'number' && Number.isFinite(yawDeg)) ? ((yawDeg % 360) + 360) % 360 : null;
+  if (y === null) return;
+
+  const el = deviceMarker.getElement();
+  const headingEl = el?.querySelector?.('[data-role="dev-heading"]');
+  if (headingEl) headingEl.style.transform = `translate(-50%,-50%) rotate(${y}deg)`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1139,6 +1195,12 @@ function updateTelemDisplay(d) {
   setText('tl-lon',        fmt6(d.lon));
   setText('tl-alt',        fmt1(d.alt) + ' m');
   setText('tl-hdg',        fmt1(d.heading) + '°');
+
+  // Map: device position + heading (prefer measured gimbal yaw if present).
+  const yawForMap = (typeof d.yaw_meas === 'number') ? d.yaw_meas
+                  : (typeof d.heading === 'number') ? d.heading
+                  : null;
+  updateDeviceMarker(d.lat, d.lon, yawForMap);
 
   const liveEl = document.getElementById('tl-live');
   if (liveEl) {

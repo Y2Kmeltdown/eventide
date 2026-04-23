@@ -142,7 +142,7 @@ sudo cp /usr/local/eventide/config/supervisor.conf /etc/supervisor/conf.d/superv
 sudo apt install -y \
     supervisor
 
-echo -e "Eventide Installed successfully to view running processes visit http://$HOSTNAME.local or http://192.168.20.2 or using SSH enter the command supervisorctl status\nReconfiguring eth0 to static ip 192.168.20.2\nPlease Wait."
+echo -e "Eventide Installed successfully to view running processes visit http://$HOSTNAME.local or using SSH enter the command supervisorctl status\nPlease Wait."
 sleep 10
 ## Network Set up
 #sudo nmcli connection modify "netplan-eth0" ipv4.addresses 192.168.20.2/24 ipv4.gateway 192.168.20.1 ipv4.dns 1.1.1.1 ipv4.method manual

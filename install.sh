@@ -97,6 +97,9 @@ sudo systemctl enable dashboard.service
 sudo apt install -y nginx
 sudo cp /usr/local/eventide/config/streams /etc/nginx/sites-available/streams
 sudo ln -s /etc/nginx/sites-available/streams /etc/nginx/sites-enabled/
+sudo cp /usr/local/eventide/config/nginx.conf /etc/nginx/nginx.conf
+sudo mkdir -p /var/cache/nginx/osm_tiles
+sudo chown www-data:www-data /var/cache/nginx/osm_tiles
 sudo unlink /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
@@ -142,7 +145,7 @@ sudo apt install -y \
 echo -e "Eventide Installed successfully to view running processes visit http://$HOSTNAME.local or http://192.168.20.2 or using SSH enter the command supervisorctl status\nReconfiguring eth0 to static ip 192.168.20.2\nPlease Wait."
 sleep 10
 ## Network Set up
-sudo nmcli connection modify "netplan-eth0" ipv4.addresses 192.168.20.2/24 ipv4.gateway 192.168.20.1 ipv4.dns 1.1.1.1 ipv4.method manual
+#sudo nmcli connection modify "netplan-eth0" ipv4.addresses 192.168.20.2/24 ipv4.gateway 192.168.20.1 ipv4.dns 1.1.1.1 ipv4.method manual
 
 sudo chmod -R 777 $EVENTIDE_DIR
 

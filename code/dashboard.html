@@ -229,6 +229,12 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 #toast.err{border-color:var(--warn);color:var(--warn)}
 #toast.ok{border-color:var(--green);color:var(--green)}
 
+.telem-row{display:flex;align-items:baseline;justify-content:space-between;padding:3px 0;border-bottom:1px solid #0a1520}
+.telem-row:last-child{border-bottom:none}
+.telem-key{font-size:7px;letter-spacing:.12em;color:var(--text-dim);text-transform:uppercase;white-space:nowrap;flex-shrink:0}
+.telem-val{font-size:9px;color:var(--accent);text-align:right;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.telem-val.warn{color:var(--warn)}
+.telem-val.green{color:var(--green)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 </style>
 </head>
@@ -354,32 +360,75 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
     <div class="map-crosshair"></div>
   </div>
 
-  <!-- Column 4: Navigation / telemetry -->
+  <!-- Column 4: Gimbal control + telemetry -->
   <div class="nav-panel">
+    <div class="sidebar-header">GIMBAL CONTROL</div>
     <div class="sidebar-scroll">
-      <div class="position-section">
-        <div class="section-title">NAVIGATION</div>
-        <div class="placeholder-item"><div class="ph-icon">⊕</div>Waypoints<span class="placeholder-badge">TBD</span></div>
-        <div class="placeholder-item"><div class="ph-icon">◎</div>Track Log<span class="placeholder-badge">TBD</span></div>
-        <div class="placeholder-item"><div class="ph-icon">→</div>Route Plan<span class="placeholder-badge">TBD</span></div>
-      </div>
-      <div class="position-section">
-        <div class="section-title">TELEMETRY</div>
-        <div class="placeholder-item"><div class="ph-icon">↑</div>Altitude<span class="placeholder-badge">TBD</span></div>
-        <div class="placeholder-item"><div class="ph-icon">⇶</div>Heading<span class="placeholder-badge">TBD</span></div>
-        <div class="placeholder-item"><div class="ph-icon">⚡</div>Speed<span class="placeholder-badge">TBD</span></div>
-      </div>
-      <div class="position-section">
-        <div class="section-title">MAP OPTIONS</div>
-        <div class="placeholder-item"><div class="ph-icon">⬡</div>Overlay<span class="placeholder-badge">TBD</span></div>
-        <div class="placeholder-item"><div class="ph-icon">◫</div>Grid<span class="placeholder-badge">TBD</span></div>
-        <div class="placeholder-item"><div class="ph-icon">◌</div>Geofence<span class="placeholder-badge">TBD</span></div>
-      </div>
-      <div class="position-section">
-        <div style="font-size:8px;color:var(--text-dim);letter-spacing:.1em;line-height:2" id="pos-coords">
-          LAT: —<br>LON: —<br>ACC: —
+
+      <!-- Connection status -->
+      <div class="position-section" style="padding:8px 12px">
+        <div style="display:flex;align-items:center;gap:7px">
+          <div class="dot" id="gimbal-conn-dot"></div>
+          <span style="font-size:8px;letter-spacing:.1em;color:var(--text-dim)" id="gimbal-conn-label">Connecting…</span>
         </div>
       </div>
+
+      <!-- Target input -->
+      <div class="position-section">
+        <div class="section-title">TARGET POSITION</div>
+        <div class="form-col" style="margin-bottom:6px">
+          <label class="form-label">Latitude</label>
+          <input class="form-input" type="number" id="gimbal-lat" step="0.000001" placeholder="-33.765350">
+        </div>
+        <div class="form-col" style="margin-bottom:6px">
+          <label class="form-label">Longitude</label>
+          <input class="form-input" type="number" id="gimbal-lon" step="0.000001" placeholder="150.740870">
+        </div>
+        <div class="form-col" style="margin-bottom:8px">
+          <label class="form-label">Altitude (m)</label>
+          <input class="form-input" type="number" id="gimbal-alt" step="0.1" placeholder="50.0">
+        </div>
+        <button class="apply-btn" id="gimbal-submit-btn" onclick="submitGimbalTarget()">⊕ POINT GIMBAL</button>
+      </div>
+
+      <!-- Platform telemetry -->
+      <div class="position-section">
+        <div class="section-title">PLATFORM</div>
+        <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-lat">—</span></div>
+        <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-lon">—</span></div>
+        <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-alt">—</span></div>
+        <div class="telem-row"><span class="telem-key">HDG</span><span class="telem-val" id="tl-hdg">—</span></div>
+        <div class="telem-row">
+          <span class="telem-key">GPS</span>
+          <span class="telem-val" id="tl-live">—</span>
+        </div>
+      </div>
+
+      <!-- Computed angles -->
+      <div class="position-section">
+        <div class="section-title">COMPUTED ANGLES</div>
+        <div class="telem-row"><span class="telem-key">YAW CALC</span><span class="telem-val" id="tl-yaw-calc">—</span></div>
+        <div class="telem-row"><span class="telem-key">YAW OUT</span><span class="telem-val" id="tl-yaw-out">—</span></div>
+        <div class="telem-row"><span class="telem-key">PITCH CALC</span><span class="telem-val" id="tl-pitch-calc">—</span></div>
+      </div>
+
+      <!-- Measured gimbal attitude -->
+      <div class="position-section">
+        <div class="section-title">GIMBAL MEASURED</div>
+        <div class="telem-row"><span class="telem-key">ROLL</span><span class="telem-val" id="tl-roll">—</span></div>
+        <div class="telem-row"><span class="telem-key">PITCH</span><span class="telem-val" id="tl-pitch-meas">—</span></div>
+        <div class="telem-row"><span class="telem-key">YAW</span><span class="telem-val" id="tl-yaw-meas">—</span></div>
+      </div>
+
+      <!-- Active target echo -->
+      <div class="position-section">
+        <div class="section-title">ACTIVE TARGET</div>
+        <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-tgt-lat">—</span></div>
+        <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-tgt-lon">—</span></div>
+        <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-tgt-alt">—</span></div>
+        <div style="font-size:7px;color:var(--text-dim);letter-spacing:.08em;margin-top:6px" id="tl-timestamp">LAST UPDATE: —</div>
+      </div>
+
     </div>
   </div>
 
@@ -801,7 +850,7 @@ async function applyPlaybackSettings() {
 function initMap() {
   const lat0 = -33.8688, lon0 = 151.2093;
   mapInstance = L.map('map', { center:[lat0,lon0], zoom:15, zoomControl:true });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  L.tileLayer('/tiles/{z}/{x}/{y}.png', {
     attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom:19,
   }).addTo(mapInstance);
   const icon = L.divIcon({
@@ -1013,7 +1062,124 @@ updateHeaderDots();
 initMap();
 ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
 fetchAndPopulateSettings(playbackCam, true);
+
+// ═══════════════════════════════════════════════════════════
+//  GIMBAL API
+//  nginx: /gimbal/  →  http://127.0.0.1:5001/
+//  PUT  /gimbal/target   — set target {lat, lon, alt}
+//  GET  /gimbal/target   — read current target
+//  GET  /gimbal/telemetry — live telemetry from gimbal loop
+// ═══════════════════════════════════════════════════════════
+const GIMBAL_TARGET_URL   = '/gimbal/target';
+const GIMBAL_TELEMETRY_URL = '/gimbal/telemetry';
+
+let gimbalPollTimer = null;
+
+// Submit target via PUT /gimbal/target
+async function submitGimbalTarget() {
+  const lat = parseFloat(document.getElementById('gimbal-lat').value);
+  const lon = parseFloat(document.getElementById('gimbal-lon').value);
+  const alt = parseFloat(document.getElementById('gimbal-alt').value);
+
+  if (isNaN(lat) || isNaN(lon) || isNaN(alt)) {
+    toast('Enter valid lat, lon and alt values', 'err');
+    return;
+  }
+
+  const btn = document.getElementById('gimbal-submit-btn');
+  btn.textContent = '⏳ SENDING…';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch(GIMBAL_TARGET_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lon, alt }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      toast('Gimbal error: ' + (data.error || r.statusText), 'err');
+    } else {
+      toast(`Target set — ${lat.toFixed(6)}, ${lon.toFixed(6)}, ${alt.toFixed(1)}m`, 'ok');
+    }
+  } catch(e) {
+    toast('Gimbal unreachable: ' + e.message, 'err');
+    setGimbalConn(false);
+  } finally {
+    btn.textContent = '⊕ POINT GIMBAL';
+    btn.disabled = false;
+  }
+}
+
+// Poll GET /gimbal/telemetry and update the readout fields
+async function pollGimbalTelemetry() {
+  try {
+    const r = await fetch(GIMBAL_TELEMETRY_URL);
+    if (r.status === 503) {
+      // Server up but no telemetry yet
+      setGimbalConn(true, 'Waiting for telemetry…');
+      return;
+    }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    setGimbalConn(true);
+    updateTelemDisplay(d);
+  } catch(e) {
+    setGimbalConn(false);
+  }
+}
+
+function updateTelemDisplay(d) {
+  const fmt6 = v => (typeof v === 'number') ? v.toFixed(6) : '—';
+  const fmt2 = v => (typeof v === 'number') ? v.toFixed(2) : '—';
+  const fmt1 = v => (typeof v === 'number') ? v.toFixed(1) : '—';
+
+  setText('tl-lat',        fmt6(d.lat));
+  setText('tl-lon',        fmt6(d.lon));
+  setText('tl-alt',        fmt1(d.alt) + ' m');
+  setText('tl-hdg',        fmt1(d.heading) + '°');
+
+  const liveEl = document.getElementById('tl-live');
+  if (liveEl) {
+    liveEl.textContent  = d.live ? 'LIVE' : 'FALLBACK';
+    liveEl.className    = 'telem-val ' + (d.live ? 'green' : 'warn');
+  }
+
+  setText('tl-yaw-calc',   fmt2(d.yaw_calc)   + '°');
+  setText('tl-yaw-out',    fmt2(d.yaw_out)    + '°');
+  setText('tl-pitch-calc', fmt2(d.pitch_calc) + '°');
+
+  setText('tl-roll',       fmt2(d.roll_meas)  + '°');
+  setText('tl-pitch-meas', fmt2(d.pitch_meas) + '°');
+  setText('tl-yaw-meas',   fmt2(d.yaw_meas)   + '°');
+
+  setText('tl-tgt-lat',    fmt6(d.tgt_lat));
+  setText('tl-tgt-lon',    fmt6(d.tgt_lon));
+  setText('tl-tgt-alt',    fmt1(d.tgt_alt) + ' m');
+
+  const ts = d.t ? new Date(d.t * 1000).toUTCString().split(' ')[4] + ' UTC' : '—';
+  setText('tl-timestamp', 'LAST UPDATE: ' + ts);
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function setGimbalConn(ok, msg) {
+  const dot   = document.getElementById('gimbal-conn-dot');
+  const label = document.getElementById('gimbal-conn-label');
+  if (dot)   dot.className   = 'dot' + (ok ? ' on' : '');
+  if (label) label.textContent = msg || (ok ? 'Connected' : 'Gimbal API unreachable');
+}
+
+function startGimbalPolling() {
+  pollGimbalTelemetry();
+  if (!gimbalPollTimer) gimbalPollTimer = setInterval(pollGimbalTelemetry, 500);
+}
+
 setInterval(loadAllRecordings, 15000);
+startGimbalPolling();
 </script>
 </body>
 </html>

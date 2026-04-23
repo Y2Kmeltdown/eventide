@@ -126,6 +126,12 @@ sudo chmod +x install.sh
 sudo cp ircam /usr/local/eventide/code/
 sudo cp ir_mjpeg.py /usr/local/eventide/code/
 
+## Gimbal Controller
+cd /usr/local/eventide/packages
+git clone https://github.com/j-vanarsdale/tripwire-gimbal-point.git
+cd tripwire-gimbal-point
+sudo cp GIMBAL_POINT_API.py /usr/local/eventide/code/
+
 ## SUPERVISOR INSTALLATION
 sudo mkdir -p /etc/supervisor/conf.d
 sudo cp /usr/local/eventide/config/supervisor.conf /etc/supervisor/conf.d/supervisor.conf

@@ -103,7 +103,7 @@ sudo systemctl reload nginx
 
 ## Event Camera Data Logger
 cd /usr/local/eventide/packages
-git clone https://github.com/Y2Kmeltdown/evk_datalogger.git
+git clone git@github.com:Y2Kmeltdown/evk_datalogger.git
 cd evk_datalogger
 cargo build --release
 sudo cp target/release/evk_datalogger /usr/local/eventide/code/
@@ -119,7 +119,7 @@ sudo cp mjpeg_server.py /usr/local/eventide/code/
 
 ## IR Camera Datalogger
 cd /usr/local/eventide/packages
-git clone https://github.com/ericltb15/aravis-ir.git
+git clone git@github.com:ericltb15/aravis-ir.git
 cd aravis-ir
 sudo chmod +x install.sh 
 /usr/bin/bash install.sh
@@ -128,7 +128,7 @@ sudo cp ir_mjpeg.py /usr/local/eventide/code/
 
 ## Gimbal Controller
 cd /usr/local/eventide/packages
-git clone https://github.com/j-vanarsdale/tripwire-gimbal-point.git
+git clone git@github.com:j-vanarsdale/tripwire-gimbal-point.git
 cd tripwire-gimbal-point
 sudo cp GIMBAL_POINT_API.py /usr/local/eventide/code/
 

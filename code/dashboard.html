@@ -124,6 +124,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .dev-gimbal{position:absolute;left:50%;top:50%;width:3px;height:26px;margin-left:-1.5px;margin-top:-23px;transform-origin:50% 100%;background:linear-gradient(to top,transparent 0%,rgba(0,207,255,.85) 35%,#00cfff 100%);border-radius:2px 2px 0 0;filter:drop-shadow(0 0 5px rgba(0,207,255,.8));z-index:2}
 .tgt-marker{position:relative;width:14px;height:14px;background:var(--accent,#00cfff);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 10px rgba(0,207,255,.55)}
 
+.nudge-row{display:flex;gap:4px;margin-top:4px}
+.nudge-btn{flex:1;padding:3px 0;font-family:var(--mono);font-size:9px;letter-spacing:.06em;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
+.nudge-btn:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
+.nudge-btn:active{background:var(--amber);color:var(--bg)}
+
 /* Nav panel */
 .nav-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
 .position-section{padding:10px 12px;border-bottom:1px solid var(--border)}
@@ -404,14 +409,22 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
       <!-- RC pan/tilt direct control -->
       <div class="position-section">
         <div class="section-title">RC CONTROL</div>
-        <div class="form-row" style="margin-bottom:6px">
+        <div class="form-row" style="margin-bottom:2px">
           <div class="form-col">
             <label class="form-label">Pan (°)</label>
             <input class="form-input" type="number" id="rc-pan" step="0.1" placeholder="0.0">
+            <div class="nudge-row">
+              <button class="nudge-btn" onclick="nudgeRc('pan', -10)">−10</button>
+              <button class="nudge-btn" onclick="nudgeRc('pan', +10)">+10</button>
+            </div>
           </div>
           <div class="form-col">
             <label class="form-label">Tilt (°)</label>
             <input class="form-input" type="number" id="rc-tilt" step="0.1" placeholder="0.0">
+            <div class="nudge-row">
+              <button class="nudge-btn" onclick="nudgeRc('tilt', -10)">−10</button>
+              <button class="nudge-btn" onclick="nudgeRc('tilt', +10)">+10</button>
+            </div>
           </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -1248,6 +1261,41 @@ async function submitRcControl() {
   }
 }
 
+// Nudge pan or tilt by a delta from the current pan_out/tilt_out and send immediately
+let _lastPanOut  = 0;
+let _lastTiltOut = 0;
+
+async function nudgeRc(axis, delta) {
+  const frame = document.getElementById('rc-frame-toggle').checked;
+  const basePan  = _lastPanOut;
+  const baseTilt = _lastTiltOut;
+
+  const newPan  = axis === 'pan'  ? basePan  + delta : basePan;
+  const newTilt = axis === 'tilt' ? baseTilt + delta : baseTilt;
+
+  // Reflect in input fields so the user can see the result
+  document.getElementById('rc-pan').value  = newPan.toFixed(1);
+  document.getElementById('rc-tilt').value = newTilt.toFixed(1);
+
+  try {
+    const r = await fetch(GIMBAL_RC_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pan: newPan, tilt: newTilt, frame }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      toast('Nudge error: ' + (data.error || r.statusText), 'err');
+    } else {
+      _lastPanOut  = newPan;
+      _lastTiltOut = newTilt;
+    }
+  } catch(e) {
+    toast('Gimbal unreachable: ' + e.message, 'err');
+    setGimbalConn(false);
+  }
+}
+
 // Frame toggle changed by user
 function onFrameToggleChange(checked) {
   const label = document.getElementById('rc-frame-label');
@@ -1304,6 +1352,10 @@ function updateTelemDisplay(d) {
   setText('tl-pan-out',    fmt2(d.pan_out)    + '°');
   setText('tl-tilt-out',   fmt2(d.tilt_out)   + '°');
   setText('tl-frame-flag', typeof d.frame_flag === 'number' ? d.frame_flag.toString() : '—');
+
+  // Keep nudge baseline in sync with actual gimbal output
+  if (typeof d.pan_out  === 'number') _lastPanOut  = d.pan_out;
+  if (typeof d.tilt_out === 'number') _lastTiltOut = d.tilt_out;
 
   const modeEl = document.getElementById('tl-mode');
   const modeBadge = document.getElementById('gimbal-mode-badge');

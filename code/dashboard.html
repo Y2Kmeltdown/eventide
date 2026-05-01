@@ -1202,8 +1202,6 @@ async function submitGimbalTarget() {
       toast('Gimbal error: ' + (data.error || r.statusText), 'err');
     } else {
       toast(`Target set — ${lat.toFixed(6)}, ${lon.toFixed(6)}, ${alt.toFixed(1)}m`, 'ok');
-      // Targeting mode forces earth frame — reflect in toggle
-      setFrameToggle(false);
     }
   } catch(e) {
     toast('Gimbal unreachable: ' + e.message, 'err');
@@ -1320,9 +1318,6 @@ function updateTelemDisplay(d) {
     modeBadge.style.color = d.mode === 'targeting' ? 'var(--green)' : 'var(--amber)';
   }
 
-  // If targeting mode is active, force the frame toggle to earth (false)
-  if (d.mode === 'targeting') setFrameToggle(false);
-
   // Measured gimbal attitude
   setText('tl-roll',       fmt2(d.roll_meas)  + '°');
   setText('tl-pitch-meas', fmt2(d.pitch_meas) + '°');
@@ -1330,11 +1325,6 @@ function updateTelemDisplay(d) {
 
   // Map: device position + heading arrow (green) + gimbal pan arrow (cyan)
   updateDeviceMarker(d.lat, d.lon, d.heading, d.pan_out);
-
-  // Update target marker on map if we have target coords
-  if (tgt && typeof tgt.lat === 'number' && typeof tgt.lon === 'number') {
-    setSelectedTarget(tgt.lat, tgt.lon, false);
-  }
 
   const ts = d.t ? new Date(d.t * 1000).toUTCString().split(' ')[4] + ' UTC' : '—';
   setText('tl-timestamp', 'LAST UPDATE: ' + ts);

@@ -48,8 +48,8 @@ sudo apt update
 
 sudo apt install -y \
     i2c-tools \
-    util-linux-extra
-
+    util-linux-extra \
+    ffmpeg
 
 ## RUST INSTALLATION
 curl https://sh.rustup.rs -sSf | bash -s -- -y

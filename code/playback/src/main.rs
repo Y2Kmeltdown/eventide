@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use image::codecs::jpeg::JpegEncoder;
-use image::{GrayImage, ImageEncoder};
+use image::{GrayImage};
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -45,16 +45,20 @@ struct Args {
     height: u32,
 
     /// MJPEG output frame rate
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 60)]
     fps: u64,
 
     /// JPEG quality (1–100)
-    #[arg(long, default_value_t = 80)]
+    #[arg(long, default_value_t = 50)]
     quality: u8,
 
     /// HTTP bind address for both MJPEG stream and API
     #[arg(long, default_value = "0.0.0.0:8084")]
     bind: String,
+
+    /// Recording_Dir
+    #[arg(long, default_value = "/home/eventide/recordings")]
+    recordings: String,
 }
 
 // ── Shared state ──────────────────────────────────────────────────────────────
@@ -379,7 +383,8 @@ fn handle_client(
         // ── POST /play ────────────────────────────────────────────────────────
         ("POST", "/play") => {
             // Parse JSON body: { "file": "...", "speed": 1.0 }
-            let file_val = json_str_field(&body, "file");
+            let cam_val = json_str_field(&body, "cam");
+            let file_val = json_str_field(&body, "filename");
             let speed_val = json_f64_field(&body, "speed").unwrap_or(1.0);
 
             let file = match file_val {
@@ -391,13 +396,25 @@ fn handle_client(
                 }
             };
 
-            if !file.exists() {
+            let filepath = match cam_val {
+                Some("picam") => PathBuf::from(format!("{}/picam/{}!", args.recordings, file.display())),
+                Some("ircam") => PathBuf::from(format!("{}/ircam/{}!", args.recordings, file.display())),
+                Some("evk") => PathBuf::from(format!("{}/evk/{}!", args.recordings, file.display())),
+                _ => {
+                    respond_json(&mut stream, "404 Not Found",
+                    r#"{"error":"Invalid Camera Type or no camera supplied"}"#);
+                    return
+                    }
+            };
+
+            if !filepath.exists() {
                 respond_json(&mut stream, "404 Not Found",
                     r#"{"error":"file not found"}"#);
                 return;
             }
 
-            let request = PlayRequest { file: file.clone(), speed: speed_val };
+
+            let request = PlayRequest { file: filepath.clone(), speed: speed_val };
 
             {
                 let mut st = state.lock().unwrap();

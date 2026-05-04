@@ -10,9 +10,7 @@ and file APIs; the MJPEG streams themselves are served by nginx at:
   /stream/evk/        → 127.0.0.1:8081
   /stream/picam/      → 127.0.0.1:8082/stream
   /stream/ircam/      → 127.0.0.1:8083
-  /playback/evk/      → 127.0.0.1:8084
-  /playback/picam/    → 127.0.0.1:8085
-  /playback/ircam/    → 127.0.0.1:8086
+  /playback/
 
 Usage:
     pip install flask
@@ -30,6 +28,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+import requests as _http
+
 from flask import (
     Flask,
     abort,
@@ -46,15 +46,12 @@ app = Flask(__name__, static_folder=None)
 proc_lock = threading.Lock()
 
 # Managed viewfinder processes keyed by mode
-viewfinders: dict[str, subprocess.Popen | None] = {"live": None, "replay": None}
+viewfinders: dict[str, subprocess.Popen | None] = {"live": None}
 
-# One managed replay process
-replay_proc: subprocess.Popen | None = None
 
 # Current configs (persisted so the UI can reflect them)
 vf_configs: dict[str, dict] = {
-    "live":   {"fps": 50, "quality": 80, "width": 1280, "height": 720},
-    "replay": {"fps": 50, "quality": 80, "width": 1280, "height": 720},
+    "live": {"fps": 50, "quality": 80, "width": 1280, "height": 720},
 }
 
 # Per-camera stream configs (sent to hardware/mjpeg process)
@@ -236,61 +233,6 @@ def download_recording(cam, filename):
 def download_recording_legacy(filename):
     return download_recording("evk", filename)
 
-# ── Replay API ────────────────────────────────────────────────────────────────
-
-@app.route("/api/replay/start", methods=["POST"])
-def api_replay_start():
-    global replay_proc
-    data     = request.get_json() or {}
-    filename = data.get("filename", "")
-    speed    = float(data.get("speed", 1.0))
-    cam      = data.get("cam", "evk")
-
-    if not filename:
-        return jsonify({"error": "No filename provided"}), 400
-    if cam not in ("evk", "picam", "ircam"):
-        return jsonify({"error": "Unknown camera"}), 400
-
-    recordings_dir = _recordings_dir(cam)
-    filepath = (recordings_dir / filename).resolve()
-    if filepath.parent != recordings_dir.resolve():
-        return jsonify({"error": "Invalid filename"}), 400
-    if not filepath.exists():
-        return jsonify({"error": "File not found"}), 404
-
-    with proc_lock:
-        kill_proc(replay_proc)
-        cmd = [
-            cfg["replay_bin"],
-            str(filepath),
-            "--events-socket", cfg["replay_events_socket"],
-            "--speed",         str(speed),
-        ]
-        try:
-            replay_proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-        except FileNotFoundError:
-            return jsonify({"error": f"replay binary not found: {cfg['replay_bin']}"}), 500
-
-    return jsonify({"ok": True, "filename": filename, "speed": speed, "cam": cam})
-
-
-@app.route("/api/replay/stop", methods=["POST"])
-def api_replay_stop():
-    global replay_proc
-    with proc_lock:
-        kill_proc(replay_proc)
-        replay_proc = None
-    return jsonify({"ok": True})
-
-
-@app.route("/api/replay/status")
-def api_replay_status():
-    with proc_lock:
-        running = replay_proc is not None and replay_proc.poll() is None
-    return jsonify({"running": running})
-
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -298,13 +240,9 @@ def main():
     parser.add_argument("--recordings-dir",        default="/tmp/evk4_raw",
                         help="Root recordings directory (sub-dirs: evk/, picam/, ircam/)")
     parser.add_argument("--viewfinder-bin",        default="./target/release/viewfinder")
-    parser.add_argument("--replay-bin",            default="./target/release/replay")
     parser.add_argument("--live-events-socket",    default="/tmp/evk4_events.sock")
-    parser.add_argument("--replay-events-socket",  default="/tmp/evk4_replay_events.sock")
     parser.add_argument("--live-port",             type=int, default=8081,
                         help="Port the live viewfinder binds to (nginx proxies /stream/evk/)")
-    parser.add_argument("--replay-port",           type=int, default=8084,
-                        help="Port the replay viewfinder binds to (nginx proxies /playback/evk/)")
     parser.add_argument("--html-file",             default="dashboard.html",
                         help="Path to the standalone HTML dashboard file")
     parser.add_argument("--host",                  default="0.0.0.0")
@@ -315,9 +253,7 @@ def main():
 
     print(f"[dashboard] Recordings dir:       {args.recordings_dir}")
     print(f"[dashboard] Viewfinder binary:    {args.viewfinder_bin}")
-    print(f"[dashboard] Replay binary:        {args.replay_bin}")
     print(f"[dashboard] Live VF port:         {args.live_port}  (nginx → /stream/evk/)")
-    print(f"[dashboard] Replay VF port:       {args.replay_port} (nginx → /playback/evk/)")
     print(f"[dashboard] HTML file:            {args.html_file}")
     print(f"[dashboard] Serving API at:       http://{args.host}:{args.port}")
 

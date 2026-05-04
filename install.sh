@@ -78,6 +78,11 @@ sudo chmod 644 /lib/systemd/system/watchdog.service
 sudo systemctl daemon-reload
 sudo systemctl enable watchdog.service
 
+## Playback
+cd /usr/local/eventide/code/playback
+cargo build --release
+
+
 ## RTC
 #sudo hwclock -w -f /dev/rtc1
 #sudo timedatectl set-ntp false

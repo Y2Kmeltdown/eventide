@@ -644,9 +644,7 @@ const STREAM_ENDPOINTS = {
   ircam: '/stream/ircam/',
 };
 const PLAYBACK_ENDPOINTS = {
-  evk:   '/playback/evk/',
-  picam: '/playback/picam/',
-  ircam: '/playback/ircam/',
+  playback:   '/playback/'
 };
 
 let activeTab      = 'main';
@@ -840,23 +838,20 @@ async function loadRecordings(cam) {
 function loadAllRecordings() { ['evk','picam','ircam'].forEach(loadRecordings); }
 
 async function startReplay(cam, filename) {
-  const speed   = parseFloat(document.getElementById('pb-speed').value);
-  const quality = parseInt(document.getElementById('pb-quality').value);
-  const width   = parseInt(document.getElementById('pb-width').value);
-  const height  = parseInt(document.getElementById('pb-height').value);
+  const speed = parseFloat(document.getElementById('pb-speed').value);
   if (playingFile === filename) { stopPlayback(); return; }
-  await fetch('/api/viewfinder/replay/start', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ quality, width, height, fps:50 }),
-  });
-  const res  = await fetch('/api/replay/start', {
-    method:'POST', headers:{'Content-Type':'application/json'},
+
+  const res  = await fetch('/playback/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ filename, speed, cam }),
   });
   const data = await res.json();
-  if (!res.ok) { toast(data.error || 'Replay failed', 'err'); return; }
+  if (!res.ok) { toast(data.error || 'Playback failed', 'err'); return; }
+
   playingFile = filename; playbackCam = cam;
   const img = document.getElementById('pb-img');
+  // Point the img at the nginx-proxied MJPEG stream for this camera.
+  // The playback_server always streams at /playback/<cam>/ via nginx.
   img.src = PLAYBACK_ENDPOINTS[cam] + '?t=' + Date.now();
   img.style.display = 'block';
   document.getElementById('pb-offline').style.display = 'none';
@@ -867,8 +862,7 @@ async function startReplay(cam, filename) {
   toast('Playing: ' + fmtName(filename), 'ok');
 }
 async function stopPlayback() {
-  await fetch('/api/replay/stop', {method:'POST'});
-  await fetch('/api/viewfinder/replay/stop', {method:'POST'});
+  await fetch('/playback/stop', {method: 'POST'});
   playingFile = null;
   document.getElementById('pb-img').src = 'about:blank';
   document.getElementById('pb-img').style.display = 'none';
@@ -886,6 +880,10 @@ async function selectPlaybackCam(cam) {
   await fetchAndPopulateSettings(cam, true);
 }
 async function applyPlaybackSettings() {
+  // Settings (quality, width, height) are sent to the playback_server at
+  // /settings/<cam>/ which nginx proxies from /settings/pb/<cam>/.
+  // These take effect on the next file played — changing them mid-play
+  // reloads the stream iframe to pick up the new encoding parameters.
   const quality = parseInt(document.getElementById('pb-quality').value);
   const width   = parseInt(document.getElementById('pb-width').value);
   const height  = parseInt(document.getElementById('pb-height').value);

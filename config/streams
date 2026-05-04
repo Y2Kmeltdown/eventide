@@ -27,26 +27,10 @@ server {
         chunked_transfer_encoding on;
     }
 
-    # --- MJPEG playbacks ---
+    # --- MJPEG playback System ---
 
-    location /playback/evk/ {
+    location /playback/ {
         proxy_pass http://127.0.0.1:8084/;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_set_header Connection '';
-        chunked_transfer_encoding on;
-    }
-
-    location /playback/picam/ {
-        proxy_pass http://127.0.0.1:8085/;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_set_header Connection '';
-        chunked_transfer_encoding on;
-    }
-
-    location /playback/ircam/ {
-        proxy_pass http://127.0.0.1:8086/;
         proxy_buffering off;
         proxy_cache off;
         proxy_set_header Connection '';

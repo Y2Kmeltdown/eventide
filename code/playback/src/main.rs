@@ -397,9 +397,9 @@ fn handle_client(
             };
 
             let filepath = match cam_val {
-                Some("picam") => PathBuf::from(format!("{}/picam/{}!", args.recordings, file.display())),
-                Some("ircam") => PathBuf::from(format!("{}/ircam/{}!", args.recordings, file.display())),
-                Some("evk") => PathBuf::from(format!("{}/evk/{}!", args.recordings, file.display())),
+                Some("picam") => PathBuf::from(format!("{}/picam/{}", args.recordings, file.display())),
+                Some("ircam") => PathBuf::from(format!("{}/ircam/{}", args.recordings, file.display())),
+                Some("evk") => PathBuf::from(format!("{}/evk/{}", args.recordings, file.display())),
                 _ => {
                     respond_json(&mut stream, "404 Not Found",
                     r#"{"error":"Invalid Camera Type or no camera supplied"}"#);
@@ -407,7 +407,7 @@ fn handle_client(
                     }
             };
 
-            println!("{}", filepath.display());
+            //println!("{}", filepath.display());
             
             if !filepath.exists() {
                 respond_json(&mut stream, "404 Not Found",

@@ -629,7 +629,7 @@ const STREAM_ENDPOINTS = {
   picam: '/stream/picam/',
   ircam: '/stream/ircam/',
 };
-const PLAYBACK_ENDPOINT = '/playback'
+const PLAYBACK_ENDPOINT = '/playback/'
 
 let activeTab      = 'main';
 let activeInnerTab = 'evk';
@@ -836,7 +836,7 @@ async function startReplay(cam, filename) {
   const img = document.getElementById('pb-img');
   // Point the img at the nginx-proxied MJPEG stream for this camera.
   // The playback_server always streams at /playback/<cam>/ via nginx.
-  img.src = PLAYBACK_ENDPOINT + '?t=' + Date.now();
+  img.src = PLAYBACK_ENDPOINT;
   img.style.display = 'block';
   document.getElementById('pb-offline').style.display = 'none';
   document.getElementById('pb-pill').textContent = cam.toUpperCase() + ' PLAYING';
@@ -877,7 +877,7 @@ async function applyPlaybackSettings() {
     const img = document.getElementById('pb-img');
     if (img.style.display !== 'none') {
       img.src = 'about:blank';
-      setTimeout(() => { img.src = PLAYBACK_ENDPOINT + '?t=' + Date.now(); }, 100);
+      setTimeout(() => { img.src = PLAYBACK_ENDPOINT }, 100);
     }
   } catch(e) { toast('Playback apply failed: ' + e.message, 'err'); }
 }

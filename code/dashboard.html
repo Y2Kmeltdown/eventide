@@ -550,6 +550,12 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
           <div class="form-col"><label class="form-label">Width</label><input class="form-input" type="number" id="pb-width" value="1280" min="1"></div>
           <div class="form-col"><label class="form-label">Height</label><input class="form-input" type="number" id="pb-height" value="720" min="1"></div>
         </div>
+      </div>
+      <div class="panel">
+        <div class="label-row"><span class="form-label" style="margin:0">FRAME RATE</span></div>
+        <div class="form-row">
+          <div class="form-col"><label class="form-label">FPS</label><input class="form-input" type="number" id="pb-fps" value="60" min="1" max="240"></div>
+        </div>
         <button class="apply-btn amber" onclick="applyPlaybackSettings()">↺ APPLY</button>
       </div>
     </div>
@@ -861,18 +867,22 @@ async function stopPlayback() {
 async function selectPlaybackCam(cam) {
   playbackCam = cam;
   document.getElementById('pb-endpoint-label').textContent = 'ENDPOINT: ' + PLAYBACK_ENDPOINT;
-  await fetchAndPopulateSettings(cam, true);
+  await fetchPlaybackSettings();
 }
 async function applyPlaybackSettings() {
-  // Settings (quality, width, height) are sent to the playback_server at
-  // /settings/<cam>/ which nginx proxies from /settings/pb/<cam>/.
-  // These take effect on the next file played — changing them mid-play
-  // reloads the stream iframe to pick up the new encoding parameters.
+  // POST directly to the playback_server's own /settings API
+  // (nginx proxies /playback/settings → http://127.0.0.1:8084/settings).
   const quality = parseInt(document.getElementById('pb-quality').value);
   const width   = parseInt(document.getElementById('pb-width').value);
   const height  = parseInt(document.getElementById('pb-height').value);
+  const fps     = parseInt(document.getElementById('pb-fps')?.value || 60);
   try {
-    await mjpegPutSettings(playbackCam, width, height, quality, true);
+    const r = await fetch('/playback/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quality, out_width: width, out_height: height, fps }),
+    });
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || r.statusText); }
     toast('Playback settings applied', 'ok');
     const img = document.getElementById('pb-img');
     if (img.style.display !== 'none') {
@@ -880,6 +890,24 @@ async function applyPlaybackSettings() {
       setTimeout(() => { img.src = PLAYBACK_ENDPOINT }, 100);
     }
   } catch(e) { toast('Playback apply failed: ' + e.message, 'err'); }
+}
+
+async function fetchPlaybackSettings() {
+  // Populate the playback settings panel from the server's current values.
+  try {
+    const r = await fetch('/playback/settings');
+    if (!r.ok) return;
+    const s = await r.json();
+    const qEl  = document.getElementById('pb-quality');
+    const qvEl = document.getElementById('pb-q-val');
+    const wEl  = document.getElementById('pb-width');
+    const hEl  = document.getElementById('pb-height');
+    const fEl  = document.getElementById('pb-fps');
+    if (qEl)  { qEl.value  = s.quality;    if (qvEl) qvEl.textContent = s.quality; }
+    if (wEl)   wEl.value   = s.out_width;
+    if (hEl)   hEl.value   = s.out_height;
+    if (fEl)   fEl.value   = s.fps;
+  } catch { /* server not running yet */ }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1155,7 +1183,7 @@ function toast(msg, type='') {
 updateHeaderDots();
 initMap();
 ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
-fetchAndPopulateSettings(playbackCam, true);
+fetchPlaybackSettings();
 
 // ═══════════════════════════════════════════════════════════
 //  GIMBAL API

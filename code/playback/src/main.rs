@@ -407,6 +407,8 @@ fn handle_client(
                     }
             };
 
+            println!("{}", filepath.display());
+            
             if !filepath.exists() {
                 respond_json(&mut stream, "404 Not Found",
                     r#"{"error":"file not found"}"#);

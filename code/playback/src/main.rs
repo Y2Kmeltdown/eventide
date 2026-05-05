@@ -11,10 +11,12 @@
 //!
 //! HTTP API
 //! --------
-//!   POST /play   { "file": "/path/to/recording.raw", "speed": 1.0 }
+//!   POST /play     { "file": "/path/to/recording.raw", "speed": 1.0 }
 //!   POST /stop
-//!   GET  /status → { "playing": bool, "file": str|null, "type": str|null }
-//!   GET  /        → MJPEG stream (multipart/x-mixed-replace)
+//!   GET  /status   → { "playing": bool, "file": str|null, "type": str|null }
+//!   GET  /settings → { "quality": u8, "out_width": u32, "out_height": u32, "fps": u64 }
+//!   PUT  /settings   { "quality"?: u8, "out_width"?: u32, "out_height"?: u32, "fps"?: u64 }
+//!   GET  /         → MJPEG stream (multipart/x-mixed-replace)
 //!
 //! Usage:
 //!   cargo run --release playback_server -- --width 1280 --height 720
@@ -24,6 +26,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -74,6 +77,15 @@ struct State {
     active: Option<PlayRequest>,
     /// Signal to the decoder thread to stop current playback.
     stop_signal: bool,
+    // ── Runtime-adjustable encoding settings ─────────────────────────────────
+    /// JPEG quality (1-100). Can be changed via PUT /settings without restart.
+    quality: u8,
+    /// Output frame width. Applied on next play if changed mid-stream.
+    out_width: u32,
+    /// Output frame height. Applied on next play if changed mid-stream.
+    out_height: u32,
+    /// MJPEG output frame rate. Takes effect immediately.
+    fps: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +197,10 @@ fn run_evt3_decoder(
             let mut st = state.lock().unwrap();
             if st.stop_signal { break; }
 
+            // Reset to mid-grey before writing this chunk's events so that
+            // pixels fired in previous chunks don't bleed into the new frame.
+            st.pixels.fill(127);
+
             adapter.convert(
                 &chunk[..n],
                 |dvs_event| {
@@ -235,26 +251,42 @@ fn run_video_decoder(
     height: u32,
     state: Arc<Mutex<State>>,
 ) {
-    // Build ffmpeg command — output raw grayscale frames at native rate,
-    // scaled to sensor dimensions if necessary.
-    // `atempo` / `setpts` handle speed adjustment.
-    let setpts = format!("setpts={:.6}/TB", 1.0 / request.speed);
+    let output_fps = state.lock().unwrap().fps;
+
+    // Raw h264/mp4 streams may have no reliable container timestamps.
+    // We give ffmpeg an explicit input framerate hint so its filter graph
+    // has a defined timebase. Actual wall-clock pacing is handled in Rust.
+    let source_fps = 30u64;
+    let source_fps_str = source_fps.to_string();
+
+    // Speed is implemented by asking ffmpeg to output more frames per second
+    // via the `fps` filter (it will dup/drop as needed). The Rust pacer then
+    // consumes those frames at 1/output_fps intervals, giving correct speed.
+    let target_fps = ((output_fps as f64) * request.speed).round() as u64;
     let vf = format!(
-        "scale={}:{},format=gray,{}",
-        width, height, setpts
+        "scale={}:{},format=gray,fps={}",
+        width, height, target_fps.max(1)
+    );
+    let frame_interval = Duration::from_nanos(1_000_000_000 / output_fps.max(1));
+    let frame_size = (width * height) as usize;
+
+    eprintln!(
+        "[video] Spawning ffmpeg for {:?}  source_fps={source_fps}  \
+         target_fps={target_fps}  frame_size={frame_size}  interval={frame_interval:?}",
+        request.file
     );
 
     let mut child: Child = match Command::new("ffmpeg")
         .args([
-            "-re",                          // read at native frame rate
-            "-i", request.file.to_str().unwrap_or(""),
+            "-r",  &source_fps_str,
+            "-i",  request.file.to_str().unwrap_or(""),
             "-vf", &vf,
-            "-f", "rawvideo",
+            "-f",  "rawvideo",
             "-pix_fmt", "gray",
-            "pipe:1",                       // output to stdout
+            "pipe:1",
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
     {
         Ok(c) => c,
@@ -265,34 +297,100 @@ fn run_video_decoder(
         }
     };
 
-    let frame_size = (width * height) as usize;
-    let mut frame_buf = vec![0u8; frame_size];
-    let mut stdout = child.stdout.take().expect("ffmpeg stdout");
+    // ── stderr drain thread ───────────────────────────────────────────────────
+    // Must be running BEFORE we start reading stdout, otherwise ffmpeg can
+    // fill the stderr OS pipe buffer (~64 KB), block, and never write more
+    // stdout frames → deadlock after frame 1.
+    if let Some(ffmpeg_stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(ffmpeg_stderr).lines().map_while(Result::ok) {
+                eprintln!("[ffmpeg] {line}");
+            }
+            eprintln!("[ffmpeg] stderr pipe closed.");
+        });
+    }
+
+    // ── stdout drain thread ───────────────────────────────────────────────────
+    // A 1280×720 gray frame is 921 600 bytes — larger than the default Linux
+    // pipe buffer (65 536 bytes). If we read from the main thread in a stop-
+    // check loop, we can block inside read_exact_from while ffmpeg is also
+    // blocked trying to write the next frame's bytes. Classic deadlock.
+    //
+    // Fix: a dedicated thread reads frames as fast as ffmpeg produces them
+    // and sends complete frames over a bounded channel. The main thread only
+    // receives; the pipe is always being drained.
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(4); // buffer up to 4 decoded frames
+    let mut ffmpeg_stdout = child.stdout.take().expect("ffmpeg stdout");
+
+    thread::spawn(move || {
+        let mut buf = vec![0u8; frame_size];
+        loop {
+            match read_exact_from(&mut ffmpeg_stdout, &mut buf) {
+                Ok(false) => {
+                    eprintln!("[video] ffmpeg stdout EOF.");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("[video] ffmpeg stdout read error: {e}");
+                    break;
+                }
+                Ok(true) => {
+                    // Send a clone of the frame; if the receiver has gone away
+                    // (stop signal) the send will fail and we exit cleanly.
+                    if tx.send(buf.clone()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // ── main decoder loop ─────────────────────────────────────────────────────
+    let mut frames_written: u64 = 0;
+    let mut next_frame_at = Instant::now();
 
     loop {
         if state.lock().unwrap().stop_signal {
             break;
         }
 
-        // Read exactly one raw grayscale frame from ffmpeg
-        match read_exact_from(&mut stdout, &mut frame_buf) {
-            Ok(false) => break, // EOF
-            Err(e) => { eprintln!("[video] ffmpeg read error: {e}"); break; }
-            Ok(true) => {}
-        }
+        // Block until the drain thread delivers a complete frame (or closes).
+        let frame = match rx.recv() {
+            Ok(f) => f,
+            Err(_) => {
+                eprintln!("[video] Frame channel closed after {frames_written} frames.");
+                break;
+            }
+        };
 
-        // Write the frame into the shared pixel buffer
         {
             let mut st = state.lock().unwrap();
             if st.stop_signal { break; }
-            st.pixels.copy_from_slice(&frame_buf);
+            st.pixels.copy_from_slice(&frame);
+        }
+
+        frames_written += 1;
+        if frames_written == 1 {
+            eprintln!("[video] First frame written to pixel buffer.");
+            next_frame_at = Instant::now();
+        }
+
+        // Wall-clock pacing: sleep until the next frame is due.
+        next_frame_at += frame_interval;
+        let now = Instant::now();
+        if next_frame_at > now {
+            thread::sleep(next_frame_at - now);
+        } else {
+            next_frame_at = now; // reset if falling behind
         }
     }
 
     let _ = child.kill();
     finish_playback(&state);
-    eprintln!("[video] Playback complete.");
+    eprintln!("[video] Playback complete. Frames written: {frames_written}");
 }
+
 
 /// Read exactly buf.len() bytes, returning Ok(false) on clean EOF.
 fn read_exact_from<R: Read>(reader: &mut R, buf: &mut [u8]) -> std::io::Result<bool> {
@@ -460,6 +558,50 @@ fn handle_client(
             respond_json(&mut stream, "200 OK", &body);
         }
 
+        // ── GET /settings ─────────────────────────────────────────────────────
+        ("GET", "/settings") => {
+            let st = state.lock().unwrap();
+            let body = format!(
+                r#"{{"quality":{},"out_width":{},"out_height":{},"fps":{}}}"#,
+                st.quality, st.out_width, st.out_height, st.fps
+            );
+            drop(st);
+            respond_json(&mut stream, "200 OK", &body);
+        }
+
+        // ── PUT /settings ──────────────────────────────────────────────────────
+        // Body: { "quality": 80, "out_width": 1280, "out_height": 720, "fps": 60 }
+        // All fields are optional — omitted fields are left unchanged.
+        ("PUT", "/settings") => {
+            let mut st = state.lock().unwrap();
+            let mut changed = false;
+
+            if let Some(q) = json_f64_field(&body, "quality") {
+                let q = (q as u8).clamp(1, 100);
+                if st.quality != q { st.quality = q; changed = true; }
+            }
+            if let Some(w) = json_f64_field(&body, "out_width") {
+                let w = (w as u32).max(1);
+                if st.out_width != w { st.out_width = w; changed = true; }
+            }
+            if let Some(h) = json_f64_field(&body, "out_height") {
+                let h = (h as u32).max(1);
+                if st.out_height != h { st.out_height = h; changed = true; }
+            }
+            if let Some(f) = json_f64_field(&body, "fps") {
+                let f = (f as u64).clamp(1, 240);
+                if st.fps != f { st.fps = f; changed = true; }
+            }
+
+            let body = format!(
+                r#"{{"ok":true,"changed":{},"quality":{},"out_width":{},"out_height":{},"fps":{}}}"#,
+                changed, st.quality, st.out_width, st.out_height, st.fps
+            );
+            drop(st);
+            if changed { eprintln!("[settings] Updated: {body}"); }
+            respond_json(&mut stream, "200 OK", &body);
+        }
+
         // ── CORS preflight ────────────────────────────────────────────────────
         ("OPTIONS", _) => {
             let _ = stream.write_all(
@@ -513,6 +655,10 @@ fn main() {
         latest_jpeg: None,
         active:      None,
         stop_signal: false,
+        quality:     args.quality,
+        out_width:   args.width,
+        out_height:  args.height,
+        fps:         args.fps,
     }));
 
     // ── Encoder thread ────────────────────────────────────────────────────────
@@ -521,16 +667,25 @@ fn main() {
         let state  = Arc::clone(&state);
         let args_c = Arc::clone(&args);
         thread::spawn(move || {
-            let frame_interval = Duration::from_nanos(1_000_000_000 / args_c.fps);
-            let mut snapshot   = vec![0u8; n_pixels];
+            let mut snapshot = vec![0u8; n_pixels];
             loop {
+                // Read current fps from state so PUT /settings takes effect live.
+                let (fps, quality, w, h) = {
+                    let st = state.lock().unwrap();
+                    (st.fps, st.quality, st.out_width, st.out_height)
+                };
+                let frame_interval = Duration::from_nanos(1_000_000_000 / fps.max(1));
                 thread::sleep(frame_interval);
                 {
                     let st = state.lock().unwrap();
-                    snapshot.copy_from_slice(&st.pixels);
+                    // Pixel buffer may have been resized — only copy if dimensions match.
+                    if st.pixels.len() == snapshot.len() {
+                        snapshot.copy_from_slice(&st.pixels);
+                    }
                 }
-                let jpeg = encode_jpeg(&snapshot, args_c.width, args_c.height, args_c.quality);
+                let jpeg = encode_jpeg(&snapshot, w, h, quality);
                 state.lock().unwrap().latest_jpeg = Some(jpeg);
+                let _ = args_c.fps; // keep args_c alive
             }
         });
     }
@@ -544,6 +699,8 @@ fn main() {
     println!("[playback] POST /play   {{ \"file\": \"/path/to/file.raw\", \"speed\": 1.0 }}");
     println!("[playback] POST /stop");
     println!("[playback] GET  /status");
+    println!("[playback] GET  /settings");
+    println!("[playback] PUT  /settings  {{ \"quality\": 80, \"out_width\": 1280, \"out_height\": 720, \"fps\": 60 }}");
 
     for tcp_stream in listener.incoming().flatten() {
         let state  = Arc::clone(&state);

@@ -154,17 +154,87 @@ fn respond_json(stream: &mut TcpStream, status: &str, body: &str) {
 
 // ── EVT3 decoder ──────────────────────────────────────────────────────────────
 
+/// Commit a single frame of accumulated EVT3 events to the pixel buffer,
+/// then pace wall-clock time against sensor timestamps so that the encoder
+/// thread (which snapshots at `fps` Hz) picks up a complete frame.
+fn commit_evt3_frame(
+    state: &Arc<Mutex<State>>,
+    events: &[(u32, u32, u8)], // (x, y, polarity)
+    width: u32,
+    height: u32,
+    frame_idx: u64,
+    t0: u64,
+    frame_period_us: u64,
+    speed: f64,
+    pacer_anchor: &mut Option<(u64, Instant)>,
+) {
+    // Bail early if a stop was requested.
+    if state.lock().unwrap().stop_signal {
+        return;
+    }
+
+    // Write this frame's events into the pixel buffer.
+    {
+        let mut st = state.lock().unwrap();
+        st.pixels.fill(127); // reset to mid-grey
+        for &(x, y, pol) in events {
+            if x < width && y < height {
+                st.pixels[y as usize * width as usize + x as usize] =
+                    if pol != 0 { 255 } else { 0 };
+            }
+        }
+    }
+
+    // ── Wall-clock pacing ─────────────────────────────────────────────────
+    // Each frame corresponds to the sensor-time window
+    //   [t0 + frame_idx * period,  t0 + (frame_idx + 1) * period)
+    // We sleep until the wall-clock equivalent of this frame's *start* time
+    // so the encoder sees a stable buffer for the full frame interval.
+    let frame_sensor_t = t0 + frame_idx * frame_period_us;
+
+    let (origin_t, origin_wall) = pacer_anchor.get_or_insert_with(|| {
+        eprintln!("[evt3] Pacer anchored at t={frame_sensor_t} µs");
+        (frame_sensor_t, Instant::now())
+    });
+
+    if frame_sensor_t > *origin_t {
+        let sensor_delta = frame_sensor_t - *origin_t;
+        let wall_target_us = (sensor_delta as f64 / speed) as u64;
+        let wall_target = *origin_wall + Duration::from_micros(wall_target_us);
+        let now = Instant::now();
+        if wall_target > now {
+            thread::sleep(wall_target - now);
+        }
+    }
+}
+
 /// Decode a `.raw` EVT3 file into the shared pixel buffer, pacing at `speed`.
+///
+/// Events are grouped into frames based on their sensor timestamps and the
+/// output display frame-rate (`fps`).  Each frame accumulates all events whose
+/// timestamp falls within that frame's time window:
+///
+///   frame N  ←  events with t ∈ [t0 + N·Δ,  t0 + (N+1)·Δ)
+///
+/// where Δ = 1_000_000 / fps  (microseconds).
+///
+/// Real-time pacing is applied per-frame so that playback honours the original
+/// sensor timing scaled by `speed`.
 fn run_evt3_decoder(
     request: PlayRequest,
     width: u32,
     height: u32,
     state: Arc<Mutex<State>>,
 ) {
-    use std::time::{Duration, Instant};
+    // Snapshot output FPS at start of playback (consistent with video decoder).
+    let fps = state.lock().unwrap().fps;
+    let frame_period_us: u64 = 1_000_000 / fps.max(1);
 
     let mut adapter =
-        neuromorphic_drivers::adapters::evt3::Adapter::from_dimensions(width.try_into().unwrap(), height.try_into().unwrap());
+        neuromorphic_drivers::adapters::evt3::Adapter::from_dimensions(
+            width.try_into().unwrap(),
+            height.try_into().unwrap(),
+        );
 
     let mut file = match std::fs::File::open(&request.file) {
         Ok(f) => f,
@@ -176,66 +246,105 @@ fn run_evt3_decoder(
     };
 
     let mut chunk = vec![0u8; 131072];
+
+    // ── Streaming frame-builder state ──────────────────────────────────────
+    let mut t0: Option<u64> = None; // first event timestamp
+    let mut current_frame_idx: u64 = 0;
+    let mut frame_events: Vec<(u32, u32, u8)> = Vec::new(); // (x, y, polarity)
     let mut pacer_anchor: Option<(u64, Instant)> = None;
 
     loop {
-        // Check stop signal
         if state.lock().unwrap().stop_signal {
             break;
         }
 
         let n = match file.read(&mut chunk) {
-            Ok(0) => break,
+            Ok(0) => break, // EOF
             Ok(n) => n,
-            Err(e) => { eprintln!("[evt3] Read error: {e}"); break; }
+            Err(e) => {
+                eprintln!("[evt3] Read error: {e}");
+                break;
+            }
         };
 
-        let mut dvs_last_t: Option<u64> = None;
-        let mut trigger_last_t: Option<u64> = None;
+        // Decode this chunk into a temporary event list so we can inspect
+        // timestamps and detect frame boundaries without holding the state
+        // lock across the (potentially slow) adapter.convert call.
+        let mut chunk_events: Vec<(u64, u32, u32, u8)> = Vec::new(); // (t, x, y, pol)
 
-        {
-            let mut st = state.lock().unwrap();
-            if st.stop_signal { break; }
+        adapter.convert(
+            &chunk[..n],
+            |dvs_event| {
+                chunk_events.push((
+                    dvs_event.t,
+                    dvs_event.x as u32,
+                    dvs_event.y as u32,
+                    dvs_event.polarity as u8,
+                ));
+            },
+            |_trigger_event| {
+                // Triggers carry timestamps but no pixel data; they are
+                // ignored for frame rendering.
+            },
+        );
 
-            // Reset to mid-grey before writing this chunk's events so that
-            // pixels fired in previous chunks don't bleed into the new frame.
-            st.pixels.fill(127);
+        // EVT3 data is monotonic — process in arrival order.
+        for (t, x, y, pol) in chunk_events {
+            // Anchor t0 on the very first event seen.
+            let t0_val = *t0.get_or_insert(t);
 
-            adapter.convert(
-                &chunk[..n],
-                |dvs_event| {
-                    let x = dvs_event.x as u32;
-                    let y = dvs_event.y as u32;
-                    if x < width && y < height {
-                        st.pixels[y as usize * width as usize + x as usize] =
-                            if dvs_event.polarity as u8 != 0 { 255 } else { 0 };
-                    }
-                    dvs_last_t = Some(dvs_event.t);
-                },
-                |trigger_event| {
-                    trigger_last_t = Some(trigger_event.t);
-                },
-            );
-        }
+            let event_frame_idx = (t - t0_val) / frame_period_us;
 
-        // Real-time pacing against sensor timestamps
-        let chunk_last_t = std::cmp::max(dvs_last_t, trigger_last_t);
-        if let Some(last_t) = chunk_last_t {
-            let (origin_t, origin_wall) = *pacer_anchor.get_or_insert_with(|| {
-                eprintln!("[evt3] Pacer anchored at t={last_t} µs");
-                (last_t, Instant::now())
-            });
+            // If this event belongs to a later frame, commit the current
+            // frame (and any empty intermediate frames, for sparse
+            // recordings with timestamp gaps).
+            while current_frame_idx < event_frame_idx {
+                commit_evt3_frame(
+                    &state,
+                    &frame_events,
+                    width,
+                    height,
+                    current_frame_idx,
+                    t0_val,
+                    frame_period_us,
+                    request.speed,
+                    &mut pacer_anchor,
+                );
+                frame_events.clear();
+                current_frame_idx += 1;
 
-            if last_t > origin_t {
-                let sensor_delta = last_t - origin_t;
-                let wall_target_us = (sensor_delta as f64 / request.speed) as u64;
-                let wall_target = origin_wall + Duration::from_micros(wall_target_us);
-                let now = Instant::now();
-                if wall_target > now {
-                    thread::sleep(wall_target - now);
+                if state.lock().unwrap().stop_signal {
+                    break;
                 }
             }
+
+            if state.lock().unwrap().stop_signal {
+                break;
+            }
+
+            // Append event to the current in-progress frame.
+            frame_events.push((x, y, pol));
         }
+
+        if state.lock().unwrap().stop_signal {
+            break;
+        }
+    }
+
+    // Commit the final frame if any events remain.
+    if !frame_events.is_empty() {
+        let t0_val = t0.unwrap_or(0);
+        commit_evt3_frame(
+            &state,
+            &frame_events,
+            width,
+            height,
+            current_frame_idx,
+            t0_val,
+            frame_period_us,
+            request.speed,
+            &mut pacer_anchor,
+        );
     }
 
     finish_playback(&state);

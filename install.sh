@@ -30,6 +30,7 @@ sudo mkdir -p $EVENTIDE_DIR
 sudo mkdir -p $EVENTIDE_DIR/evk
 sudo mkdir -p $EVENTIDE_DIR/picam
 sudo mkdir -p $EVENTIDE_DIR/ircam
+sudo mkdir -p $EVENTIDE_DIR/telemetry
 
 sudo mkdir -p /usr/local/eventide
 sudo mkdir -p /usr/local/eventide/packages

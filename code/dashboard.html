@@ -801,7 +801,7 @@ function fmtName(name) {
   if (lg) return `${lg[1]}-${lg[2]}-${lg[3]} ${lg[4]}:${lg[5]}:${lg[6]}`;
   return name;
 }
-const EXT_COLORS = { mp4:'var(--green)', h264:'var(--amber)', raw:'var(--accent)' };
+const EXT_COLORS = { mp4:'var(--green)', h264:'var(--amber)', raw:'var(--accent)', jsonl:'var(--accent)' };
 function extBadge(ext) {
   const c = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
   return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;border:1px solid ${c};color:${c};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;

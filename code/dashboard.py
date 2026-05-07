@@ -198,7 +198,7 @@ def list_recordings_cam(cam):
     return _list_recordings_for(cam)
 
 
-RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264")
+RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264", "*.jsonl")
 
 def _list_recordings_for(cam: str):
     recordings_dir = _recordings_dir(cam)

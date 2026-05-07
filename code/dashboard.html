@@ -496,9 +496,10 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 
   <div class="playback-left">
     <div class="inner-tab-bar">
-      <button class="inner-tab cyan active" id="pb-tab-evk"   onclick="switchInnerTab('evk')">EVK4</button>
-      <button class="inner-tab green"       id="pb-tab-picam" onclick="switchInnerTab('picam')">PICAM</button>
-      <button class="inner-tab"             id="pb-tab-ircam" onclick="switchInnerTab('ircam')">IRCAM</button>
+      <button class="inner-tab cyan active" id="pb-tab-evk"       onclick="switchInnerTab('evk')">EVK4</button>
+      <button class="inner-tab green"       id="pb-tab-picam"     onclick="switchInnerTab('picam')">PICAM</button>
+      <button class="inner-tab"             id="pb-tab-ircam"     onclick="switchInnerTab('ircam')">IRCAM</button>
+      <button class="inner-tab"             id="pb-tab-telemetry" onclick="switchInnerTab('telemetry')">TELEMETRY</button>
     </div>
     <div class="inner-panel active" id="pb-panel-evk">
       <div class="rec-header"><span class="rec-title">EVK4 RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('evk')">↻</button></div>
@@ -511,6 +512,10 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
     <div class="inner-panel" id="pb-panel-ircam">
       <div class="rec-header"><span class="rec-title">IRCAM RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('ircam')">↻</button></div>
       <div class="rec-scroll"><div id="rec-list-ircam" class="rec-list"><div class="empty">Loading…</div></div></div>
+    </div>
+    <div class="inner-panel" id="pb-panel-telemetry">
+      <div class="rec-header"><span class="rec-title">TELEMETRY FILES</span><button class="btn-sm" onclick="loadRecordings('telemetry')">↻</button></div>
+      <div class="rec-scroll"><div id="rec-list-telemetry" class="rec-list"><div class="empty">Loading…</div></div></div>
     </div>
   </div>
 
@@ -825,7 +830,7 @@ async function loadRecordings(cam) {
       </div>`).join('');
   } catch { el.innerHTML = '<div class="empty">Error loading recordings</div>'; }
 }
-function loadAllRecordings() { ['evk','picam','ircam'].forEach(loadRecordings); }
+function loadAllRecordings() { ['evk','picam','ircam','telemetry'].forEach(loadRecordings); }
 
 async function startReplay(cam, filename) {
   const speed = parseFloat(document.getElementById('pb-speed').value);

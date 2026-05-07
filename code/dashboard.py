@@ -193,7 +193,7 @@ def list_recordings_legacy():
 
 @app.route("/api/recordings/<cam>")
 def list_recordings_cam(cam):
-    if cam not in ("evk", "picam", "ircam"):
+    if cam not in ("evk", "picam", "ircam", "telemetry"):
         abort(400)
     return _list_recordings_for(cam)
 
@@ -217,7 +217,7 @@ def _list_recordings_for(cam: str):
 
 @app.route("/api/recordings/<cam>/<filename>/download")
 def download_recording(cam, filename):
-    if cam not in ("evk", "picam", "ircam"):
+    if cam not in ("evk", "picam", "ircam", "telemetry"):
         abort(400)
     recordings_dir = _recordings_dir(cam)
     filepath = (recordings_dir / filename).resolve()
@@ -237,7 +237,7 @@ def download_recording_legacy(filename):
 
 def main():
     parser = argparse.ArgumentParser(description="EVK4 Dashboard")
-    parser.add_argument("--recordings-dir",        default="/tmp/evk4_raw",
+    parser.add_argument("--recordings-dir",        default="/usr/local/eventide/recordings",
                         help="Root recordings directory (sub-dirs: evk/, picam/, ircam/)")
     parser.add_argument("--viewfinder-bin",        default="./target/release/viewfinder")
     parser.add_argument("--live-events-socket",    default="/tmp/evk4_events.sock")

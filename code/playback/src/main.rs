@@ -157,16 +157,22 @@ fn respond_json(stream: &mut TcpStream, status: &str, body: &str) {
 /// Commit a single frame of accumulated EVT3 events to the pixel buffer,
 /// then pace wall-clock time against sensor timestamps so that the encoder
 /// thread (which snapshots at `fps` Hz) picks up a complete frame.
+///
+/// Instead of resetting the entire pixel buffer (O(width×height) ≈ 921 KB
+/// memset per frame), only the pixels touched in the *previous* frame are
+/// restored to mid-grey.  The dirty-pixel list is sorted and deduplicated
+/// once per frame so the next frame's reset pass is O(unique_events).
 fn commit_evt3_frame(
     state: &Arc<Mutex<State>>,
     events: &[(u32, u32, u8)], // (x, y, polarity)
     width: u32,
-    height: u32,
+    _height: u32,
     frame_idx: u64,
     t0: u64,
     frame_period_us: u64,
     speed: f64,
     pacer_anchor: &mut Option<(u64, Instant)>,
+    prev_dirty: &mut Vec<usize>, // sorted, deduped pixel indices from last frame
 ) {
     // Bail early if a stop was requested.
     if state.lock().unwrap().stop_signal {
@@ -176,13 +182,26 @@ fn commit_evt3_frame(
     // Write this frame's events into the pixel buffer.
     {
         let mut st = state.lock().unwrap();
-        st.pixels.fill(127); // reset to mid-grey
-        for &(x, y, pol) in events {
-            if x < width && y < height {
-                st.pixels[y as usize * width as usize + x as usize] =
-                    if pol != 0 { 255 } else { 0 };
-            }
+
+        // Reset only the pixels that were lit in the *previous* frame.
+        // On the very first frame prev_dirty is empty and the buffer is
+        // already mid-grey from initialisation / finish_playback.
+        for &idx in prev_dirty.iter() {
+            st.pixels[idx] = 127;
         }
+        prev_dirty.clear();
+
+        // Write this frame's events, recording every touched index.
+        let stride = width as usize;
+        for &(x, y, pol) in events {
+            let idx = y as usize * stride + x as usize;
+            st.pixels[idx] = if pol != 0 { 255 } else { 0 };
+            prev_dirty.push(idx);
+        }
+
+        // Sort + dedup so the next frame only resets unique pixels once.
+        prev_dirty.sort_unstable();
+        prev_dirty.dedup();
     }
 
     // ── Wall-clock pacing ─────────────────────────────────────────────────
@@ -252,6 +271,7 @@ fn run_evt3_decoder(
     let mut current_frame_idx: u64 = 0;
     let mut frame_events: Vec<(u32, u32, u8)> = Vec::new(); // (x, y, polarity)
     let mut pacer_anchor: Option<(u64, Instant)> = None;
+    let mut prev_dirty: Vec<usize> = Vec::new(); // sorted, deduped pixel indices
 
     loop {
         if state.lock().unwrap().stop_signal {
@@ -309,6 +329,7 @@ fn run_evt3_decoder(
                     frame_period_us,
                     request.speed,
                     &mut pacer_anchor,
+                    &mut prev_dirty,
                 );
                 frame_events.clear();
                 current_frame_idx += 1;
@@ -344,6 +365,7 @@ fn run_evt3_decoder(
             frame_period_us,
             request.speed,
             &mut pacer_anchor,
+            &mut prev_dirty,
         );
     }
 

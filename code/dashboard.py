@@ -41,6 +41,29 @@ from flask import (
 
 app = Flask(__name__, static_folder=None)
 
+# ── CORS — allow the frontend server (any origin) to call the API ─────────────
+# The dashboard HTML is now served from a separate host, so the browser will
+# make cross-origin requests to this server.  We allow all origins here because
+# the frontend host/port is not known at deploy time.  If you want to restrict
+# this, set ALLOWED_ORIGIN in the environment or hardcode it below.
+_ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
+
+@app.after_request
+def add_cors(response):
+    response.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
+@app.route("/<path:path>",             methods=["OPTIONS"])
+def cors_preflight(path=""):
+    resp = app.make_default_options_response()
+    resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
 # ── Global process state ──────────────────────────────────────────────────────
 
 proc_lock = threading.Lock()
@@ -95,15 +118,57 @@ def start_viewfinder(mode: str, params: dict) -> tuple[subprocess.Popen | None, 
     except FileNotFoundError:
         return None, f"viewfinder binary not found: {cfg['viewfinder_bin']}"
 
-# ── Static HTML ───────────────────────────────────────────────────────────────
+# ── Supervisord XML-RPC proxy ─────────────────────────────────────────────────
+# Previously the browser hit /supervisor/ via nginx, which set Content-Type:
+# text/xml and forwarded to supervisord's RPC2 endpoint.  Now the dashboard is
+# cross-origin the browser issues a CORS preflight (OPTIONS) first — and
+# supervisord's own HTTP server rejects OPTIONS with a 501, killing the call
+# before the real POST ever arrives.
+#
+# Solution: Flask intercepts /supervisor/ and proxies it itself.  OPTIONS is
+# answered immediately with the right CORS headers (handled by the global
+# cors_preflight route above), and POST is forwarded server-side to
+# supervisord, which never sees the cross-origin problem.
 
-@app.route("/")
-def index():
-    """Serve the standalone dashboard HTML file."""
-    html_path = Path(cfg.get("html_file", "dashboard.html")).resolve()
-    if not html_path.exists():
-        return "dashboard.html not found. Place it alongside dashboard.py.", 404
-    return send_file(html_path, mimetype="text/html")
+_SUPERVISOR_RPC_URL = os.environ.get(
+    "SUPERVISOR_RPC_URL", "http://127.0.0.1:9001/RPC2"
+)
+
+@app.route("/supervisor/", methods=["POST", "OPTIONS"])
+def supervisor_proxy():
+    """Forward XML-RPC calls to supervisord's inet_http_server.
+
+    OPTIONS is handled here explicitly so Flask doesn't 405 it before the
+    global cors_preflight catch-all can respond — a 405 on the preflight
+    causes the browser to abort the real POST immediately.
+    """
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    body = request.get_data()
+    try:
+        upstream = _http.post(
+            _SUPERVISOR_RPC_URL,
+            data=body,
+            headers={"Content-Type": "text/xml"},
+            timeout=10,
+        )
+    except _http.exceptions.ConnectionError:
+        return (
+            '<?xml version="1.0"?><methodResponse><fault><value>'
+            '<struct><member><name>faultCode</name><value><int>-1</int></value></member>'
+            '<member><name>faultString</name><value><string>'
+            'supervisord unreachable'
+            '</string></value></member></struct>'
+            '</value></fault></methodResponse>',
+            502,
+            {"Content-Type": "text/xml"},
+        )
+    return upstream.content, upstream.status_code, {"Content-Type": "text/xml"}
 
 # ── Viewfinder API ────────────────────────────────────────────────────────────
 
@@ -236,26 +301,33 @@ def download_recording_legacy(filename):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="EVK4 Dashboard")
+    global _SUPERVISOR_RPC_URL
+    parser = argparse.ArgumentParser(description="EVK4 Dashboard — Backend API Server")
     parser.add_argument("--recordings-dir",        default="/usr/local/eventide/recordings",
                         help="Root recordings directory (sub-dirs: evk/, picam/, ircam/)")
     parser.add_argument("--viewfinder-bin",        default="./target/release/viewfinder")
     parser.add_argument("--live-events-socket",    default="/tmp/evk4_events.sock")
     parser.add_argument("--live-port",             type=int, default=8081,
                         help="Port the live viewfinder binds to (nginx proxies /stream/evk/)")
-    parser.add_argument("--html-file",             default="dashboard.html",
-                        help="Path to the standalone HTML dashboard file")
+    parser.add_argument("--supervisor-rpc-url",    default=_SUPERVISOR_RPC_URL,
+                        help="URL of supervisord's XML-RPC endpoint "
+                             "(default: http://127.0.0.1:9001/RPC2)")
     parser.add_argument("--host",                  default="0.0.0.0")
     parser.add_argument("--port",                  type=int, default=5000)
     args = parser.parse_args()
 
     cfg.update(vars(args))
 
-    print(f"[dashboard] Recordings dir:       {args.recordings_dir}")
-    print(f"[dashboard] Viewfinder binary:    {args.viewfinder_bin}")
-    print(f"[dashboard] Live VF port:         {args.live_port}  (nginx → /stream/evk/)")
-    print(f"[dashboard] HTML file:            {args.html_file}")
-    print(f"[dashboard] Serving API at:       http://{args.host}:{args.port}")
+    # Allow CLI override of the supervisor URL module-level variable.
+    _SUPERVISOR_RPC_URL = args.supervisor_rpc_url
+
+    print(f"[backend]  Recordings dir:    {args.recordings_dir}")
+    print(f"[backend]  Viewfinder binary: {args.viewfinder_bin}")
+    print(f"[backend]  Live VF port:      {args.live_port}  (nginx → /stream/evk/)")
+    print(f"[backend]  Supervisor RPC:    {_SUPERVISOR_RPC_URL}  (proxied at /supervisor/)")
+    print(f"[backend]  CORS origin:       {_ALLOWED_ORIGIN}")
+    print(f"[backend]  API at:            http://{args.host}:{args.port}")
+    print(f"[backend]  NOTE: HTML is now served by frontend_server.py, not this process.")
 
     # Auto-start live EVK viewfinder
     proc, err = start_viewfinder("live", vf_configs["live"])

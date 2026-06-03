@@ -1,0 +1,59 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Eventide Frontend nginx config  (deploy to /etc/nginx/sites-enabled/eventide-frontend)
+#
+# This server lives on the OPERATOR'S NETWORK (laptop, ground station, etc.)
+# and handles ONLY:
+#   - Dashboard HTML    (frontend_server.py @ 127.0.0.1:8000)
+#   - OSM tile proxy    (frontend_server.py @ 127.0.0.1:8000/tiles/...)
+#
+# Tile caching via nginx proxy_cache keeps internet bandwidth minimal and
+# makes the map usable even if internet is intermittent.
+#
+# The backend device IP is entered in the dashboard header at runtime.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Tile cache zone — 500 MB on disk, 10 MB metadata in RAM, tiles expire after 30 days.
+proxy_cache_path /var/cache/nginx/osm_tiles
+    levels=1:2
+    keys_zone=osm_tiles:10m
+    max_size=500m
+    inactive=30d
+    use_temp_path=off;
+
+server {
+    listen 80;
+    server_name _;  # set to your hostname/IP if needed
+
+    # --- Dashboard HTML ---
+    location / {
+        proxy_pass http://127.0.0.1:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # --- OSM tile proxy with caching ---
+    # frontend_server.py fetches tiles from openstreetmap.org and returns them.
+    # nginx caches them here for 30 days so repeated map views hit disk, not internet.
+    location /tiles/ {
+        proxy_pass http://127.0.0.1:8000/tiles/;
+        proxy_set_header Host $host;
+
+        proxy_buffering on;
+        proxy_buffer_size 8k;
+        proxy_buffers 16 8k;
+
+        proxy_cache osm_tiles;
+        proxy_cache_key $uri;
+        proxy_cache_valid 200 30d;
+        proxy_cache_use_stale error timeout updating;
+        proxy_cache_lock on;
+        proxy_ignore_headers Cache-Control Expires Set-Cookie;
+
+        add_header X-Cache-Status $upstream_cache_status;
+
+        # Tiles are public data; expose them to any origin (the backend iframe
+        # or other tools may request them).
+        add_header Access-Control-Allow-Origin *;
+    }
+}

@@ -1,8 +1,26 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Eventide Backend nginx config  (deploy to /etc/nginx/sites-enabled/eventide-backend)
+#
+# This server lives on the DATA-CONSTRAINED link device.
+# It handles ONLY:
+#   - MJPEG camera streams
+#   - Playback streams
+#   - Flask API  (dashboard.py  @ 127.0.0.1:5000)
+#   - Gimbal API (@ 127.0.0.1:5001)
+#   - Supervisord XML-RPC proxy
+#
+# The dashboard HTML and map tiles are NOT served here; they are on the
+# separate frontend server (see eventide-frontend.nginx.conf).
+#
+# CORS headers are added by dashboard.py itself so the browser can call
+# this server cross-origin from wherever the frontend is hosted.
+# ──────────────────────────────────────────────────────────────────────────────
+
 server {
     listen 80;
     server_name _;  # matches any hostname / IP
 
-    # --- MJPEG streams ---
+    # --- MJPEG live streams ---
     location /stream/evk/ {
         proxy_pass http://127.0.0.1:8081/stream;
         proxy_buffering off;
@@ -27,8 +45,7 @@ server {
         chunked_transfer_encoding on;
     }
 
-    # --- MJPEG playback System ---
-
+    # --- MJPEG playback ---
     location /playback/ {
         proxy_pass http://127.0.0.1:8084/;
         proxy_buffering off;
@@ -37,8 +54,7 @@ server {
         chunked_transfer_encoding on;
     }
 
-    # --- Settings endpoints ---
-
+    # --- Per-camera settings / streaming toggle endpoints ---
     location /settings/evk/ {
         proxy_pass http://127.0.0.1:8081/api/settings;
     }
@@ -64,7 +80,6 @@ server {
     }
 
     # --- Playback settings endpoints ---
-
     location /settings/pb/evk/ {
         proxy_pass http://127.0.0.1:8084/api/settings;
     }
@@ -89,18 +104,24 @@ server {
         proxy_pass http://127.0.0.1:8086/api/streaming;
     }
 
-    # --- Supervisord XML-RPC proxy ---
-    # Requires in supervisord.conf:
-    #   [inet_http_server]
-    #   port = 127.0.0.1:8080
-    location /supervisor/ {
-        proxy_pass http://127.0.0.1:8080/RPC2;
-        proxy_set_header Content-Type text/xml;
-        proxy_set_header Host $host;
-    }
+    # --- Supervisord XML-RPC ---
+    # NOTE: /supervisor/ is no longer proxied here directly.
+    # dashboard.py now handles it in Flask (/supervisor/ → POST → supervisord
+    # at 127.0.0.1:9001/RPC2).  This is because the dashboard is cross-origin;
+    # the browser sends a CORS preflight (OPTIONS) first, which supervisord's
+    # own HTTP server rejects with 501.  Flask answers OPTIONS cleanly and
+    # forwards only the POST server-side, so supervisord never sees the
+    # cross-origin request.
+    #
+    # If you ever need to re-enable direct nginx proxying (same-origin only):
+    # location /supervisor/ {
+    #     proxy_pass http://127.0.0.1:9001/RPC2;
+    #     proxy_set_header Content-Type text/xml;
+    #     proxy_set_header Host $host;
+    # }
 
-
-    # --- API endpoints ---
+    # --- Flask API (dashboard.py) ---
+    # Covers /api/recordings, /api/viewfinder, /api/stream, etc.
     location / {
         proxy_pass http://127.0.0.1:5000/;
         proxy_set_header Host $host;
@@ -108,6 +129,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
+    # --- Gimbal API ---
     location /gimbal/ {
         proxy_pass http://127.0.0.1:5001/;
         proxy_set_header Host $host;
@@ -115,36 +137,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
-    location /tiles/ {
-        # Variable proxy_pass defers DNS resolution so nginx starts without internet.
-        # e.g. /tiles/10/123/456.png  ->  https://tile.openstreetmap.org/10/123/456.png
-        resolver 8.8.8.8 1.1.1.1 valid=300s ipv6=off;
-        resolver_timeout 3s;
-        set $osm_upstream "https://tile.openstreetmap.org";
-
-        # Strip the /tiles/ prefix before forwarding to OSM
-        rewrite ^/tiles/(.*)$ /$1 break;
-        proxy_pass $osm_upstream;
-
-        proxy_set_header       Host tile.openstreetmap.org;
-        proxy_set_header       Referer https://www.openstreetmap.org/;
-        proxy_set_header       User-Agent "Mozilla/5.0 nginx-tile-proxy";
-        proxy_ssl_server_name  on;
-
-        # Buffering must be explicitly on for caching to work with variable proxy_pass
-        proxy_buffering        on;
-        proxy_buffer_size      8k;
-        proxy_buffers          16 8k;
-
-        # Use the stripped URI as the cache key
-        proxy_cache            osm_tiles;
-        proxy_cache_key        $uri;
-        proxy_cache_valid      200 30d;
-        proxy_cache_use_stale  error timeout updating;
-        proxy_cache_lock       on;
-        proxy_ignore_headers   Cache-Control Expires Set-Cookie;
-
-        # Expose cache hit/miss in response headers for debugging
-        add_header X-Cache-Status $upstream_cache_status;
-    }
+    # NOTE: /tiles/ has been REMOVED from this server.
+    # Map tiles are now proxied by the frontend server, keeping tile
+    # bandwidth off the data-constrained link entirely.
 }

@@ -41,6 +41,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .logo{font-family:var(--display);font-size:17px;letter-spacing:.2em;color:var(--accent);text-shadow:0 0 20px rgba(0,207,255,.4)}
 .logo span{color:var(--text-dim);font-size:11px;letter-spacing:.15em;margin-left:8px}
 .hdr-right{display:flex;align-items:center;gap:16px;font-size:9px;letter-spacing:.15em;color:var(--text-dim)}
+.backend-ip-wrap{display:flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--border2);border-radius:20px;background:var(--surface2)}
+.backend-ip-wrap label{font-size:8px;letter-spacing:.14em;color:var(--text-dim);white-space:nowrap}
+.backend-ip-input{background:none;border:none;outline:none;color:var(--accent);font-family:var(--mono);font-size:9px;width:140px;letter-spacing:.04em}
+.backend-ip-input::placeholder{color:var(--text-dim)}
+.backend-conn-dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0;transition:background .3s}
+.backend-conn-dot.on{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+.backend-conn-dot.err{background:var(--warn);box-shadow:0 0 6px var(--warn)}
 .hdr-time{color:var(--text-mid);font-size:10px}
 .status-pill{display:flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid var(--border2);border-radius:20px;font-size:9px;letter-spacing:.12em}
 .status-pill .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
@@ -258,6 +265,14 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 <header>
   <div class="logo">EVENTIDE <span>/ COMMAND CENTRE</span></div>
   <div class="hdr-right">
+    <div class="backend-ip-wrap">
+      <div class="backend-conn-dot" id="backend-conn-dot"></div>
+      <label for="backend-ip-input">BACKEND</label>
+      <input class="backend-ip-input" id="backend-ip-input"
+             type="text" placeholder="192.168.1.x or hostname"
+             oninput="onBackendIpChange(this.value)"
+             onchange="onBackendIpChange(this.value)">
+    </div>
     <div class="status-pill"><div class="dot on" id="hdr-dot-evk"></div>EVK</div>
     <div class="status-pill"><div class="dot" id="hdr-dot-picam"></div>PICAM</div>
     <div class="status-pill"><div class="dot" id="hdr-dot-ircam"></div>IRCAM</div>
@@ -349,19 +364,19 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
   <!-- Column 2: 3 stacked live streams -->
   <div class="stream-main">
     <div class="stream-cell on" id="cell-evk">
-      <img id="img-evk" src="/stream/evk/" alt="EVK4">
+      <img id="img-evk" src="about:blank" alt="EVK4">
       <div class="stream-label">EVK4</div>
       <div class="stream-status-dot"></div>
       <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
     </div>
     <div class="stream-cell on" id="cell-picam">
-      <img id="img-picam" src="/stream/picam/" alt="PICAM">
+      <img id="img-picam" src="about:blank" alt="PICAM">
       <div class="stream-label" style="color:var(--green)">PICAM</div>
       <div class="stream-status-dot"></div>
       <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
     </div>
     <div class="stream-cell on" id="cell-ircam">
-      <img id="img-ircam" src="/stream/ircam/" alt="IRCAM">
+      <img id="img-ircam" src="about:blank" alt="IRCAM">
       <div class="stream-label" style="color:var(--amber)">IRCAM</div>
       <div class="stream-status-dot"></div>
       <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
@@ -629,18 +644,94 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 
 <script>
 // ═══════════════════════════════════════════════════════════
-//  CONFIG
+//  CONFIG — BACKEND IP
+//  All API calls go to the backend device (data-constrained link).
+//  The frontend (this page + map tiles) is served from a separate
+//  server so it stays up even when the backend is unreachable.
+//
+//  The backend IP/hostname is stored in localStorage and applied at
+//  startup. Change it via the header input at any time.
 // ═══════════════════════════════════════════════════════════
-// nginx proxies /supervisor/ → http://127.0.0.1:9001/RPC2
-// See comment in the supervisor tab HTML above for setup.
-const SUPERVISOR_URL = '/supervisor/';
 
-const STREAM_ENDPOINTS = {
-  evk:   '/stream/evk/',
-  picam: '/stream/picam/',
-  ircam: '/stream/ircam/',
-};
-const PLAYBACK_ENDPOINT = '/playback/'
+const BACKEND_STORAGE_KEY = 'eventide_backend_ip';
+
+// Build the full base URL for the backend from a raw host string.
+// Accepts:  "192.168.1.42"  "192.168.1.42:8080"  "http://192.168.1.42"
+function buildBaseUrl(host) {
+  host = (host || '').trim();
+  if (!host) return '';
+  if (/^https?:\/\//i.test(host)) return host.replace(/\/$/, '');
+  return 'http://' + host;
+}
+
+let _backendBase = buildBaseUrl(localStorage.getItem(BACKEND_STORAGE_KEY) || '');
+
+function getBase() { return _backendBase; }
+
+// Resolved endpoint helpers — all API traffic uses these.
+function supervisorUrl()    { return getBase() + '/supervisor/'; }
+function streamUrl(cam)     { return getBase() + '/stream/' + cam + '/'; }
+function playbackUrl(path)  { return getBase() + '/playback' + (path || '/'); }
+function apiUrl(path)       { return getBase() + '/api' + path; }
+function settingsUrl(cam, pb) {
+  return getBase() + (pb ? `/settings/pb/${cam}/` : `/settings/${cam}/`);
+}
+function viewUrl(cam, pb) {
+  return getBase() + (pb ? `/view/pb/${cam}/` : `/view/${cam}/`);
+}
+function gimbalUrl(path)    { return getBase() + '/gimbal' + path; }
+
+// Called whenever the IP input changes.
+function onBackendIpChange(raw) {
+  _backendBase = buildBaseUrl(raw);
+  if (raw.trim()) {
+    localStorage.setItem(BACKEND_STORAGE_KEY, raw.trim());
+  } else {
+    localStorage.removeItem(BACKEND_STORAGE_KEY);
+  }
+  setBackendConnState('pending');
+  // Probe the backend with a lightweight call.
+  probeBackend();
+  // Refresh live stream src so they point to the new host.
+  refreshStreamSrcs();
+  // Re-fetch camera settings for the new backend.
+  ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
+  fetchPlaybackSettings();
+}
+
+function setBackendConnState(state) {
+  const dot = document.getElementById('backend-conn-dot');
+  if (!dot) return;
+  dot.className = 'backend-conn-dot' + (state === 'ok' ? ' on' : state === 'err' ? ' err' : '');
+}
+
+async function probeBackend() {
+  if (!getBase()) { setBackendConnState(''); return; }
+  try {
+    const r = await fetch(apiUrl('/recordings/evk'), { signal: AbortSignal.timeout(3000) });
+    setBackendConnState(r.ok ? 'ok' : 'err');
+  } catch { setBackendConnState('err'); }
+}
+
+function refreshStreamSrcs() {
+  ['evk', 'picam', 'ircam'].forEach(cam => {
+    const tog = document.getElementById('tog-' + cam);
+    const img = document.getElementById('img-' + cam);
+    if (tog && tog.checked && img && getBase()) {
+      img.src = 'about:blank';
+      setTimeout(() => { img.src = streamUrl(cam) + '?t=' + Date.now(); }, 100);
+    }
+  });
+}
+
+// ── Restore saved IP on load ──────────────────────────────
+(function restoreBackendIp() {
+  const saved = localStorage.getItem(BACKEND_STORAGE_KEY) || '';
+  const input = document.getElementById('backend-ip-input');
+  if (input && saved) { input.value = saved; }
+  _backendBase = buildBaseUrl(saved);
+  if (saved) probeBackend();
+})();
 
 let activeTab      = 'main';
 let activeInnerTab = 'evk';
@@ -704,12 +795,12 @@ function switchInnerTab(cam) {
 //  GET/PUT /view/pb/<cam>/        → playback mjpeg_server /api/streaming
 // ═══════════════════════════════════════════════════════════
 async function mjpegGetSettings(cam, isPlayback = false) {
-  const url = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
+  const url = settingsUrl(cam, isPlayback);
   try { const r = await fetch(url); return r.ok ? r.json() : null; }
   catch { return null; }
 }
 async function mjpegPutSettings(cam, out_width, out_height, quality, isPlayback = false) {
-  const url = isPlayback ? `/settings/pb/${cam}/` : `/settings/${cam}/`;
+  const url = settingsUrl(cam, isPlayback);
   const r = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -722,7 +813,7 @@ async function mjpegPutSettings(cam, out_width, out_height, quality, isPlayback 
   return r.json();
 }
 async function mjpegPutStreaming(cam, streaming, isPlayback = false) {
-  const url = isPlayback ? `/view/pb/${cam}/` : `/view/${cam}/`;
+  const url = viewUrl(cam, isPlayback);
   const r = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -754,7 +845,7 @@ async function toggleStream(cam, on) {
   const img  = document.getElementById('img-' + cam);
   if (on) {
     cell.classList.replace('off', 'on');
-    setTimeout(() => { img.src = STREAM_ENDPOINTS[cam] + '?t=' + Date.now(); }, 150);
+    setTimeout(() => { img.src = streamUrl(cam) + '?t=' + Date.now(); }, 150);
     toast(cam.toUpperCase() + ' stream enabled', 'ok');
   } else {
     cell.classList.replace('on', 'off');
@@ -772,7 +863,7 @@ async function applyStream(cam) {
     toast(cam.toUpperCase() + ' settings applied', 'ok');
     const img = document.getElementById('img-' + cam);
     img.src = 'about:blank';
-    setTimeout(() => { img.src = STREAM_ENDPOINTS[cam] + '?t=' + Date.now(); }, 100);
+    setTimeout(() => { img.src = streamUrl(cam) + '?t=' + Date.now(); }, 100);
   } catch(e) { toast(cam.toUpperCase() + ' apply failed: ' + e.message, 'err'); }
 }
 function updateHeaderDots() {
@@ -809,7 +900,7 @@ function extBadge(ext) {
 async function loadRecordings(cam) {
   const el = document.getElementById('rec-list-' + cam);
   try {
-    const res  = await fetch('/api/recordings/' + cam);
+    const res  = await fetch(apiUrl('/recordings/' + cam));
     const data = await res.json();
     if (!data.files?.length) { el.innerHTML = '<div class="empty">No recordings found.</div>'; return; }
     el.innerHTML = data.files.map(f => `
@@ -825,7 +916,7 @@ async function loadRecordings(cam) {
           <button class="icon-btn play-btn ${playingFile===f.name?'playing-btn':''}"
                   onclick="startReplay('${cam}','${f.name}')">${playingFile===f.name?'■':'▶'}</button>
           <button class="icon-btn" title="Download"
-                  onclick="window.location.href='/api/recordings/${cam}/${encodeURIComponent(f.name)}/download'">↓</button>
+                  onclick="window.location.href=apiUrl('/recordings/${cam}/${encodeURIComponent(f.name)}/download')">↓</button>
         </div>
       </div>`).join('');
   } catch { el.innerHTML = '<div class="empty">Error loading recordings</div>'; }
@@ -836,7 +927,7 @@ async function startReplay(cam, filename) {
   const speed = parseFloat(document.getElementById('pb-speed').value);
   if (playingFile === filename) { stopPlayback(); return; }
 
-  const res  = await fetch('/playback/play', {
+  const res  = await fetch(playbackUrl('/play'), {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ filename, speed, cam }),
   });
@@ -847,7 +938,7 @@ async function startReplay(cam, filename) {
   const img = document.getElementById('pb-img');
   // Point the img at the nginx-proxied MJPEG stream for this camera.
   // The playback_server always streams at /playback/<cam>/ via nginx.
-  img.src = PLAYBACK_ENDPOINT;
+  img.src = playbackUrl('/');
   img.style.display = 'block';
   document.getElementById('pb-offline').style.display = 'none';
   document.getElementById('pb-pill').textContent = cam.toUpperCase() + ' PLAYING';
@@ -857,7 +948,7 @@ async function startReplay(cam, filename) {
   toast('Playing: ' + fmtName(filename), 'ok');
 }
 async function stopPlayback() {
-  await fetch('/playback/stop', {method: 'POST'});
+  await fetch(playbackUrl('/stop'), {method: 'POST'});
   playingFile = null;
   document.getElementById('pb-img').src = 'about:blank';
   document.getElementById('pb-img').style.display = 'none';
@@ -871,7 +962,7 @@ async function stopPlayback() {
 }
 async function selectPlaybackCam(cam) {
   playbackCam = cam;
-  document.getElementById('pb-endpoint-label').textContent = 'ENDPOINT: ' + PLAYBACK_ENDPOINT;
+  document.getElementById('pb-endpoint-label').textContent = 'ENDPOINT: ' + playbackUrl('/');
   await fetchPlaybackSettings();
 }
 async function applyPlaybackSettings() {
@@ -882,7 +973,7 @@ async function applyPlaybackSettings() {
   const height  = parseInt(document.getElementById('pb-height').value);
   const fps     = parseInt(document.getElementById('pb-fps')?.value || 60);
   try {
-    const r = await fetch('/playback/settings', {
+    const r = await fetch(playbackUrl('/settings'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ quality, out_width: width, out_height: height, fps }),
@@ -892,7 +983,7 @@ async function applyPlaybackSettings() {
     const img = document.getElementById('pb-img');
     if (img.style.display !== 'none') {
       img.src = 'about:blank';
-      setTimeout(() => { img.src = PLAYBACK_ENDPOINT }, 100);
+      setTimeout(() => { img.src = playbackUrl('/') }, 100);
     }
   } catch(e) { toast('Playback apply failed: ' + e.message, 'err'); }
 }
@@ -900,7 +991,7 @@ async function applyPlaybackSettings() {
 async function fetchPlaybackSettings() {
   // Populate the playback settings panel from the server's current values.
   try {
-    const r = await fetch('/playback/settings');
+    const r = await fetch(playbackUrl('/settings'));
     if (!r.ok) return;
     const s = await r.json();
     const qEl  = document.getElementById('pb-quality');
@@ -1020,7 +1111,7 @@ function xmlrpcCall(method, ...params) {
     return `<param><value><int>${p}</int></value></param>`;
   }).join('');
   const body = `<?xml version="1.0"?><methodCall><methodName>${method}</methodName><params>${paramXml}</params></methodCall>`;
-  return fetch(SUPERVISOR_URL, {
+  return fetch(supervisorUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'text/xml' },
     body,
@@ -1187,8 +1278,12 @@ function toast(msg, type='') {
 // ═══════════════════════════════════════════════════════════
 updateHeaderDots();
 initMap();
-['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
-fetchPlaybackSettings();
+// Populate stream + playback settings once backend IP is available.
+if (getBase()) {
+  ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
+  fetchPlaybackSettings();
+  refreshStreamSrcs();
+}
 
 // ═══════════════════════════════════════════════════════════
 //  GIMBAL API
@@ -1198,9 +1293,8 @@ fetchPlaybackSettings();
 //  PUT  /gimbal/rc        — direct pan/tilt/frame control
 //  GET  /gimbal/telemetry — live telemetry from gimbal loop
 // ═══════════════════════════════════════════════════════════
-const GIMBAL_TARGET_URL    = '/gimbal/target';
-const GIMBAL_RC_URL        = '/gimbal/rc';
-const GIMBAL_TELEMETRY_URL = '/gimbal/telemetry';
+// All gimbal URLs are now built dynamically via gimbalUrl() using
+// the backend IP set in the header.
 
 let gimbalPollTimer = null;
 
@@ -1220,7 +1314,7 @@ async function submitGimbalTarget() {
   btn.disabled = true;
 
   try {
-    const r = await fetch(GIMBAL_TARGET_URL, {
+    const r = await fetch(gimbalUrl('/target'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lat, lon, alt }),
@@ -1256,7 +1350,7 @@ async function submitRcControl() {
   btn.disabled = true;
 
   try {
-    const r = await fetch(GIMBAL_RC_URL, {
+    const r = await fetch(gimbalUrl('/rc'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pan, tilt, frame }),
@@ -1293,7 +1387,7 @@ async function nudgeRc(axis, delta) {
   document.getElementById('rc-tilt').value = newTilt.toFixed(1);
 
   try {
-    const r = await fetch(GIMBAL_RC_URL, {
+    const r = await fetch(gimbalUrl('/rc'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pan: newPan, tilt: newTilt, frame }),
@@ -1326,7 +1420,7 @@ function setFrameToggle(vehicleFrame) {
 // Poll GET /gimbal/telemetry and update the readout fields
 async function pollGimbalTelemetry() {
   try {
-    const r = await fetch(GIMBAL_TELEMETRY_URL);
+    const r = await fetch(gimbalUrl('/telemetry'));
     if (r.status === 503) {
       setGimbalConn(true, 'Waiting for telemetry…');
       return;

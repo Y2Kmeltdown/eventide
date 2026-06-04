@@ -743,7 +743,7 @@ function connectStream(cam) {
   // Clear any pending retry
   clearTimeout(_streamRetryTimer[cam]);
 
-  const url = streamUrl(cam) + '?t=' + Date.now();
+  const url = streamUrl(cam);
 
   img.onerror = () => {
     // Only retry if the toggle is still on

@@ -719,9 +719,52 @@ function refreshStreamSrcs() {
     const img = document.getElementById('img-' + cam);
     if (tog && tog.checked && img && getBase()) {
       img.src = 'about:blank';
-      setTimeout(() => { img.src = streamUrl(cam) + '?t=' + Date.now(); }, 100);
+      setTimeout(() => { connectStream(cam); }, 100);
     }
   });
+}
+
+// ── Stream watchdog ───────────────────────────────────────────────────────────
+// When an MJPEG <img> errors (stream offline, process not yet started, CORS
+// block, etc.) we retry with exponential backoff up to 8 s.  Once the stream
+// comes back the backoff resets so a brief dropout recovers quickly.
+// This is the main fix for the EVK viewfinder not appearing after supervisor
+// starts it — the browser would get a 503/connection-refused on the first
+// attempt and give up forever.
+
+const _streamRetryDelay = {}; // cam → current retry ms
+const _streamRetryTimer = {}; // cam → setTimeout handle
+
+function connectStream(cam) {
+  const img = document.getElementById('img-' + cam);
+  const tog = document.getElementById('tog-' + cam);
+  if (!img || !tog || !tog.checked || !getBase()) return;
+
+  // Clear any pending retry
+  clearTimeout(_streamRetryTimer[cam]);
+
+  const url = streamUrl(cam) + '?t=' + Date.now();
+
+  img.onerror = () => {
+    // Only retry if the toggle is still on
+    if (!document.getElementById('tog-' + cam)?.checked) return;
+    const delay = _streamRetryDelay[cam] || 500;
+    _streamRetryDelay[cam] = Math.min(delay * 2, 8000);
+    _streamRetryTimer[cam] = setTimeout(() => connectStream(cam), delay);
+    // Show offline state while retrying
+    document.getElementById('cell-' + cam)?.classList.replace('on', 'off');
+    document.getElementById('hdr-dot-' + cam)?.classList.remove('on');
+  };
+
+  img.onload = () => {
+    // Stream came up — reset backoff and show online state
+    _streamRetryDelay[cam] = 500;
+    document.getElementById('cell-' + cam)?.classList.replace('off', 'on');
+    const dot = document.getElementById('hdr-dot-' + cam);
+    if (dot) dot.className = 'dot on';
+  };
+
+  img.src = url;
 }
 
 // ── Restore saved IP on load ──────────────────────────────
@@ -845,10 +888,14 @@ async function toggleStream(cam, on) {
   const img  = document.getElementById('img-' + cam);
   if (on) {
     cell.classList.replace('off', 'on');
-    setTimeout(() => { img.src = streamUrl(cam) + '?t=' + Date.now(); }, 150);
+    setTimeout(() => connectStream(cam), 150);
     toast(cam.toUpperCase() + ' stream enabled', 'ok');
   } else {
+    // Cancel any pending watchdog retry before blanking the src
+    clearTimeout(_streamRetryTimer[cam]);
+    _streamRetryDelay[cam] = 500;
     cell.classList.replace('on', 'off');
+    img.onerror = null;
     img.src = 'about:blank';
     toast(cam.toUpperCase() + ' stream disabled');
   }
@@ -863,7 +910,7 @@ async function applyStream(cam) {
     toast(cam.toUpperCase() + ' settings applied', 'ok');
     const img = document.getElementById('img-' + cam);
     img.src = 'about:blank';
-    setTimeout(() => { img.src = streamUrl(cam) + '?t=' + Date.now(); }, 100);
+    setTimeout(() => connectStream(cam), 100);
   } catch(e) { toast(cam.toUpperCase() + ' apply failed: ' + e.message, 'err'); }
 }
 function updateHeaderDots() {

@@ -257,6 +257,27 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 .telem-val.warn{color:var(--warn)}
 .telem-val.green{color:var(--green)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ADS-B */
+#adsb-table-wrap{max-height:220px;overflow-y:auto}
+#adsb-table-wrap::-webkit-scrollbar{width:3px}
+#adsb-table-wrap::-webkit-scrollbar-thumb{background:var(--border2)}
+.adsb-table{width:100%;border-collapse:collapse;font-size:9px}
+.adsb-table th{padding:4px 2px;text-align:left;font-size:7px;letter-spacing:.1em;color:var(--text-dim);border-bottom:1px solid var(--border);font-weight:normal}
+.adsb-table td{padding:4px 2px;border-bottom:1px solid #0a1520;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px}
+.adsb-table tr{cursor:pointer}
+.adsb-table tr:hover{background:var(--surface2)}
+.adsb-table tr.selected{background:rgba(0,207,255,.1)}
+.adsb-track-btn{padding:2px 6px;font-size:7px;letter-spacing:.08em;border:1px solid var(--accent);color:var(--accent);background:var(--accent-dim);border-radius:var(--r);cursor:pointer;transition:all .12s;white-space:nowrap}
+.adsb-track-btn:hover{background:rgba(0,207,255,.15)}
+.adsb-track-btn.active{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
+.adsb-track-btn:disabled{opacity:.5;cursor:not-allowed}
+.adsb-marker{position:relative;width:16px;height:16px;cursor:pointer}
+.adsb-dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;background:var(--amber);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 8px var(--amber);z-index:1;transition:all .2s}
+.adsb-marker:hover .adsb-dot{width:12px;height:12px}
+.adsb-marker.selected .adsb-dot{background:var(--warn);box-shadow:0 0 12px var(--warn);width:14px;height:14px}
+.adsb-label{position:absolute;top:-18px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:8px;color:var(--amber);text-shadow:0 1px 2px #000;background:rgba(4,10,15,.85);padding:1px 4px;border:1px solid var(--border);border-radius:2px;pointer-events:none;z-index:2}
+.adsb-marker.selected .adsb-label{color:var(--warn);border-color:var(--warn)}
 </style>
 </head>
 <body>
@@ -477,6 +498,15 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
         <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-tgt-lat">—</span></div>
         <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-tgt-lon">—</span></div>
         <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-tgt-alt">—</span></div>
+      </div>
+
+      <!-- ADS-B targets -->
+      <div class="position-section">
+        <div class="section-title">ADS-B TARGETS</div>
+        <div id="adsb-table-wrap">
+          <div class="empty" style="padding:8px 0">Waiting for data…</div>
+        </div>
+        <button class="apply-btn" id="adsb-stop-btn" onclick="stopAdsbTracking()" style="margin-top:8px;display:none">■ STOP ADS-B TRACK</button>
       </div>
 
       <!-- Gimbal output -->
@@ -786,6 +816,9 @@ let targetMarker   = null;
 let hasDeviceFix   = false;
 let selectedProc   = null;
 let superPollTimer = null;
+let adsbPollTimer  = null;
+let adsbMarkers    = {};   // icao → L.marker
+let activeAdsbIcao = null;
 
 // ═══════════════════════════════════════════════════════════
 //  CLOCK
@@ -1518,13 +1551,23 @@ function updateTelemDisplay(d) {
   const modeStr = (d.mode || '').toUpperCase();
   if (modeEl) {
     modeEl.textContent = modeStr || '—';
-    modeEl.className = 'telem-val ' + (d.mode === 'targeting' ? 'green' : 'warn');
+    modeEl.className = 'telem-val ' + (d.mode === 'targeting' || d.mode === 'adsb' ? 'green' : 'warn');
   }
   if (modeBadge) {
     modeBadge.textContent = modeStr || '—';
-    modeBadge.style.borderColor = d.mode === 'targeting' ? 'rgba(0,232,157,.4)' : 'rgba(255,184,48,.4)';
-    modeBadge.style.color = d.mode === 'targeting' ? 'var(--green)' : 'var(--amber)';
+    modeBadge.style.borderColor = (d.mode === 'targeting' || d.mode === 'adsb') ? 'rgba(0,232,157,.4)' : 'rgba(255,184,48,.4)';
+    modeBadge.style.color = (d.mode === 'targeting' || d.mode === 'adsb') ? 'var(--green)' : 'var(--amber)';
   }
+
+  // Sync ADS-B tracking state from telemetry
+  if (d.adsb_icao) {
+    activeAdsbIcao = d.adsb_icao;
+  } else if (d.mode !== 'adsb') {
+    activeAdsbIcao = null;
+  }
+  const stopBtn = document.getElementById('adsb-stop-btn');
+  if (stopBtn) stopBtn.style.display = activeAdsbIcao ? '' : 'none';
+  refreshAdsbMarkerStyles();
 
   // Measured gimbal attitude
   setText('tl-roll',       fmt2(d.roll_meas)  + '°');
@@ -1550,6 +1593,157 @@ function setGimbalConn(ok, msg) {
   if (label) label.textContent = msg || (ok ? 'Connected' : 'Gimbal API unreachable');
 }
 
+// ═══════════════════════════════════════════════════════════
+//  ADS-B API
+//  GET  /gimbal/adsb/tracks   — list of visible aircraft
+//  PUT  /gimbal/adsb/track    — lock onto aircraft by ICAO
+//  DELETE /gimbal/adsb/track  — stop ADS-B tracking
+// ═══════════════════════════════════════════════════════════
+
+async function pollAdsbTracks() {
+  if (!getBase()) return;
+  try {
+    const r = await fetch(gimbalUrl('/adsb/tracks'), { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return;
+    const tracks = await r.json();
+    renderAdsbTable(tracks);
+    updateAdsbMarkers(tracks);
+  } catch { /* silent — backend may be unreachable */ }
+}
+
+function renderAdsbTable(tracks) {
+  const wrap = document.getElementById('adsb-table-wrap');
+  if (!wrap) return;
+  if (!Array.isArray(tracks) || !tracks.length) {
+    wrap.innerHTML = '<div class="empty" style="padding:8px 0">No ADS-B targets</div>';
+    return;
+  }
+  const html = `
+    <table class="adsb-table">
+      <thead><tr>
+        <th>CS</th><th>DIST</th><th>ALT</th><th>SPD</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${tracks.map(t => {
+          const dist = t.distance_m != null ? (t.distance_m < 1000 ? t.distance_m + 'm' : (t.distance_m/1000).toFixed(1) + 'km') : '—';
+          const alt = t.alt_ft != null ? Math.round(t.alt_ft) + '\'' : '—';
+          const spd = t.speed != null ? Math.round(t.speed) : '—';
+          const selected = activeAdsbIcao === t.icao;
+          return `<tr class="${selected ? 'selected' : ''}" onclick="selectAdsbTrack('${t.icao}')">
+            <td title="${t.icao}">${t.callsign || t.icao}</td>
+            <td>${dist}</td>
+            <td>${alt}</td>
+            <td>${spd}</td>
+            <td style="text-align:right">
+              <button class="adsb-track-btn ${selected ? 'active' : ''}" onclick="event.stopPropagation();selectAdsbTrack('${t.icao}')">
+                ${selected ? '● TRACKING' : 'TRACK'}
+              </button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  wrap.innerHTML = html;
+}
+
+async function selectAdsbTrack(icao) {
+  if (!icao) return;
+  const btn = document.getElementById('adsb-stop-btn');
+  if (btn) { btn.textContent = '⏳ ACQUIRING…'; btn.disabled = true; }
+  try {
+    const r = await fetch(gimbalUrl('/adsb/track'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ icao }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      toast('ADS-B track failed: ' + (data.error || r.statusText), 'err');
+    } else {
+      activeAdsbIcao = icao;
+      toast('ADS-B tracking: ' + icao + (data.callsign ? ' (' + data.callsign + ')' : ''), 'ok');
+      pollAdsbTracks();
+      pollGimbalTelemetry();
+    }
+  } catch(e) {
+    toast('ADS-B unreachable: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.textContent = '■ STOP ADS-B TRACK'; btn.disabled = false; }
+  }
+}
+
+async function stopAdsbTracking() {
+  const btn = document.getElementById('adsb-stop-btn');
+  if (btn) { btn.textContent = '⏳ STOPPING…'; btn.disabled = true; }
+  try {
+    const r = await fetch(gimbalUrl('/adsb/track'), { method: 'DELETE' });
+    const data = await r.json();
+    if (!r.ok) {
+      toast('ADS-B stop failed: ' + (data.error || r.statusText), 'err');
+    } else {
+      activeAdsbIcao = null;
+      toast('ADS-B tracking stopped', 'ok');
+      pollAdsbTracks();
+      pollGimbalTelemetry();
+    }
+  } catch(e) {
+    toast('ADS-B unreachable: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.textContent = '■ STOP ADS-B TRACK'; btn.disabled = false; }
+  }
+}
+
+function updateAdsbMarkers(tracks) {
+  if (!mapInstance) return;
+  const seen = new Set();
+  (tracks || []).forEach(t => {
+    if (t.lat == null || t.lon == null) return;
+    seen.add(t.icao);
+    let m = adsbMarkers[t.icao];
+    if (!m) {
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="adsb-marker ${activeAdsbIcao === t.icao ? 'selected' : ''}" id="adsb-mkr-${t.icao}">
+          <div class="adsb-label">${t.callsign || t.icao}</div>
+          <div class="adsb-dot"></div>
+        </div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      });
+      m = L.marker([t.lat, t.lon], { icon, interactive: true }).addTo(mapInstance);
+      m.on('click', () => selectAdsbTrack(t.icao));
+      adsbMarkers[t.icao] = m;
+    } else {
+      m.setLatLng([t.lat, t.lon]);
+      const el = document.getElementById(`adsb-mkr-${t.icao}`);
+      if (el) {
+        el.classList.toggle('selected', activeAdsbIcao === t.icao);
+        const lbl = el.querySelector('.adsb-label');
+        if (lbl) lbl.textContent = t.callsign || t.icao;
+      }
+    }
+  });
+  // Remove stale markers
+  Object.keys(adsbMarkers).forEach(icao => {
+    if (!seen.has(icao)) {
+      mapInstance.removeLayer(adsbMarkers[icao]);
+      delete adsbMarkers[icao];
+    }
+  });
+}
+
+function refreshAdsbMarkerStyles() {
+  Object.keys(adsbMarkers).forEach(icao => {
+    const el = document.getElementById(`adsb-mkr-${icao}`);
+    if (el) el.classList.toggle('selected', activeAdsbIcao === icao);
+  });
+}
+
+function startAdsbPolling() {
+  pollAdsbTracks();
+  if (!adsbPollTimer) adsbPollTimer = setInterval(pollAdsbTracks, 1500);
+}
+
 function startGimbalPolling() {
   pollGimbalTelemetry();
   if (!gimbalPollTimer) gimbalPollTimer = setInterval(pollGimbalTelemetry, 500);
@@ -1557,6 +1751,7 @@ function startGimbalPolling() {
 
 setInterval(loadAllRecordings, 15000);
 startGimbalPolling();
+startAdsbPolling();
 </script>
 </body>
 </html>

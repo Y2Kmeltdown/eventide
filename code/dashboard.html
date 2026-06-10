@@ -819,6 +819,8 @@ let superPollTimer = null;
 let adsbPollTimer  = null;
 let adsbMarkers    = {};   // icao → L.marker
 let activeAdsbIcao = null;
+let _adsbUserStopTime = 0; // timestamp when user last clicked stop tracking
+const ADSB_STOP_GRACE_MS = 2500;
 
 // ═══════════════════════════════════════════════════════════
 //  CLOCK
@@ -1561,9 +1563,14 @@ function updateTelemDisplay(d) {
 
   // Sync ADS-B tracking state from telemetry
   if (d.adsb_icao) {
-    activeAdsbIcao = d.adsb_icao;
+    // Ignore stale telemetry that still carries the old ICAO for a short
+    // while after the user explicitly clicked stop tracking.
+    if (!_adsbUserStopTime || Date.now() - _adsbUserStopTime > ADSB_STOP_GRACE_MS) {
+      activeAdsbIcao = d.adsb_icao;
+    }
   } else if (d.mode !== 'adsb') {
     activeAdsbIcao = null;
+    _adsbUserStopTime = 0; // confirmed stopped — clear grace period
   }
   const stopBtn = document.getElementById('adsb-stop-btn');
   if (stopBtn) stopBtn.style.display = activeAdsbIcao ? '' : 'none';
@@ -1661,9 +1668,10 @@ async function selectAdsbTrack(icao) {
       toast('ADS-B track failed: ' + (data.error || r.statusText), 'err');
     } else {
       activeAdsbIcao = icao;
+      _adsbUserStopTime = 0; // clear any stop grace period
       toast('ADS-B tracking: ' + icao + (data.callsign ? ' (' + data.callsign + ')' : ''), 'ok');
-      pollAdsbTracks();
-      pollGimbalTelemetry();
+      await pollAdsbTracks();
+      await pollGimbalTelemetry();
     }
   } catch(e) {
     toast('ADS-B unreachable: ' + e.message, 'err');
@@ -1682,9 +1690,10 @@ async function stopAdsbTracking() {
       toast('ADS-B stop failed: ' + (data.error || r.statusText), 'err');
     } else {
       activeAdsbIcao = null;
+      _adsbUserStopTime = Date.now();
       toast('ADS-B tracking stopped', 'ok');
-      pollAdsbTracks();
-      pollGimbalTelemetry();
+      await pollAdsbTracks();
+      await pollGimbalTelemetry();
     }
   } catch(e) {
     toast('ADS-B unreachable: ' + e.message, 'err');

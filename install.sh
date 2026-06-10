@@ -108,6 +108,13 @@ sudo unlink /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 
+## MAVProxy Installation
+sudo apt-get install python3-dev python3-opencv python3-pip python3-matplotlib python3-lxml python3-pygame
+sudo pip install future PyYAML mavproxy --break-system-packages
+sudo cp /usr/local/eventide/config/mavproxy.service /lib/systemd/system/mavproxy.service
+sudo systemctl daemon-reload
+sudo systemctl enable mavproxy.service
+
 ## Event Camera Data Logger
 cd /usr/local/eventide/packages
 git clone git@github.com:Y2Kmeltdown/evk_datalogger.git

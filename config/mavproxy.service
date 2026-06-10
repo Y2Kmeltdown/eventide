@@ -1,0 +1,14 @@
+[Unit]
+Description=MAVProxy
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+ExecStart=/home/highwire/.local/bin/mavproxy.py --master=/dev/ttyAMA0,115200 --out udp:192.168.30.8:14550 --out udp:127.0.0.1:14551 --non-interactive
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

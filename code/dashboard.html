@@ -490,6 +490,8 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
           <span class="telem-key">GPS</span>
           <span class="telem-val" id="tl-live">—</span>
         </div>
+        <div class="telem-row"><span class="telem-key">PI TEMP</span><span class="telem-val" id="tl-pi-temp">—</span></div>
+        <div class="telem-row"><span class="telem-key">CUBE TEMP</span><span class="telem-val" id="tl-cube-temp">—</span></div>
       </div>
 
       <!-- Active target echo — moved directly under platform -->
@@ -1533,6 +1535,8 @@ function updateTelemDisplay(d) {
     liveEl.className   = 'telem-val ' + (d.live ? 'green' : 'warn');
   }
 
+  setText('tl-pi-temp', fmt1(d.pi_temp) + ' °C');
+  setText('tl-cube-temp', fmt1(d.cube_temp) + ' °C');
   // Active target (new shape: d.target = {lat,lon,alt} or null)
   const tgt = d.target;
   setText('tl-tgt-lat', tgt ? fmt6(tgt.lat) : '—');

@@ -490,6 +490,8 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
           <span class="telem-key">GPS</span>
           <span class="telem-val" id="tl-live">—</span>
         </div>
+        <div class="telem-row"><span class="telem-key">PI TEMP</span><span class="telem-val" id="tl-pi-temp">—</span></div>
+        <div class="telem-row"><span class="telem-key">CUBE TEMP</span><span class="telem-val" id="tl-cube-temp">—</span></div>
       </div>
 
       <!-- Active target echo — moved directly under platform -->
@@ -509,6 +511,20 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
         <button class="apply-btn" id="adsb-stop-btn" onclick="stopAdsbTracking()" style="margin-top:8px;display:none">■ STOP ADS-B TRACK</button>
       </div>
 
+
+      <!-- ADS-B settings -->
+      <div class="position-section">
+        <div class="section-title">ADS-B SETTINGS</div>
+        <div class="form-col" style="margin-bottom:6px">
+          <label class="form-label">Lead time (s)</label>
+          <input class="form-input" type="number" id="adsb-lead-time" step="0.1" min="0" max="20" value="1.0">
+        </div>
+        <div class="form-col" style="margin-bottom:8px">
+          <label class="form-label">Alt offset (m)</label>
+          <input class="form-input" type="number" id="adsb-alt-offset" step="1" value="0">
+        </div>
+        <button class="apply-btn" onclick="applyAdsbSettings()">↺ APPLY</button>
+      </div>
       <!-- Gimbal output -->
       <div class="position-section">
         <div class="section-title">GIMBAL OUTPUT</div>
@@ -727,6 +743,7 @@ function onBackendIpChange(raw) {
   // Re-fetch camera settings for the new backend.
   ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
   fetchPlaybackSettings();
+  fetchAdsbSettings();
 }
 
 function setBackendConnState(state) {
@@ -1364,6 +1381,7 @@ initMap();
 if (getBase()) {
   ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
   fetchPlaybackSettings();
+  fetchAdsbSettings();
   refreshStreamSrcs();
 }
 
@@ -1533,6 +1551,8 @@ function updateTelemDisplay(d) {
     liveEl.className   = 'telem-val ' + (d.live ? 'green' : 'warn');
   }
 
+  setText('tl-pi-temp', fmt1(d.pi_temp) + ' °C');
+  setText('tl-cube-temp', fmt1(d.cube_temp) + ' °C');
   // Active target (new shape: d.target = {lat,lon,alt} or null)
   const tgt = d.target;
   setText('tl-tgt-lat', tgt ? fmt6(tgt.lat) : '—');
@@ -1746,6 +1766,58 @@ function refreshAdsbMarkerStyles() {
     const el = document.getElementById(`adsb-mkr-${icao}`);
     if (el) el.classList.toggle('selected', activeAdsbIcao === icao);
   });
+}
+
+async function applyAdsbSettings() {
+  const lead = parseFloat(document.getElementById('adsb-lead-time').value);
+  const offset = parseFloat(document.getElementById('adsb-alt-offset').value);
+
+  if (isNaN(lead) || isNaN(offset)) {
+    toast('Enter valid values', 'err');
+    return;
+  }
+
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(gimbalUrl('/adsb/lead_time'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_time_s: lead }),
+      }),
+      fetch(gimbalUrl('/adsb/alt_offset'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alt_offset_m: offset }),
+      }),
+    ]);
+    if (r1.ok && r2.ok) {
+      toast(`ADS-B settings applied — lead: ${lead}s  offset: ${offset}m`, 'ok');
+    } else {
+      toast('ADS-B settings failed', 'err');
+    }
+  } catch(e) {
+    toast('ADS-B unreachable: ' + e.message, 'err');
+  }
+}
+
+async function fetchAdsbSettings() {
+  if (!getBase()) return;
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(gimbalUrl('/adsb/lead_time')),
+      fetch(gimbalUrl('/adsb/alt_offset')),
+    ]);
+    if (r1.ok) {
+      const d = await r1.json();
+      const el = document.getElementById('adsb-lead-time');
+      if (el) el.value = d.lead_time_s;
+    }
+    if (r2.ok) {
+      const d = await r2.json();
+      const el = document.getElementById('adsb-alt-offset');
+      if (el) el.value = d.alt_offset_m;
+    }
+  } catch { /* backend not up yet */ }
 }
 
 function startAdsbPolling() {

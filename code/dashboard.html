@@ -923,7 +923,7 @@ async function toggleStream(cam, on) {
   const img  = document.getElementById('img-' + cam);
   if (on) {
     cell.classList.replace('off', 'on');
-    setTimeout(() => connectStream(cam), 150);/
+    setTimeout(() => connectStream(cam), 150);
     toast(cam.toUpperCase() + ' stream enabled', 'ok');
   } else {
     // Cancel any pending watchdog retry before blanking the src

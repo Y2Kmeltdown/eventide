@@ -109,7 +109,13 @@ sudo nginx -t
 sudo systemctl reload nginx
 
 ## MAVProxy Installation
-sudo apt-get install python3-dev python3-opencv python3-pip python3-matplotlib python3-lxml python3-pygame
+sudo apt install -y \
+    python3-dev \
+    python3-opencv \
+    python3-pip \
+    python3-matplotlib \
+    python3-lxml \
+    python3-pygame
 sudo pip install future PyYAML mavproxy --break-system-packages
 sudo cp /usr/local/eventide/config/mavproxy.service /lib/systemd/system/mavproxy.service
 sudo systemctl daemon-reload

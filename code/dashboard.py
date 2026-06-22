@@ -131,7 +131,7 @@ def start_viewfinder(mode: str, params: dict) -> tuple[subprocess.Popen | None, 
 # supervisord, which never sees the cross-origin problem.
 
 _SUPERVISOR_RPC_URL = os.environ.get(
-    "SUPERVISOR_RPC_URL", "http://127.0.0.1:9001/RPC2"
+    "SUPERVISOR_RPC_URL", "http://127.0.0.1:8080/RPC2"
 )
 
 @app.route("/supervisor/", methods=["POST", "OPTIONS"])

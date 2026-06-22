@@ -1553,7 +1553,7 @@ function updateTelemDisplay(d) {
   }
 
   setText('tl-pi-temp', fmt1(d.pi_temp) + ' °C');
-  setText('tl-pi-throttle', fmt1(d.pi_throttle) + ' °C');
+  setText('tl-pi-throttle', fmt1(d.pi_throttle));
   setText('tl-cube-temp', fmt1(d.cube_temp) + ' °C');
   // Active target (new shape: d.target = {lat,lon,alt} or null)
   const tgt = d.target;

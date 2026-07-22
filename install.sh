@@ -152,6 +152,7 @@ git clone git@github.com:j-vanarsdale/tripwire-gimbal-point.git
 cd tripwire-gimbal-point
 sudo cp GIMBAL_POINT_API.py /usr/local/eventide/code/
 sudo cp adsb.py /usr/local/eventide/code/
+sudo pip install telnetlib3 --break-system-packages
 
 
 ## SUPERVISOR INSTALLATION

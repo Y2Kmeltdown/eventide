@@ -136,10 +136,34 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .nudge-btn:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
 .nudge-btn:active{background:var(--amber);color:var(--bg)}
 
+/* RC joystick */
+.rc-joystick-wrap{display:flex;flex-direction:column;align-items:center;margin:2px 0 10px}
+.rc-joystick{position:relative;width:110px;height:110px;border:1px solid var(--border2);border-radius:50%;background:radial-gradient(circle at 50% 50%,var(--surface2) 0%,var(--bg) 100%);touch-action:none;user-select:none;cursor:grab}
+.rc-joystick.active{cursor:grabbing;border-color:var(--amber);box-shadow:0 0 10px rgba(255,184,48,.25)}
+.rc-joystick-knob{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;background:radial-gradient(circle at 35% 35%,var(--surface3) 0%,var(--surface2) 70%);border:1px solid var(--amber);box-shadow:0 0 8px rgba(255,184,48,.35);pointer-events:none}
+.rc-joystick-hint{margin-top:5px;font-size:7px;letter-spacing:.12em;color:var(--text-dim)}
+.rc-joystick-grid{display:grid;grid-template-columns:26px 110px 26px;grid-template-rows:26px 110px 26px;gap:4px;align-items:center;justify-items:center}
+.rc-joystick-grid .rc-joystick{grid-column:2;grid-row:2}
+.rc-arrow{width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
+.rc-arrow:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
+.rc-arrow:active{background:var(--amber);color:var(--bg)}
+.rc-arrow.up{grid-column:2;grid-row:1}
+.rc-arrow.down{grid-column:2;grid-row:3}
+.rc-arrow.left{grid-column:1;grid-row:2}
+.rc-arrow.right{grid-column:3;grid-row:2}
+
 /* Nav panel */
 .nav-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
 .position-section{padding:10px 12px;border-bottom:1px solid var(--border)}
 .section-title{font-family:var(--display);font-size:7px;letter-spacing:.18em;color:var(--text-dim);margin-bottom:8px}
+
+/* Gimbal nested tabs */
+.gimbal-tab-bar{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.gimbal-tab{flex:1;padding:8px 4px;font-family:var(--display);font-size:7px;letter-spacing:.1em;text-align:center;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;transition:all .2s;position:relative;top:1px}
+.gimbal-tab:hover{color:var(--text-mid)}
+.gimbal-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.gimbal-panel{display:none}
+.gimbal-panel.active{display:block}
 .placeholder-item{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:9px}
 .placeholder-item:last-child{border-bottom:none}
 .ph-icon{width:18px;height:18px;border:1px solid var(--border2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0}
@@ -424,62 +448,128 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
         </div>
       </div>
 
-      <!-- Target position input -->
-      <div class="position-section">
-        <div class="section-title">TARGET POSITION</div>
-        <div class="form-col" style="margin-bottom:6px">
-          <label class="form-label">Latitude</label>
-          <input class="form-input" type="number" id="gimbal-lat" step="0.000001" placeholder="-33.765350">
-        </div>
-        <div class="form-col" style="margin-bottom:6px">
-          <label class="form-label">Longitude</label>
-          <input class="form-input" type="number" id="gimbal-lon" step="0.000001" placeholder="150.740870">
-        </div>
-        <div class="form-col" style="margin-bottom:8px">
-          <label class="form-label">Altitude (m)</label>
-          <input class="form-input" type="number" id="gimbal-alt" step="0.1" placeholder="50.0">
-        </div>
-        <button class="apply-btn" id="gimbal-submit-btn" onclick="submitGimbalTarget()">⊕ POINT GIMBAL</button>
+      <!-- Gimbal control nested tabs -->
+      <div class="gimbal-tab-bar">
+        <button class="gimbal-tab active" id="gimbal-tab-target" onclick="switchGimbalTab('target')">TARGET</button>
+        <button class="gimbal-tab" id="gimbal-tab-rc" onclick="switchGimbalTab('rc')">RC</button>
+        <button class="gimbal-tab" id="gimbal-tab-adsb" onclick="switchGimbalTab('adsb')">ADS-B</button>
       </div>
 
-      <!-- RC pan/tilt direct control -->
-      <div class="position-section">
-        <div class="section-title">RC CONTROL</div>
-        <div class="form-row" style="margin-bottom:2px">
-          <div class="form-col">
-            <label class="form-label">Pan (°)</label>
-            <input class="form-input" type="number" id="rc-pan" step="0.1" placeholder="0.0">
+      <!-- Targeting mode panel -->
+      <div class="gimbal-panel active" id="gimbal-panel-target">
+        <div class="position-section">
+          <div class="section-title">TARGET POSITION</div>
+          <div class="form-col" style="margin-bottom:6px">
+            <label class="form-label">Latitude</label>
+            <input class="form-input" type="number" id="gimbal-lat" step="0.000001" placeholder="-33.765350">
+          </div>
+          <div class="form-col" style="margin-bottom:6px">
+            <label class="form-label">Longitude</label>
+            <input class="form-input" type="number" id="gimbal-lon" step="0.000001" placeholder="150.740870">
+          </div>
+          <div class="form-col" style="margin-bottom:8px">
+            <label class="form-label">Altitude (m)</label>
+            <input class="form-input" type="number" id="gimbal-alt" step="0.1" placeholder="50.0">
             <div class="nudge-row">
-              <button class="nudge-btn" onclick="nudgeRc('pan', -10)">−10</button>
-              <button class="nudge-btn" onclick="nudgeRc('pan', +10)">+10</button>
+              <button class="nudge-btn" onclick="usePlatformAlt()">⤓ PLATFORM ALT</button>
             </div>
           </div>
-          <div class="form-col">
-            <label class="form-label">Tilt (°)</label>
-            <input class="form-input" type="number" id="rc-tilt" step="0.1" placeholder="0.0">
-            <div class="nudge-row">
-              <button class="nudge-btn" onclick="nudgeRc('tilt', -10)">−10</button>
-              <button class="nudge-btn" onclick="nudgeRc('tilt', +10)">+10</button>
-            </div>
-          </div>
+          <button class="apply-btn" id="gimbal-submit-btn" onclick="submitGimbalTarget()">⊕ POINT GIMBAL</button>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div>
-            <div style="font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px">Frame</div>
-            <div style="display:flex;align-items:center;gap:7px">
-              <span style="font-size:8px;color:var(--text-dim)" id="rc-frame-label">EARTH</span>
-              <label class="toggle-switch amber-toggle">
-                <input type="checkbox" id="rc-frame-toggle" onchange="onFrameToggleChange(this.checked)">
-                <div class="toggle-track"></div>
-              </label>
-              <span style="font-size:8px;color:var(--text-dim)">VEHICLE</span>
-            </div>
-          </div>
+        <div class="position-section">
+          <div class="section-title">ACTIVE TARGET</div>
+          <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-tgt-lat">—</span></div>
+          <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-tgt-lon">—</span></div>
+          <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-tgt-alt">—</span></div>
         </div>
-        <button class="apply-btn amber" id="rc-submit-btn" onclick="submitRcControl()">⊕ SEND RC</button>
       </div>
 
-      <!-- Platform telemetry -->
+      <!-- RC control panel -->
+      <div class="gimbal-panel" id="gimbal-panel-rc">
+        <div class="position-section">
+          <div class="section-title">RC CONTROL</div>
+          <div class="form-row" style="margin-bottom:2px">
+            <div class="form-col">
+              <label class="form-label">Pan (°)</label>
+              <input class="form-input" type="number" id="rc-pan" step="0.1" min="-180" max="180" placeholder="0.0" onchange="clampRcInputs()">
+            </div>
+            <div class="form-col">
+              <label class="form-label">Tilt (°)</label>
+              <input class="form-input" type="number" id="rc-tilt" step="0.1" min="-90" max="90" placeholder="0.0" onchange="clampRcInputs()">
+            </div>
+          </div>
+          <div class="rc-joystick-wrap">
+            <div class="rc-joystick-grid">
+              <button class="rc-arrow up"    title="Tilt +5°" onclick="nudgeRcDelta(0, +5)">▲</button>
+              <button class="rc-arrow down"  title="Tilt −5°" onclick="nudgeRcDelta(0, -5)">▼</button>
+              <button class="rc-arrow left"  title="Pan −5°"  onclick="nudgeRcDelta(-5, 0)">◀</button>
+              <button class="rc-arrow right" title="Pan +5°"  onclick="nudgeRcDelta(+5, 0)">▶</button>
+              <div class="rc-joystick" id="rc-joystick">
+                <div class="rc-joystick-knob" id="rc-joystick-knob"></div>
+              </div>
+            </div>
+            <div class="rc-joystick-hint">↔ PAN · ↕ TILT · 1–15° PER TICK · ARROWS ±5°</div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div>
+              <div style="font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px">Frame</div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <span style="font-size:8px;color:var(--text-dim)" id="rc-frame-label">EARTH</span>
+                <label class="toggle-switch amber-toggle">
+                  <input type="checkbox" id="rc-frame-toggle" onchange="onFrameToggleChange(this.checked)">
+                  <div class="toggle-track"></div>
+                </label>
+                <span style="font-size:8px;color:var(--text-dim)">VEHICLE</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px;text-align:right">Axis lock</div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <span style="font-size:8px;color:var(--text-dim)" id="rc-lock-label">OFF</span>
+                <label class="toggle-switch amber-toggle">
+                  <input type="checkbox" id="rc-lock-toggle" onchange="onLockToggleChange(this.checked)">
+                  <div class="toggle-track"></div>
+                </label>
+                <span style="font-size:8px;color:var(--text-dim)">ON</span>
+              </div>
+            </div>
+          </div>
+          <button class="apply-btn amber" id="rc-submit-btn" onclick="submitRcControl()">⊕ SEND RC</button>
+        </div>
+      </div>
+
+      <!-- ADS-B tracking panel -->
+      <div class="gimbal-panel" id="gimbal-panel-adsb">
+        <div class="position-section">
+          <div class="section-title">ADS-B TARGETS</div>
+          <div id="adsb-table-wrap">
+            <div class="empty" style="padding:8px 0">Waiting for data…</div>
+          </div>
+          <button class="apply-btn" id="adsb-stop-btn" onclick="stopAdsbTracking()" style="margin-top:8px;display:none">■ STOP ADS-B TRACK</button>
+        </div>
+        <div class="position-section">
+          <div class="section-title">ADS-B SETTINGS</div>
+          <div class="form-col" style="margin-bottom:6px">
+            <label class="form-label">Lead time (s)</label>
+            <input class="form-input" type="number" id="adsb-lead-time" step="0.1" min="0" max="20" value="1.0">
+            <div class="nudge-row">
+              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-lead-time', -0.5, 0, 20)">−0.5</button>
+              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-lead-time', +0.5, 0, 20)">+0.5</button>
+            </div>
+          </div>
+          <div class="form-col" style="margin-bottom:8px">
+            <label class="form-label">Alt offset (m)</label>
+            <input class="form-input" type="number" id="adsb-alt-offset" step="1" value="0">
+            <div class="nudge-row">
+              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-alt-offset', -10)">−10</button>
+              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-alt-offset', +10)">+10</button>
+            </div>
+          </div>
+          <button class="apply-btn" onclick="applyAdsbSettings()">↺ APPLY</button>
+        </div>
+      </div>
+
+      <!-- Platform telemetry — always visible below tabs -->
       <div class="position-section">
         <div class="section-title">PLATFORM</div>
         <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-lat">—</span></div>
@@ -493,38 +583,6 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
         <div class="telem-row"><span class="telem-key">PI TEMP</span><span class="telem-val" id="tl-pi-temp">—</span></div>
         <div class="telem-row"><span class="telem-key">PI THROTTLE</span><span class="telem-val" id="tl-pi-throttle">—</span></div>
         <div class="telem-row"><span class="telem-key">CUBE TEMP</span><span class="telem-val" id="tl-cube-temp">—</span></div>
-      </div>
-
-      <!-- Active target echo — moved directly under platform -->
-      <div class="position-section">
-        <div class="section-title">ACTIVE TARGET</div>
-        <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-tgt-lat">—</span></div>
-        <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-tgt-lon">—</span></div>
-        <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-tgt-alt">—</span></div>
-      </div>
-
-      <!-- ADS-B targets -->
-      <div class="position-section">
-        <div class="section-title">ADS-B TARGETS</div>
-        <div id="adsb-table-wrap">
-          <div class="empty" style="padding:8px 0">Waiting for data…</div>
-        </div>
-        <button class="apply-btn" id="adsb-stop-btn" onclick="stopAdsbTracking()" style="margin-top:8px;display:none">■ STOP ADS-B TRACK</button>
-      </div>
-
-
-      <!-- ADS-B settings -->
-      <div class="position-section">
-        <div class="section-title">ADS-B SETTINGS</div>
-        <div class="form-col" style="margin-bottom:6px">
-          <label class="form-label">Lead time (s)</label>
-          <input class="form-input" type="number" id="adsb-lead-time" step="0.1" min="0" max="20" value="1.0">
-        </div>
-        <div class="form-col" style="margin-bottom:8px">
-          <label class="form-label">Alt offset (m)</label>
-          <input class="form-input" type="number" id="adsb-alt-offset" step="1" value="0">
-        </div>
-        <button class="apply-btn" onclick="applyAdsbSettings()">↺ APPLY</button>
       </div>
       <!-- Gimbal output -->
       <div class="position-section">
@@ -884,6 +942,16 @@ function switchInnerTab(cam) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  GIMBAL NESTED TABS
+// ═══════════════════════════════════════════════════════════
+function switchGimbalTab(tab) {
+  document.querySelectorAll('.gimbal-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.gimbal-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('gimbal-tab-' + tab).classList.add('active');
+  document.getElementById('gimbal-panel-' + tab).classList.add('active');
+}
+
+// ═══════════════════════════════════════════════════════════
 //  MJPEG SERVER API HELPERS
 //  GET/PUT /settings/<cam>/       → live mjpeg_server /api/settings
 //  GET/PUT /view/<cam>/           → live mjpeg_server /api/streaming
@@ -1164,7 +1232,7 @@ function setSelectedTarget(lat, lon, updateInputs) {
   }
 }
 
-function updateDeviceMarker(lat, lon, headingDeg, gimbalPanDeg) {
+function updateDeviceMarker(lat, lon, headingDeg, gimbalPanDeg, vehicleFrame) {
   if (!mapInstance || !deviceMarker) return;
   if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
   deviceMarker.setLatLng([lat, lon]);
@@ -1184,8 +1252,12 @@ function updateDeviceMarker(lat, lon, headingDeg, gimbalPanDeg) {
   const headingEl = el.querySelector('[data-role="dev-heading"]');
   if (headingEl && hdg !== null) headingEl.style.transform = `rotate(${hdg}deg)`;
 
-  const pan = (typeof gimbalPanDeg === 'number' && Number.isFinite(gimbalPanDeg))
-    ? ((gimbalPanDeg % 360) + 360) % 360 : null;
+  // In vehicle frame the pan angle is relative to the vehicle nose, so on
+  // the north-up map it must be drawn at heading + pan; in earth frame the
+  // pan angle is already north-referenced.
+  let pan = (typeof gimbalPanDeg === 'number' && Number.isFinite(gimbalPanDeg)) ? gimbalPanDeg : null;
+  if (pan !== null && vehicleFrame && hdg !== null) pan += hdg;
+  if (pan !== null) pan = ((pan % 360) + 360) % 360;
   const gimbalEl = el.querySelector('[data-role="dev-gimbal"]');
   if (gimbalEl && pan !== null) gimbalEl.style.transform = `rotate(${pan}deg)`;
 }
@@ -1399,6 +1471,20 @@ if (getBase()) {
 
 let gimbalPollTimer = null;
 
+// Last platform altitude from telemetry (null until first fix)
+let _lastPlatformAlt = null;
+
+// Fill the target altitude box with the platform's current altitude
+function usePlatformAlt() {
+  const el = document.getElementById('gimbal-alt');
+  if (!el) return;
+  if (typeof _lastPlatformAlt !== 'number') {
+    toast('No platform altitude yet', 'err');
+    return;
+  }
+  el.value = _lastPlatformAlt.toFixed(1);
+}
+
 // Submit target via PUT /gimbal/target
 async function submitGimbalTarget() {
   const lat = parseFloat(document.getElementById('gimbal-lat').value);
@@ -1435,16 +1521,36 @@ async function submitGimbalTarget() {
   }
 }
 
+// RC axis limits — pan −180…+180°, tilt −90…+90°
+const clampRcPan  = v => Math.min(180, Math.max(-180, v));
+const clampRcTilt = v => Math.min(90,  Math.max(-90, v));
+
+// Clamp the RC input boxes in place (called when the user edits them)
+function clampRcInputs() {
+  const panEl  = document.getElementById('rc-pan');
+  const tiltEl = document.getElementById('rc-tilt');
+  const pan  = parseFloat(panEl.value);
+  const tilt = parseFloat(tiltEl.value);
+  if (!isNaN(pan))  panEl.value  = clampRcPan(pan).toFixed(1);
+  if (!isNaN(tilt)) tiltEl.value = clampRcTilt(tilt).toFixed(1);
+}
+
 // Submit direct RC pan/tilt via PUT /gimbal/rc
 async function submitRcControl() {
-  const pan  = parseFloat(document.getElementById('rc-pan').value);
-  const tilt = parseFloat(document.getElementById('rc-tilt').value);
+  let pan  = parseFloat(document.getElementById('rc-pan').value);
+  let tilt = parseFloat(document.getElementById('rc-tilt').value);
   const frame = document.getElementById('rc-frame-toggle').checked; // true = vehicle
 
   if (isNaN(pan) || isNaN(tilt)) {
     toast('Enter valid pan and tilt values', 'err');
     return;
   }
+
+  // Enforce axis limits and reflect the clamped values in the inputs
+  pan  = clampRcPan(pan);
+  tilt = clampRcTilt(tilt);
+  document.getElementById('rc-pan').value  = pan.toFixed(1);
+  document.getElementById('rc-tilt').value = tilt.toFixed(1);
 
   const btn = document.getElementById('rc-submit-btn');
   btn.textContent = '⏳ SENDING…';
@@ -1471,17 +1577,18 @@ async function submitRcControl() {
   }
 }
 
-// Nudge pan or tilt by a delta from the current pan_out/tilt_out and send immediately
+// Nudge pan/tilt by a delta from the current pan_out/tilt_out and send immediately
 let _lastPanOut  = 0;
 let _lastTiltOut = 0;
 
-async function nudgeRc(axis, delta) {
+async function nudgeRcDelta(deltaPan, deltaTilt) {
   const frame = document.getElementById('rc-frame-toggle').checked;
-  const basePan  = _lastPanOut;
-  const baseTilt = _lastTiltOut;
 
-  const newPan  = axis === 'pan'  ? basePan  + delta : basePan;
-  const newTilt = axis === 'tilt' ? baseTilt + delta : baseTilt;
+  const newPan  = clampRcPan(_lastPanOut  + deltaPan);
+  const newTilt = clampRcTilt(_lastTiltOut + deltaTilt);
+
+  // Never send NaN/Infinity to the backend (e.g. from a zero-radius joystick)
+  if (!Number.isFinite(newPan) || !Number.isFinite(newTilt)) return;
 
   // Reflect in input fields so the user can see the result
   document.getElementById('rc-pan').value  = newPan.toFixed(1);
@@ -1495,7 +1602,7 @@ async function nudgeRc(axis, delta) {
     });
     const data = await r.json();
     if (!r.ok) {
-      toast('Nudge error: ' + (data.error || r.statusText), 'err');
+      toast('RC error: ' + (data.error || r.statusText), 'err');
     } else {
       _lastPanOut  = newPan;
       _lastTiltOut = newTilt;
@@ -1506,10 +1613,96 @@ async function nudgeRc(axis, delta) {
   }
 }
 
+// ── RC joystick ─────────────────────────────────────────────
+// Drag the knob to jog the gimbal. Horizontal deflection drives
+// pan, vertical drives tilt (up = positive tilt). Deflection
+// distance scales the per-tick step from MIN_DEG to MAX_DEG.
+// While held, an RC command is sent every TICK_MS; on release
+// the knob springs back to centre and sending stops.
+const RC_JOY = {
+  el: null, knob: null,
+  active: false,
+  maxRadius: 0,          // px the knob centre may travel
+  dx: 0, dy: 0,          // current clamped knob offset (px)
+  timer: null,
+  axisLock: false,       // true = snap movement to the dominant axis
+  MIN_DEG: 1,            // step at smallest effective deflection
+  MAX_DEG: 15,           // step at full extension
+  DEADZONE: 0.08,        // fraction of travel that does nothing
+  TICK_MS: 100,
+};
+
+function initRcJoystick() {
+  RC_JOY.el   = document.getElementById('rc-joystick');
+  RC_JOY.knob = document.getElementById('rc-joystick-knob');
+  if (!RC_JOY.el || !RC_JOY.knob) return;
+  RC_JOY.el.addEventListener('pointerdown', rcJoyStart);
+  window.addEventListener('pointermove', rcJoyMove);
+  window.addEventListener('pointerup', rcJoyEnd);
+  window.addEventListener('pointercancel', rcJoyEnd);
+}
+
+function rcJoyStart(e) {
+  // Measure travel here, not at init: the RC panel starts hidden
+  // (display:none), where clientWidth is 0 and maxRadius would be 0.
+  RC_JOY.maxRadius = (RC_JOY.el.clientWidth - RC_JOY.knob.clientWidth) / 2;
+  if (!(RC_JOY.maxRadius > 0)) return;
+  RC_JOY.active = true;
+  RC_JOY.el.classList.add('active');
+  if (RC_JOY.el.setPointerCapture) RC_JOY.el.setPointerCapture(e.pointerId);
+  rcJoyMove(e);
+  rcJoyTick();                                  // immediate first step…
+  RC_JOY.timer = setInterval(rcJoyTick, RC_JOY.TICK_MS);  // …then repeat
+}
+
+function rcJoyMove(e) {
+  if (!RC_JOY.active) return;
+  const r  = RC_JOY.el.getBoundingClientRect();
+  let dx = e.clientX - (r.left + r.width  / 2);
+  let dy = e.clientY - (r.top  + r.height / 2);
+  const dist = Math.hypot(dx, dy);
+  if (dist > RC_JOY.maxRadius) {               // bound knob inside the ring
+    dx = dx / dist * RC_JOY.maxRadius;
+    dy = dy / dist * RC_JOY.maxRadius;
+  }
+  if (RC_JOY.axisLock) {                       // snap to dominant axis —
+    if (Math.abs(dx) >= Math.abs(dy)) dy = 0;  // pure pan or pure tilt
+    else dx = 0;
+  }
+  RC_JOY.dx = dx;
+  RC_JOY.dy = dy;
+  RC_JOY.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+
+function rcJoyEnd() {
+  if (!RC_JOY.active) return;
+  RC_JOY.active = false;
+  RC_JOY.dx = RC_JOY.dy = 0;
+  RC_JOY.el.classList.remove('active');
+  RC_JOY.knob.style.transform = 'translate(0px, 0px)';
+  clearInterval(RC_JOY.timer);
+  RC_JOY.timer = null;
+}
+
+function rcJoyTick() {
+  const dist = Math.hypot(RC_JOY.dx, RC_JOY.dy);
+  const d = dist / RC_JOY.maxRadius;            // 0..1 deflection
+  if (!Number.isFinite(d) || d < RC_JOY.DEADZONE) return;
+  const mag = RC_JOY.MIN_DEG + (RC_JOY.MAX_DEG - RC_JOY.MIN_DEG) * d;
+  nudgeRcDelta(mag * RC_JOY.dx / dist, -mag * RC_JOY.dy / dist);
+}
+
 // Frame toggle changed by user
 function onFrameToggleChange(checked) {
   const label = document.getElementById('rc-frame-label');
   if (label) label.textContent = checked ? 'VEHICLE' : 'EARTH';
+}
+
+// Axis-lock toggle changed by user
+function onLockToggleChange(checked) {
+  RC_JOY.axisLock = checked;
+  const label = document.getElementById('rc-lock-label');
+  if (label) label.textContent = checked ? 'ON' : 'OFF';
 }
 
 // Force the frame toggle to a specific state (used when targeting mode activates)
@@ -1544,6 +1737,7 @@ function updateTelemDisplay(d) {
   setText('tl-lat', fmt6(d.lat));
   setText('tl-lon', fmt6(d.lon));
   setText('tl-alt', fmt1(d.alt) + ' m');
+  if (typeof d.alt === 'number') _lastPlatformAlt = d.alt;
   setText('tl-hdg', fmt1(d.heading) + '°');
 
   const liveEl = document.getElementById('tl-live');
@@ -1553,7 +1747,7 @@ function updateTelemDisplay(d) {
   }
 
   setText('tl-pi-temp', fmt1(d.pi_temp) + ' °C');
-  setText('tl-pi-throttle', fmt1(d.pi_throttle));
+  setText('tl-pi-throttle', (typeof d.pi_throttle === 'number') ? d.pi_throttle.toString() : '—');
   setText('tl-cube-temp', fmt1(d.cube_temp) + ' °C');
   // Active target (new shape: d.target = {lat,lon,alt} or null)
   const tgt = d.target;
@@ -1603,8 +1797,9 @@ function updateTelemDisplay(d) {
   setText('tl-pitch-meas', fmt2(d.pitch_meas) + '°');
   setText('tl-yaw-meas',   fmt2(d.yaw_meas)   + '°');
 
-  // Map: device position + heading arrow (green) + gimbal pan arrow (cyan)
-  updateDeviceMarker(d.lat, d.lon, d.heading, d.pan_out);
+  // Map: device position + heading arrow (green) + gimbal pan arrow (cyan).
+  // frame_flag 1 = vehicle frame → pan arrow drawn relative to heading.
+  updateDeviceMarker(d.lat, d.lon, d.heading, d.pan_out, Number(d.frame_flag) === 1);
 
   const ts = d.t ? new Date(d.t * 1000).toUTCString().split(' ')[4] + ' UTC' : '—';
   setText('tl-timestamp', 'LAST UPDATE: ' + ts);
@@ -1770,6 +1965,19 @@ function refreshAdsbMarkerStyles() {
   });
 }
 
+// Nudge an ADS-B setting input by delta, clamp to [min, max], then apply
+function nudgeAdsbSetting(id, delta, min, max) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let v = parseFloat(el.value);
+  if (isNaN(v)) v = 0;
+  v += delta;
+  if (typeof min === 'number') v = Math.max(min, v);
+  if (typeof max === 'number') v = Math.min(max, v);
+  el.value = parseFloat(v.toFixed(2));
+  applyAdsbSettings();
+}
+
 async function applyAdsbSettings() {
   const lead = parseFloat(document.getElementById('adsb-lead-time').value);
   const offset = parseFloat(document.getElementById('adsb-alt-offset').value);
@@ -1835,6 +2043,7 @@ function startGimbalPolling() {
 setInterval(loadAllRecordings, 15000);
 startGimbalPolling();
 startAdsbPolling();
+initRcJoystick();
 </script>
 </body>
 </html>

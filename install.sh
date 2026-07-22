@@ -151,6 +151,8 @@ cd /usr/local/eventide/packages
 git clone git@github.com:j-vanarsdale/tripwire-gimbal-point.git
 cd tripwire-gimbal-point
 sudo cp GIMBAL_POINT_API.py /usr/local/eventide/code/
+sudo cp adsb.py /usr/local/eventide/code/
+
 
 ## SUPERVISOR INSTALLATION
 sudo mkdir -p /etc/supervisor/conf.d

@@ -60,6 +60,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);text-shadow:0 0 12px rgba(0,207,255,.5)}
 .tab-btn.active.t-playback{color:var(--amber);border-bottom-color:var(--amber);text-shadow:0 0 12px rgba(255,184,48,.5)}
 .tab-btn.active.t-super{color:var(--warn);border-bottom-color:var(--warn);text-shadow:0 0 12px rgba(255,91,107,.5)}
+.tab-btn.active.t-modules{color:var(--green);border-bottom-color:var(--green);text-shadow:0 0 12px rgba(0,232,157,.5)}
 .tab-icon{font-size:12px}
 
 /* WORKSPACES */
@@ -259,6 +260,28 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 .super-status-bar .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
 .super-status-bar .dot.on{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
 
+/* Modules tab */
+.mod-layout{display:grid;grid-template-columns:1fr 340px;overflow:hidden;min-height:0}
+.mod-main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.mod-install-bar{display:flex;align-items:center;gap:8px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.mod-input{background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:10px;padding:5px 9px;border-radius:var(--r);outline:none}
+.mod-input:focus{border-color:var(--accent)}
+.mod-input.repo{flex:1;min-width:0}
+.mod-input.ref{width:90px;flex-shrink:0}
+.mod-list{flex:1;overflow-y:auto;min-height:0;padding:10px 14px;display:flex;flex-direction:column;gap:10px}
+.mod-list::-webkit-scrollbar{width:3px}
+.mod-list::-webkit-scrollbar-thumb{background:var(--border2)}
+.mod-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px}
+.mod-card-head{display:flex;align-items:center;gap:8px}
+.mod-card-head .super-btn{margin-left:auto}
+.mod-name{font-family:var(--display);font-size:10px;letter-spacing:.14em;color:var(--green)}
+.mod-version{font-size:8px;color:var(--text-dim);letter-spacing:.1em}
+.mod-desc{font-size:9px;color:var(--text-mid);margin-top:5px;line-height:1.4}
+.mod-progs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mod-meta{font-size:8px;color:var(--text-dim);margin-top:6px;line-height:1.6;word-break:break-all}
+.mod-meta span{color:var(--text-mid)}
+.mod-empty{color:var(--text-dim);font-size:9px;font-style:italic;text-align:center;padding:24px 0}
+
 /* Log panel */
 .super-log{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
 .log-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -331,6 +354,7 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
   <button class="tab-btn active"     id="tab-main"     onclick="switchTab('main')"><span class="tab-icon">◉</span> MAIN</button>
   <button class="tab-btn t-playback" id="tab-playback" onclick="switchTab('playback')"><span class="tab-icon">◈</span> PLAYBACK</button>
   <button class="tab-btn t-super"    id="tab-super"    onclick="switchTab('super')"><span class="tab-icon">⬡</span> SUPERVISOR</button>
+  <button class="tab-btn t-modules"  id="tab-modules"  onclick="switchTab('modules')"><span class="tab-icon">✚</span> MODULES</button>
 </div>
 
 <!-- ═════════════════════════════════════════════════════════
@@ -745,6 +769,44 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
   </div>
 </div><!-- /ws-super -->
 
+<div class="workspace" id="ws-modules">
+  <div class="mod-layout">
+
+    <div class="mod-main">
+      <div class="super-toolbar">
+        <span class="super-toolbar-title">INSTALLED MODULES</span>
+        <div class="super-spacer"></div>
+        <button class="super-btn" onclick="loadModules()">↻ REFRESH</button>
+      </div>
+      <div class="mod-install-bar">
+        <input class="mod-input repo" id="mod-repo-input"
+               placeholder="https://github.com/user/module-repo" spellcheck="false">
+        <input class="mod-input ref" id="mod-ref-input"
+               placeholder="ref (opt.)" spellcheck="false">
+        <button class="super-btn s-green" onclick="installModule()">✚ INSTALL</button>
+      </div>
+      <div class="mod-list" id="mod-list">
+        <div class="mod-empty">Loading…</div>
+      </div>
+      <div class="super-status-bar">
+        <div class="dot" id="mod-conn-dot"></div>
+        <span id="mod-conn-label">Module data comes from the backend device.</span>
+      </div>
+    </div>
+
+    <div class="super-log">
+      <div class="log-header">
+        <span class="log-title">INSTALL LOG</span>
+        <span class="state-badge" id="mod-job-badge" style="display:none"></span>
+      </div>
+      <div class="log-scroll" id="mod-log-scroll">
+        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">No install job yet. Paste a GitHub repo URL and hit INSTALL.</pre>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /ws-modules -->
+
 <div id="toast"></div>
 
 <script>
@@ -803,6 +865,7 @@ function onBackendIpChange(raw) {
   ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
   fetchPlaybackSettings();
   fetchAdsbSettings();
+  if (activeTab === 'modules') loadModules();
 }
 
 function setBackendConnState(state) {
@@ -926,6 +989,13 @@ function switchTab(tab) {
     clearInterval(superPollTimer);
     superPollTimer = null;
   }
+  if (tab === 'modules') {
+    loadModules();
+    if (!modPollTimer) modPollTimer = setInterval(loadModules, 10000);
+  } else {
+    clearInterval(modPollTimer);
+    modPollTimer = null;
+  }
   // Invalidate map size if switching back to main
   if (tab === 'main' && mapInstance) setTimeout(() => mapInstance.invalidateSize(), 50);
 }
@@ -949,6 +1019,141 @@ function switchGimbalTab(tab) {
   document.querySelectorAll('.gimbal-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('gimbal-tab-' + tab).classList.add('active');
   document.getElementById('gimbal-panel-' + tab).classList.add('active');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MODULES TAB
+//  GitHub module installs run on the backend (dashboard.py) as
+//  background jobs; this tab polls job status and lists the
+//  installed-module registry. See docs/MODULES.md.
+// ═══════════════════════════════════════════════════════════
+let modJobId     = null;
+let modJobTimer  = null;
+let modPollTimer = null;
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function setModConn(ok, msg) {
+  const dot = document.getElementById('mod-conn-dot');
+  const lbl = document.getElementById('mod-conn-label');
+  if (dot) dot.className = 'dot' + (ok ? ' on' : '');
+  if (lbl) lbl.textContent = msg;
+}
+
+async function loadModules() {
+  try {
+    const r = await fetch(apiUrl('/modules'));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const modules = data.modules || [];
+    renderModules(modules);
+    setModConn(true, modules.length + ' module(s) installed');
+  } catch (e) {
+    setModConn(false, 'Backend unreachable: ' + e.message);
+  }
+}
+
+function renderModules(modules) {
+  const list = document.getElementById('mod-list');
+  if (!modules.length) {
+    list.innerHTML = '<div class="mod-empty">No modules installed. Install one from a GitHub repo above.</div>';
+    return;
+  }
+  list.innerHTML = modules.map(m => {
+    const progs = (m.programs || []).map(p =>
+      `<span class="state-badge ${p.status === 'RUNNING' ? 'running' : ''}">` +
+      `${escHtml(p.name)} · ${escHtml(p.status)}</span>`
+    ).join('');
+    const socks = (m.sockets || []).map(s =>
+      s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
+    ).join(', ');
+    const args = (m.arguments || []).map(a => `${a.flag}=${a.default}`).join('  ');
+    return `<div class="mod-card">
+      <div class="mod-card-head">
+        <span class="mod-name">${escHtml(m.name)}</span>
+        <span class="mod-version">v${escHtml(m.version || '?')}</span>
+        <button class="super-btn s-warn" onclick="uninstallModule('${escHtml(m.name)}')">✕ UNINSTALL</button>
+      </div>
+      <div class="mod-desc">${escHtml(m.description || '')}</div>
+      <div class="mod-progs">${progs}</div>
+      <div class="mod-meta">
+        ${m.repo_url ? 'repo: <span>' + escHtml(m.repo_url) + '</span><br>' : ''}
+        ${socks ? 'sockets: <span>' + escHtml(socks) + '</span><br>' : ''}
+        ${args ? 'args: <span>' + escHtml(args) + '</span>' : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function installModule() {
+  const repo = document.getElementById('mod-repo-input').value.trim();
+  const ref  = document.getElementById('mod-ref-input').value.trim();
+  if (!repo) { toast('Enter a GitHub repo URL first', 'err'); return; }
+  try {
+    const r = await fetch(apiUrl('/modules/install'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({repo_url: repo, ref: ref || undefined}),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Install failed to start', 'err'); return; }
+    modJobId = data.job_id;
+    setModJobBadge('pending');
+    const out = document.getElementById('mod-log-output');
+    out.style.fontStyle = 'normal';
+    out.textContent = '';
+    toast('Install started', 'ok');
+    if (modJobTimer) clearInterval(modJobTimer);
+    modJobTimer = setInterval(pollModJob, 2000);
+    pollModJob();
+  } catch (e) { toast('Install request failed: ' + e.message, 'err'); }
+}
+
+async function pollModJob() {
+  if (!modJobId) return;
+  try {
+    const r = await fetch(apiUrl('/modules/jobs/' + modJobId));
+    if (!r.ok) return;
+    const job = await r.json();
+    setModJobBadge(job.status);
+    const out = document.getElementById('mod-log-output');
+    out.textContent = job.log.join('\n') || '(waiting for output…)';
+    const scroll = document.getElementById('mod-log-scroll');
+    scroll.scrollTop = scroll.scrollHeight;
+    if (job.status === 'done' || job.status === 'failed') {
+      clearInterval(modJobTimer); modJobTimer = null;
+      if (job.status === 'done') {
+        toast(`Module '${job.module}' installed`, 'ok');
+        (job.warnings || []).forEach(w => toast(w));
+      } else {
+        toast('Install failed: ' + (job.error || 'unknown error'), 'err');
+      }
+      loadModules();
+    }
+  } catch { /* backend may be briefly unreachable — keep polling */ }
+}
+
+function setModJobBadge(status) {
+  const badge = document.getElementById('mod-job-badge');
+  if (!badge) return;
+  badge.style.display = status ? '' : 'none';
+  badge.textContent = (status || '').toUpperCase();
+  badge.className = 'state-badge' + (status === 'done' ? ' running' : '');
+}
+
+async function uninstallModule(name) {
+  if (!confirm(`Uninstall module '${name}'? Its supervisor programs will be stopped and removed.`)) return;
+  try {
+    const r = await fetch(apiUrl('/modules/' + encodeURIComponent(name) + '/uninstall'),
+                          {method: 'POST'});
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Uninstall failed', 'err'); return; }
+    toast('Module ' + name + ' uninstalled', 'ok');
+    loadModules();
+  } catch (e) { toast('Uninstall failed: ' + e.message, 'err'); }
 }
 
 // ═══════════════════════════════════════════════════════════

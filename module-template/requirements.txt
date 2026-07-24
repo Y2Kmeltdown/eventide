@@ -1,0 +1,11 @@
+# Python dependencies for this module.
+#
+# At install time these are installed into the module's OWN virtual
+# environment (/usr/local/eventide/packages/<name>/.venv) — never
+# system-wide — so modules can't break each other's dependencies.
+# Programs run inside the venv via the {venv_python} placeholder in the
+# manifest's program commands.
+#
+# Example:
+# requests==2.32.3
+# pymavlink==2.4.49

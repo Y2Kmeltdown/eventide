@@ -1,0 +1,37 @@
+{
+  "name": "hello-module",
+  "version": "1.0.0",
+  "description": "Minimal example Eventide module. Prints a heartbeat line to its supervisor log every few seconds.",
+  "author": "Eventide",
+  "arguments": [
+    {
+      "name": "message",
+      "flag": "--message",
+      "type": "str",
+      "default": "hello from eventide",
+      "required": false,
+      "description": "Text printed on each heartbeat."
+    },
+    {
+      "name": "interval",
+      "flag": "--interval",
+      "type": "int",
+      "default": 5,
+      "required": false,
+      "description": "Seconds between heartbeats."
+    }
+  ],
+  "sockets": [],
+  "programs": [
+    {
+      "name": "hello_module",
+      "command": "{venv_python} {module_dir}/hello_module.py --message \"{arg:message}\" --interval {arg:interval}",
+      "directory": "{module_dir}",
+      "autostart": true,
+      "autorestart": true,
+      "startretries": 10000,
+      "priority": 10,
+      "user": "root"
+    }
+  ]
+}

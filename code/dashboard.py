@@ -23,9 +23,16 @@ Then open http://localhost:5000  (or via nginx at http://<host>/)
 """
 
 import argparse
+import json
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import threading
+import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests as _http
@@ -298,6 +305,755 @@ def download_recording(cam, filename):
 def download_recording_legacy(filename):
     return download_recording("evk", filename)
 
+# ── Module manager ────────────────────────────────────────────────────────────
+# Modules are GitHub repositories containing an eventide-module.json manifest
+# (see docs/MODULES.md).  Installing a module is a background job:
+#   clone → validate → deps → build → artifacts → conf.d → supervisor apply
+# Each module gets its own /etc/supervisor/conf.d/module-<name>.conf, applied
+# with supervisorctl reread/update.  Installed modules are tracked in a JSON
+# registry (default /usr/local/eventide/modules.json).
+
+MANIFEST_FILENAME = "eventide-module.json"
+MODULE_INSTALL_DIR = "/usr/local/eventide/code"
+MODULE_CONFIG_DIR  = "/usr/local/eventide/config"
+
+_MODULE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_PROGRAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
+_ARG_TYPES = ("str", "int", "float")
+_KNOWN_PLACEHOLDERS = (
+    "install_dir", "config_dir", "module_dir", "recordings_dir",
+    "venv_dir", "venv_python",
+)
+_VENV_DIR_NAME = ".venv"
+_SUPERVISOR_STATES = {
+    "RUNNING", "STOPPED", "STARTING", "BACKOFF",
+    "STOPPING", "EXITED", "FATAL", "UNKNOWN",
+}
+_JOB_LOG_CAP = 500
+
+module_jobs: dict[str, dict] = {}
+module_jobs_lock = threading.Lock()
+install_lock = threading.Lock()   # one install job at a time
+
+
+def _job_log(job: dict, line: str) -> None:
+    with module_jobs_lock:
+        job["log"].append(str(line))
+        if len(job["log"]) > _JOB_LOG_CAP:
+            del job["log"][: len(job["log"]) - _JOB_LOG_CAP]
+
+
+def _job_status(job: dict, status: str) -> None:
+    with module_jobs_lock:
+        job["status"] = status
+
+
+def _job_snapshot(job: dict) -> dict:
+    with module_jobs_lock:
+        return {
+            "id": job["id"],
+            "status": job["status"],
+            "repo_url": job["repo_url"],
+            "module": job["module"],
+            "created_at": job["created_at"],
+            "finished_at": job["finished_at"],
+            "error": job["error"],
+            "warnings": list(job["warnings"]),
+            "log": list(job["log"]),
+        }
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+
+def load_registry() -> dict:
+    path = Path(cfg.get("modules_registry", "/usr/local/eventide/modules.json"))
+    if not path.exists():
+        return {"modules": {}}
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict) and isinstance(data.get("modules"), dict):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {"modules": {}}
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def save_registry(registry: dict) -> None:
+    path = Path(cfg["modules_registry"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(path, json.dumps(registry, indent=2) + "\n")
+
+
+# ── Manifest validation ───────────────────────────────────────────────────────
+
+def _is_str_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def validate_manifest(m) -> list[str]:
+    """Structural validation of an eventide-module.json manifest."""
+    errors: list[str] = []
+    if not isinstance(m, dict):
+        return ["manifest is not a JSON object"]
+
+    name = m.get("name")
+    if not isinstance(name, str) or not _MODULE_NAME_RE.match(name):
+        errors.append("'name' is required and must match ^[a-z0-9][a-z0-9-]*$")
+    for field in ("version", "description"):
+        if not isinstance(m.get(field), str) or not m.get(field):
+            errors.append(f"'{field}' is required and must be a non-empty string")
+
+    deps = m.get("dependencies", {})
+    if not isinstance(deps, dict):
+        errors.append("'dependencies' must be an object")
+    else:
+        for key in ("apt", "pip", "commands"):
+            if key in deps and not _is_str_list(deps[key]):
+                errors.append(f"'dependencies.{key}' must be a list of strings")
+        req = deps.get("requirements")
+        if req is not None and (
+            not isinstance(req, str)
+            or os.path.isabs(req)
+            or ".." in Path(req).parts
+        ):
+            errors.append(
+                "'dependencies.requirements' must be a relative path inside the repo"
+            )
+        ssp = deps.get("system_site_packages")
+        if ssp is not None and not isinstance(ssp, bool):
+            errors.append("'dependencies.system_site_packages' must be a boolean")
+
+    inst = m.get("install", {})
+    if not isinstance(inst, dict):
+        errors.append("'install' must be an object")
+    else:
+        if "commands" in inst and not _is_str_list(inst["commands"]):
+            errors.append("'install.commands' must be a list of strings")
+        arts = inst.get("artifacts", {})
+        if not isinstance(arts, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in arts.items()
+        ):
+            errors.append("'install.artifacts' must map source path → destination path")
+        else:
+            for dst in arts.values():
+                if not os.path.isabs(dst):
+                    errors.append(f"artifact destination must be an absolute path: {dst}")
+
+    sub = m.get("recordings_subdir")
+    if sub is not None and (
+        not isinstance(sub, str) or not sub or "/" in sub or sub in (".", "..")
+    ):
+        errors.append("'recordings_subdir' must be a single directory name")
+
+    arg_names: set[str] = set()
+    args = m.get("arguments", [])
+    if not isinstance(args, list):
+        errors.append("'arguments' must be a list")
+    else:
+        for a in args:
+            if not isinstance(a, dict):
+                errors.append("each argument must be an object")
+                continue
+            an = a.get("name")
+            if not isinstance(an, str) or not _ARG_NAME_RE.match(an):
+                errors.append("argument 'name' must match ^[a-z0-9_]+$")
+                continue
+            if an in arg_names:
+                errors.append(f"duplicate argument name '{an}'")
+            arg_names.add(an)
+            if not isinstance(a.get("flag"), str) or not a.get("flag"):
+                errors.append(f"argument '{an}' needs a 'flag' (e.g. \"--port\")")
+            atype = a.get("type")
+            if atype not in _ARG_TYPES:
+                errors.append(f"argument '{an}' type must be one of {_ARG_TYPES}")
+            if "default" not in a:
+                errors.append(f"argument '{an}' needs a 'default'")
+            elif atype == "int" and not isinstance(a["default"], int):
+                errors.append(f"argument '{an}' default must be an int")
+            elif atype == "float" and not isinstance(a["default"], (int, float)):
+                errors.append(f"argument '{an}' default must be a number")
+            elif atype == "str" and not isinstance(a["default"], str):
+                errors.append(f"argument '{an}' default must be a string")
+
+    sockets = m.get("sockets", [])
+    if not isinstance(sockets, list):
+        errors.append("'sockets' must be a list")
+    else:
+        seen_sock_names: set[str] = set()
+        for s in sockets:
+            if not isinstance(s, dict):
+                errors.append("each socket must be an object")
+                continue
+            sn = s.get("name")
+            if not isinstance(sn, str) or not sn:
+                errors.append("each socket needs a 'name'")
+                continue
+            if sn in seen_sock_names:
+                errors.append(f"duplicate socket name '{sn}'")
+            seen_sock_names.add(sn)
+            stype = s.get("type")
+            if stype not in ("tcp", "unix"):
+                errors.append(f"socket '{sn}' type must be 'tcp' or 'unix'")
+            elif stype == "tcp":
+                port = s.get("port")
+                if not isinstance(port, int) or not (1 <= port <= 65535):
+                    errors.append(f"socket '{sn}' needs a valid tcp 'port' (1-65535)")
+            else:
+                spath = s.get("path")
+                if not isinstance(spath, str) or not spath.startswith("/"):
+                    errors.append(f"socket '{sn}' needs an absolute unix 'path'")
+
+    programs = m.get("programs")
+    if not isinstance(programs, list) or not programs:
+        errors.append("'programs' must be a non-empty list")
+    else:
+        seen_prog_names: set[str] = set()
+        for p in programs:
+            if not isinstance(p, dict):
+                errors.append("each program must be an object")
+                continue
+            pn = p.get("name")
+            if not isinstance(pn, str) or not _PROGRAM_NAME_RE.match(pn):
+                errors.append("each program needs a 'name' matching ^[a-z0-9][a-z0-9_-]*$")
+                continue
+            if pn in seen_prog_names:
+                errors.append(f"duplicate program name '{pn}'")
+            seen_prog_names.add(pn)
+            cmd = p.get("command")
+            if not isinstance(cmd, str) or not cmd:
+                errors.append(f"program '{pn}' needs a 'command'")
+                continue
+            for ph in re.findall(r"\{([^}]*)\}", cmd):
+                if ph in _KNOWN_PLACEHOLDERS:
+                    continue
+                if ph.startswith("arg:"):
+                    if ph[4:] not in arg_names:
+                        errors.append(
+                            f"program '{pn}' uses undeclared argument '{{{ph}}}'"
+                        )
+                else:
+                    errors.append(f"program '{pn}' uses unknown placeholder '{{{ph}}}'")
+    return errors
+
+
+def conflict_errors(manifest: dict, registry: dict) -> list[str]:
+    """Check the manifest against already-installed modules."""
+    errors: list[str] = []
+    installed = registry.get("modules", {})
+    name = manifest["name"]
+    if name in installed:
+        errors.append(
+            f"module '{name}' is already installed (uninstall it first to reinstall)"
+        )
+    existing_programs = {
+        p["name"]
+        for e in installed.values()
+        for p in e["manifest"].get("programs", [])
+    }
+    for p in manifest.get("programs", []):
+        if p["name"] in existing_programs:
+            errors.append(
+                f"program name '{p['name']}' is already used by another installed module"
+            )
+    existing_ports: dict[int, str] = {}
+    for ename, e in installed.items():
+        for s in e["manifest"].get("sockets", []):
+            if s.get("type") == "tcp":
+                existing_ports.setdefault(s["port"], ename)
+    for s in manifest.get("sockets", []):
+        if s.get("type") == "tcp" and s.get("port") in existing_ports:
+            errors.append(
+                f"socket port {s['port']} is already used by module "
+                f"'{existing_ports[s['port']]}'"
+            )
+    return errors
+
+
+# ── Config rendering ──────────────────────────────────────────────────────────
+
+def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
+    venv_dir = Path(cfg["packages_dir"]) / module_name / _VENV_DIR_NAME
+    out = text
+    for arg in manifest.get("arguments", []):
+        out = out.replace("{arg:%s}" % arg["name"], str(arg.get("default", "")))
+    out = out.replace("{install_dir}", MODULE_INSTALL_DIR)
+    out = out.replace("{config_dir}", MODULE_CONFIG_DIR)
+    out = out.replace("{module_dir}", str(Path(cfg["packages_dir"]) / module_name))
+    out = out.replace("{recordings_dir}", cfg["recordings_dir"])
+    out = out.replace("{venv_dir}", str(venv_dir))
+    out = out.replace("{venv_python}", str(venv_dir / "bin" / "python3"))
+    return out
+
+
+def render_module_conf(manifest: dict, module_name: str, repo_url: str) -> str:
+    lines = [
+        f"; Generated by the eventide module manager from {repo_url}",
+        "; Do not edit by hand — changes are lost on reinstall.",
+    ]
+    for p in manifest["programs"]:
+        lines.append(f"[program:{p['name']}]")
+        lines.append(f"command={render_placeholders(p['command'], manifest, module_name)}")
+        lines.append(
+            "directory="
+            + render_placeholders(p.get("directory", "{install_dir}"), manifest, module_name)
+        )
+        lines.append(f"autostart={'true' if p.get('autostart', True) else 'false'}")
+        lines.append(f"autorestart={'true' if p.get('autorestart', True) else 'false'}")
+        lines.append(f"startretries={int(p.get('startretries', 10000))}")
+        lines.append(f"priority={int(p.get('priority', 10))}")
+        lines.append(f"user={p.get('user', 'root')}")
+        lines.append("stdout_logfile=/var/log/supervisor/%(program_name)s.log")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# ── Per-module Python virtual environments ────────────────────────────────────
+# Each module that uses Python gets its own venv at <module_dir>/.venv so
+# modules can never break each other's dependencies.  Created with
+# --system-site-packages by default so apt-provided Python libraries
+# (e.g. python3-picamera2) stay visible; opt out per module with
+# dependencies.system_site_packages = false.  Supervisor programs use the
+# {venv_python} / {venv_dir} placeholders to run inside the venv.
+
+def _module_requirements_path(deps: dict, module_dir: Path) -> Path | None:
+    """Resolve the module's pip requirements file, or None if it has none."""
+    declared = deps.get("requirements")
+    if declared:
+        path = module_dir / declared
+        if not path.exists():
+            raise RuntimeError(f"requirements file not found: {declared}")
+        return path
+    default = module_dir / "requirements.txt"
+    return default if default.exists() else None
+
+
+def _create_venv(job: dict, venv_dir: Path, system_site_packages: bool) -> None:
+    if (venv_dir / "bin" / "python3").exists():
+        _job_log(job, f"venv already exists at {venv_dir} — reusing")
+        return
+    argv = ["python3", "-m", "venv"]
+    if system_site_packages:
+        argv.append("--system-site-packages")
+    argv.append(str(venv_dir))
+    _run_logged_argv(job, argv, timeout=300)
+    if not (venv_dir / "bin" / "pip").exists():
+        raise RuntimeError(f"venv creation did not produce pip: {venv_dir}")
+
+
+# ── Shell helpers ─────────────────────────────────────────────────────────────
+
+def _run_logged_argv(job: dict, argv: list[str], cwd=None, timeout=600) -> str:
+    _job_log(job, "$ " + shlex.join(argv))
+    try:
+        proc = subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"command timed out after {timeout}s: {shlex.join(argv)}")
+    except FileNotFoundError:
+        raise RuntimeError(f"command not found: {argv[0]}")
+    for line in (proc.stdout + proc.stderr).splitlines():
+        _job_log(job, line)
+    if proc.returncode != 0:
+        raise RuntimeError(f"command failed (exit {proc.returncode}): {shlex.join(argv)}")
+    return proc.stdout
+
+
+def _run_logged_shell(job: dict, command: str, cwd=None, timeout=600) -> str:
+    return _run_logged_argv(job, ["/bin/bash", "-c", command], cwd=cwd, timeout=timeout)
+
+
+def _https_to_ssh(url: str) -> str | None:
+    m = re.match(r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if m:
+        return f"git@github.com:{m.group(1)}/{m.group(2)}.git"
+    return None
+
+
+def _clone_repo(repo_url: str, ref: str | None, dest: Path, job: dict) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    base = ["git", "clone", "--depth", "1"]
+    if ref:
+        base += ["--branch", ref]
+    try:
+        _run_logged_argv(job, [*base, repo_url, str(dest)], timeout=180)
+        return
+    except RuntimeError as exc:
+        ssh_url = _https_to_ssh(repo_url)
+        if not ssh_url:
+            raise
+        _job_log(job, f"HTTPS clone failed ({exc}); retrying over SSH: {ssh_url}")
+        shutil.rmtree(dest, ignore_errors=True)
+        _run_logged_argv(job, [*base, ssh_url, str(dest)], timeout=180)
+
+
+def _git_rev(repo_dir: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=15,
+        )
+        return proc.stdout.strip() or None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+# ── Supervisor control ────────────────────────────────────────────────────────
+
+def _supervisorctl(*args, timeout=30) -> tuple[int, str]:
+    proc = subprocess.run(
+        ["supervisorctl", *args], capture_output=True, text=True, timeout=timeout
+    )
+    return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+
+def _supervisor_apply(job: dict) -> None:
+    """Apply conf.d changes via supervisorctl reread + update."""
+    if not shutil.which("supervisorctl"):
+        job["warnings"].append("supervisorctl not found; skipped reread/update")
+        _job_log(job, "WARNING: supervisorctl not found — skipping reread/update")
+        return
+    for args in (("reread",), ("update",)):
+        rc, out = _supervisorctl(*args)
+        _job_log(job, f"$ supervisorctl {' '.join(args)}")
+        for line in out.splitlines():
+            _job_log(job, line)
+        if rc != 0:
+            raise RuntimeError(f"supervisorctl {' '.join(args)} failed: {out}")
+
+
+def supervisor_statuses() -> dict[str, dict]:
+    """Parse `supervisorctl status` into {program: {status, description}}."""
+    if not shutil.which("supervisorctl"):
+        return {}
+    try:
+        _, out = _supervisorctl("status")
+    except (subprocess.TimeoutExpired, OSError):
+        return {}
+    result: dict[str, dict] = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[1] in _SUPERVISOR_STATES:
+            result[parts[0]] = {
+                "status": parts[1],
+                "description": parts[2] if len(parts) > 2 else "",
+            }
+    return result
+
+
+def _verify_programs(job: dict, manifest: dict) -> None:
+    if not shutil.which("supervisorctl"):
+        job["warnings"].append("supervisorctl not available; skipped program verification")
+        return
+    wanted = [p["name"] for p in manifest.get("programs", [])]
+    states: dict[str, str | None] = {}
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        statuses = supervisor_statuses()
+        states = {w: statuses.get(w, {}).get("status") for w in wanted}
+        if states and all(s == "RUNNING" for s in states.values()):
+            _job_log(job, "all programs RUNNING")
+            return
+        time.sleep(1)
+    for w, s in states.items():
+        if s != "RUNNING":
+            job["warnings"].append(
+                f"program '{w}' is {s or 'unknown'} after install "
+                "(check the SUPERVISOR tab — hardware may be absent)"
+            )
+            _job_log(job, f"WARNING: program '{w}' is {s or 'unknown'}")
+
+
+# ── Install job ───────────────────────────────────────────────────────────────
+
+def _run_install_job(job: dict) -> None:
+    staging: Path | None = None
+    module_dir: Path | None = None
+    copied_artifacts: list[str] = []
+    conf_path: Path | None = None
+    name: str | None = None
+    registered = False
+    try:
+        # ── Clone & validate ──────────────────────────────────────────────
+        _job_status(job, "cloning")
+        staging = Path(cfg["packages_dir"]) / f".staging-{job['id']}"
+        _clone_repo(job["repo_url"], job.get("ref"), staging, job)
+
+        manifest_path = staging / MANIFEST_FILENAME
+        if not manifest_path.exists():
+            raise RuntimeError(f"{MANIFEST_FILENAME} not found in repository root")
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"{MANIFEST_FILENAME} is not valid JSON: {exc}")
+        errors = validate_manifest(manifest)
+        if errors:
+            raise RuntimeError("invalid manifest: " + "; ".join(errors))
+
+        name = manifest["name"]
+        job["module"] = name
+        errors = conflict_errors(manifest, load_registry())
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+        module_dir = Path(cfg["packages_dir"]) / name
+        if module_dir.exists():
+            # Not in the registry (checked above) → leftover from a failed
+            # install; safe to replace.
+            shutil.rmtree(module_dir)
+        shutil.move(str(staging), str(module_dir))
+        staging = None
+        commit = _git_rev(module_dir)
+        _job_log(job, f"cloned {job['repo_url']} ({commit or 'unknown commit'})")
+
+        # ── Dependencies ──────────────────────────────────────────────────
+        _job_status(job, "deps")
+        deps = manifest.get("dependencies", {})
+        if deps.get("apt"):
+            _run_logged_argv(
+                job, ["apt-get", "install", "-y", *deps["apt"]], timeout=600
+            )
+
+        # Python packages always go into the module's own venv — never
+        # system-wide — so modules can't break each other's dependencies.
+        venv_dir = module_dir / _VENV_DIR_NAME
+        req_path = _module_requirements_path(deps, module_dir)
+        pip_pkgs = deps.get("pip", [])
+        venv_referenced = any(
+            "{venv_" in p.get("command", "") or "{venv_" in p.get("directory", "")
+            for p in manifest.get("programs", [])
+        )
+        if req_path is not None or pip_pkgs or venv_referenced:
+            _create_venv(job, venv_dir, deps.get("system_site_packages", True))
+            venv_pip = str(venv_dir / "bin" / "pip")
+            if req_path is not None:
+                _run_logged_argv(
+                    job, [venv_pip, "install", "-r", str(req_path)],
+                    cwd=module_dir, timeout=600,
+                )
+            if pip_pkgs:
+                _run_logged_argv(
+                    job, [venv_pip, "install", *pip_pkgs],
+                    cwd=module_dir, timeout=600,
+                )
+
+        for cmd in deps.get("commands", []):
+            _run_logged_shell(
+                job, render_placeholders(cmd, manifest, name), cwd=module_dir
+            )
+
+        # ── Build ─────────────────────────────────────────────────────────
+        _job_status(job, "building")
+        inst = manifest.get("install", {})
+        for cmd in inst.get("commands", []):
+            _run_logged_shell(job, cmd, cwd=module_dir, timeout=600)
+
+        # ── Artifacts & recordings dir ────────────────────────────────────
+        _job_status(job, "artifacts")
+        for src, dst in inst.get("artifacts", {}).items():
+            src_path = module_dir / src
+            if not src_path.exists():
+                raise RuntimeError(f"artifact not found after build: {src}")
+            dst_path = Path(dst)
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+            copied_artifacts.append(str(dst_path))
+            _job_log(job, f"copied {src} → {dst}")
+        sub = manifest.get("recordings_subdir")
+        if sub:
+            rec_dir = Path(cfg["recordings_dir"]) / sub
+            rec_dir.mkdir(parents=True, exist_ok=True)
+            _job_log(job, f"created recordings dir {rec_dir}")
+
+        # ── Supervisor config ─────────────────────────────────────────────
+        _job_status(job, "configuring")
+        conf_text = render_module_conf(manifest, name, job["repo_url"])
+        conf_path = Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+        _atomic_write(conf_path, conf_text)
+        _job_log(job, f"wrote {conf_path}")
+        _supervisor_apply(job)
+
+        # ── Verify & register ─────────────────────────────────────────────
+        _job_status(job, "verifying")
+        _verify_programs(job, manifest)
+
+        registry = load_registry()
+        registry.setdefault("modules", {})[name] = {
+            "manifest": manifest,
+            "repo_url": job["repo_url"],
+            "ref": job.get("ref"),
+            "commit": commit,
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+            "artifacts": copied_artifacts,
+            "conf_file": str(conf_path),
+        }
+        save_registry(registry)
+        registered = True
+        _job_status(job, "done")
+        _job_log(job, f"module '{name}' installed successfully")
+
+    except Exception as exc:  # noqa: BLE001 — any failure must roll back cleanly
+        job["error"] = str(exc)
+        _job_log(job, f"ERROR: {exc}")
+        _job_log(job, "rolling back partial install")
+        if conf_path is not None and conf_path.exists():
+            conf_path.unlink()
+            _supervisor_apply(job)
+        for artifact in copied_artifacts:
+            Path(artifact).unlink(missing_ok=True)
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+        if module_dir is not None and module_dir.exists():
+            shutil.rmtree(module_dir, ignore_errors=True)
+        if name is not None and registered:
+            registry = load_registry()
+            if registry.get("modules", {}).pop(name, None) is not None:
+                save_registry(registry)
+        _job_status(job, "failed")
+    finally:
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _run_install_job_guarded(job: dict) -> None:
+    try:
+        _run_install_job(job)
+    finally:
+        install_lock.release()
+
+
+def _uninstall_module(name: str) -> dict | None:
+    registry = load_registry()
+    entry = registry.get("modules", {}).get(name)
+    if entry is None:
+        return None
+    manifest = entry["manifest"]
+
+    if shutil.which("supervisorctl"):
+        for p in manifest.get("programs", []):
+            try:
+                _supervisorctl("stop", p["name"])
+            except (subprocess.TimeoutExpired, OSError):
+                pass  # best-effort stop
+
+    conf_path = Path(
+        entry.get("conf_file")
+        or Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+    )
+    if conf_path.exists():
+        conf_path.unlink()
+    if shutil.which("supervisorctl"):
+        for args in (("reread",), ("update",)):
+            try:
+                _supervisorctl(*args)
+            except (subprocess.TimeoutExpired, OSError):
+                pass  # best-effort apply
+
+    for artifact in entry.get("artifacts", []):
+        Path(artifact).unlink(missing_ok=True)
+    shutil.rmtree(Path(cfg["packages_dir"]) / name, ignore_errors=True)
+
+    del registry["modules"][name]
+    save_registry(registry)
+    return entry
+
+
+# ── Module API ────────────────────────────────────────────────────────────────
+
+@app.route("/api/modules")
+def api_modules_list():
+    registry = load_registry()
+    statuses = supervisor_statuses()
+    modules = []
+    for name, entry in sorted(registry.get("modules", {}).items()):
+        m = entry["manifest"]
+        modules.append({
+            "name": name,
+            "version": m.get("version"),
+            "description": m.get("description"),
+            "author": m.get("author"),
+            "repo_url": entry.get("repo_url"),
+            "installed_at": entry.get("installed_at"),
+            "arguments": m.get("arguments", []),
+            "sockets": m.get("sockets", []),
+            "programs": [
+                {
+                    "name": p["name"],
+                    "status": statuses.get(p["name"], {}).get("status", "UNKNOWN"),
+                    "status_detail": statuses.get(p["name"], {}).get("description", ""),
+                }
+                for p in m.get("programs", [])
+            ],
+        })
+    return jsonify({"modules": modules})
+
+
+@app.route("/api/modules/<name>")
+def api_modules_detail(name):
+    entry = load_registry().get("modules", {}).get(name)
+    if entry is None:
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    return jsonify(entry)
+
+
+_REPO_URL_RE = re.compile(r"^(https?://|git@|file://).+")
+
+
+@app.route("/api/modules/install", methods=["POST"])
+def api_modules_install():
+    data = request.get_json() or {}
+    repo_url = (data.get("repo_url") or "").strip()
+    if not repo_url:
+        return jsonify({"error": "repo_url is required"}), 400
+    if not _REPO_URL_RE.match(repo_url):
+        return jsonify({
+            "error": "repo_url must start with https://, git@ or file://"
+        }), 400
+    ref = (data.get("ref") or "").strip() or None
+
+    if not install_lock.acquire(blocking=False):
+        return jsonify({"error": "another module install is already running"}), 409
+
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "status": "pending",
+        "repo_url": repo_url,
+        "ref": ref,
+        "module": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+        "error": None,
+        "warnings": [],
+        "log": [],
+    }
+    with module_jobs_lock:
+        module_jobs[job["id"]] = job
+    threading.Thread(target=_run_install_job_guarded, args=(job,), daemon=True).start()
+    return jsonify({"job_id": job["id"], "status": "pending"}), 202
+
+
+@app.route("/api/modules/jobs/<job_id>")
+def api_modules_job(job_id):
+    job = module_jobs.get(job_id)
+    if job is None:
+        return jsonify({"error": f"unknown job id: {job_id}"}), 404
+    return jsonify(_job_snapshot(job))
+
+
+@app.route("/api/modules/<name>/uninstall", methods=["POST"])
+def api_modules_uninstall(name):
+    with install_lock:  # wait for any running install to finish
+        entry = _uninstall_module(name)
+    if entry is None:
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    return jsonify({"ok": True, "removed": name})
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -312,6 +1068,12 @@ def main():
     parser.add_argument("--supervisor-rpc-url",    default=_SUPERVISOR_RPC_URL,
                         help="URL of supervisord's XML-RPC endpoint "
                              "(default: http://127.0.0.1:9001/RPC2)")
+    parser.add_argument("--modules-registry",      default="/usr/local/eventide/modules.json",
+                        help="Path to the installed-modules registry JSON file")
+    parser.add_argument("--packages-dir",          default="/usr/local/eventide/packages",
+                        help="Directory where module repositories are cloned")
+    parser.add_argument("--supervisor-conf-d",     default="/etc/supervisor/conf.d",
+                        help="Directory where per-module supervisor configs are written")
     parser.add_argument("--host",                  default="0.0.0.0")
     parser.add_argument("--port",                  type=int, default=5000)
     args = parser.parse_args()
@@ -321,10 +1083,15 @@ def main():
     # Allow CLI override of the supervisor URL module-level variable.
     _SUPERVISOR_RPC_URL = args.supervisor_rpc_url
 
+    Path(args.packages_dir).mkdir(parents=True, exist_ok=True)
+
     print(f"[backend]  Recordings dir:    {args.recordings_dir}")
     print(f"[backend]  Viewfinder binary: {args.viewfinder_bin}")
     print(f"[backend]  Live VF port:      {args.live_port}  (nginx → /stream/evk/)")
     print(f"[backend]  Supervisor RPC:    {_SUPERVISOR_RPC_URL}  (proxied at /supervisor/)")
+    print(f"[backend]  Modules registry:  {args.modules_registry}")
+    print(f"[backend]  Packages dir:      {args.packages_dir}")
+    print(f"[backend]  Supervisor conf.d: {args.supervisor_conf_d}")
     print(f"[backend]  CORS origin:       {_ALLOWED_ORIGIN}")
     print(f"[backend]  API at:            http://{args.host}:{args.port}")
     print(f"[backend]  NOTE: HTML is now served by frontend_server.py, not this process.")

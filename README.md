@@ -2,11 +2,21 @@
 
 ## Quick Install
 
-Run the following command to install eventide on a raspberry pi with a clean install of raspbian lite 64-bit
+Run the following command to install the eventide base platform on a raspberry pi with a clean install of raspbian lite 64-bit
 
 ``` bash
 sudo apt update && sudo apt install -y git && git clone https://github.com/Y2Kmeltdown/eventide.git && cd eventide && sudo chmod +x install.sh && ./install.sh
 ```
+
+The base install is intentionally minimal: OS configuration, the dashboard backend, supervisord, nginx, the watchdog/RTC/MAVProxy services, the playback server, and the Rust toolchain. It aborts with a clear error (logged to `/tmp/eventide-install.log`) if any step fails.
+
+## Modules
+
+Cameras, gimbal control, and other components are **modules** installed from GitHub repositories via the dashboard's **MODULES** tab — they run as supervisord services and can be installed, inspected, and uninstalled without touching the base system.
+
+- Module system documentation: [docs/MODULES.md](docs/MODULES.md)
+- Template for writing your own module: [module-template/](module-template/)
+- Upgrading from a pre-module install: see "Migrating from a pre-module install" in the docs
 
 ## Payload Information
 

@@ -1,4 +1,0 @@
-# Base platform Python dependencies (dashboard backend).
-# Module-specific Python packages belong in each module's
-# eventide-module.json (dependencies.pip) — see docs/MODULES.md.
-requests==2.32.3

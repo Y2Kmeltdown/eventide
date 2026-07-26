@@ -369,16 +369,21 @@ to a module as follows (the removed install.sh lines become manifest fields):
   --bind 0.0.0.0:8081 --quality 15`)
 - `sockets`: tcp `8081` (MJPEG live stream)
 
-### `Y2Kmeltdown/picam_datalogger` → `picam-datalogger`
+### `Y2Kmeltdown/picam_datalogger` → `picam-datalogger` ✅ converted
 
-- `dependencies.apt`: `python3-picamera2`, `python3-aiohttp`, `ffmpeg`
+The repo ships `eventide-module.json` — a two-service module:
+
+- `dependencies.apt`: `python3-picamera2`, `ffmpeg`
 - keep `dependencies.system_site_packages` at its default `true` so the
   apt-provided `picamera2` stays importable from the module venv
-- `install.artifacts`: `camera_app.py`, `mjpeg_server.py` →
-  `{install_dir}`; `camera_config.json` → `{config_dir}`
+- `requirements.txt` (into the venv): `aiohttp`, `numpy`,
+  `opencv-python-headless`
 - `recordings_subdir`: `picam`
-- `programs`: `pi_camera_datalogger`, `pi_mjpeg_server` (port 8082)
-- `sockets`: tcp `8082`
+- `programs`: `pi_camera_datalogger` (priority 1) and `pi_mjpeg_server`
+  (priority 2), both run straight from `{module_dir}` with `{venv_python}` —
+  no `install.artifacts` needed for pure-Python modules
+- `sockets`: unix `/tmp/picam_frames.sock` (inter-service frame socket) +
+  tcp `8082` (MJPEG)
 
 ### `ericltb15/aravis-ir` → `ircam-datalogger`
 

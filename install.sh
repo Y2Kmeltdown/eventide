@@ -234,16 +234,16 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 
-## MAVPROXY
-step "MAVProxy"
-sudo apt install -y \
-    python3-dev \
-    python3-opencv \
-    python3-matplotlib \
-    python3-lxml \
-    python3-pygame
-sudo pip3 install --break-system-packages future PyYAML mavproxy
-install_service mavproxy
+# ## MAVPROXY
+# step "MAVProxy"
+# sudo apt install -y \
+#     python3-dev \
+#     python3-opencv \
+#     python3-matplotlib \
+#     python3-lxml \
+#     python3-pygame
+# sudo pip3 install --break-system-packages future PyYAML mavproxy
+# install_service mavproxy
 
 ## SUPERVISOR BASE CONFIG
 step "supervisord base configuration"

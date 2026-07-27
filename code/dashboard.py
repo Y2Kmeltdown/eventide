@@ -516,7 +516,13 @@ def validate_manifest(m) -> list[str]:
             errors.append("'install.artifacts' must map source path → destination path")
         else:
             for dst in arts.values():
-                if not os.path.isabs(dst):
+                # Destinations support the same placeholders as program
+                # commands ({install_dir}, {module_dir}, ...) — expand
+                # before checking for an absolute path.
+                expanded = render_placeholders(
+                    dst, m, name if isinstance(name, str) else "module"
+                )
+                if not os.path.isabs(expanded):
                     errors.append(f"artifact destination must be an absolute path: {dst}")
 
     sub = m.get("recordings_subdir")
@@ -654,7 +660,9 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
 def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
     venv_dir = Path(cfg["packages_dir"]) / module_name / _VENV_DIR_NAME
     out = text
-    for arg in manifest.get("arguments", []):
+    for arg in manifest.get("arguments") or []:
+        if not isinstance(arg, dict) or "name" not in arg:
+            continue  # tolerate malformed manifests during validation
         out = out.replace("{arg:%s}" % arg["name"], str(arg.get("default", "")))
     out = out.replace("{install_dir}", MODULE_INSTALL_DIR)
     out = out.replace("{config_dir}", MODULE_CONFIG_DIR)
@@ -964,11 +972,11 @@ def _run_install_job(job: dict) -> None:
             src_path = module_dir / src
             if not src_path.exists():
                 raise RuntimeError(f"artifact not found after build: {src}")
-            dst_path = Path(dst)
+            dst_path = Path(render_placeholders(dst, manifest, name))
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_path, dst_path)
             copied_artifacts.append(str(dst_path))
-            _job_log(job, f"copied {src} → {dst}")
+            _job_log(job, f"copied {src} → {dst_path}")
         sub = manifest.get("recordings_subdir")
         if sub:
             rec_dir = Path(cfg["recordings_dir"]) / sub

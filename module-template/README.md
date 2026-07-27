@@ -55,7 +55,7 @@ Python libraries (e.g. `python3-picamera2`) remain visible; set
 6. Push, then install from the dashboard: **MODULES → enter the repo URL →
    INSTALL**.
 
-## Placeholders available in commands
+## Placeholders available in commands and artifact destinations
 
 | Placeholder        | Expands to                                    |
 | ------------------ | --------------------------------------------- |

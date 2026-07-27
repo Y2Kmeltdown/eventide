@@ -1165,6 +1165,91 @@ def api_modules_uninstall(name):
         return jsonify({"error": f"module not installed: {name}"}), 404
     return jsonify({"ok": True, "removed": name})
 
+
+@app.route("/api/modules/<name>/args", methods=["POST"])
+def api_modules_args(name):
+    """Update a module's argument values and reload its supervisor config.
+
+    The new values become the stored defaults in the registry manifest, the
+    module's conf.d file is re-rendered from them, and supervisor is told to
+    reread/update — which restarts any running programs whose command line
+    changed.
+    """
+    registry = load_registry()
+    entry = registry.get("modules", {}).get(name)
+    if entry is None:
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    data = request.get_json() or {}
+    new_args = data.get("args")
+    if not isinstance(new_args, dict):
+        return jsonify({
+            "error": "args must be an object mapping argument name → value"
+        }), 400
+
+    manifest = entry["manifest"]
+    declared = {a["name"]: a for a in manifest.get("arguments", [])}
+    updates: dict = {}
+    errors: list[str] = []
+    for key, value in new_args.items():
+        arg = declared.get(key)
+        if arg is None:
+            errors.append(f"unknown argument: '{key}'")
+            continue
+        atype = arg.get("type")
+        try:
+            if atype == "int":
+                if isinstance(value, bool):
+                    raise ValueError
+                value = int(str(value).strip())
+            elif atype == "float":
+                if isinstance(value, bool):
+                    raise ValueError
+                value = float(str(value).strip())
+            else:
+                value = str(value)
+        except (TypeError, ValueError):
+            errors.append(f"argument '{key}' must be of type {atype}")
+            continue
+        # Values land verbatim in an ini-style supervisor conf — a newline
+        # would inject extra directives, so reject it outright.
+        if isinstance(value, str) and ("\n" in value or "\r" in value):
+            errors.append(f"argument '{key}' must be a single line")
+            continue
+        updates[key] = value
+    if errors:
+        return jsonify({"error": "; ".join(errors)}), 400
+
+    for arg in manifest.get("arguments", []):
+        if arg["name"] in updates:
+            arg["default"] = updates[arg["name"]]
+
+    conf_path = Path(
+        entry.get("conf_file")
+        or Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+    )
+    try:
+        _atomic_write(
+            conf_path,
+            render_module_conf(manifest, name, entry.get("repo_url", "")),
+        )
+    except OSError as exc:
+        return jsonify({"error": f"failed to write {conf_path}: {exc}"}), 500
+    save_registry(registry)
+
+    if not shutil.which("supervisorctl"):
+        return jsonify({
+            "ok": True,
+            "warning": "supervisorctl not found — config written but supervisor not reloaded",
+            "arguments": manifest.get("arguments", []),
+        })
+    for sargs in (("reread",), ("update",)):
+        rc, out = _supervisorctl(*sargs)
+        if rc != 0:
+            return jsonify({
+                "error": f"supervisorctl {' '.join(sargs)} failed: {out}"
+            }), 500
+    return jsonify({"ok": True, "arguments": manifest.get("arguments", [])})
+
 # ── SSH deploy key ────────────────────────────────────────────────────────────
 # Private GitHub repos are cloned over SSH (see _clone_repo's HTTPS→SSH
 # fallback).  These endpoints manage a single passphrase-less ed25519 keypair

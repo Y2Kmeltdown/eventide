@@ -267,7 +267,14 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .mod-list::-webkit-scrollbar-thumb{background:var(--border2)}
 .mod-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px}
 .mod-card-head{display:flex;align-items:center;gap:8px}
-.mod-card-head .super-btn{margin-left:auto}
+.mod-card-actions{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
+.arg-form{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.arg-row{display:flex;align-items:center;gap:8px}
+.arg-label{font-family:var(--mono);font-size:9px;color:var(--text-mid);min-width:200px;flex-shrink:0}
+.arg-name{color:var(--text-dim);font-size:8px;margin-left:5px}
+.arg-input{flex:1;min-width:0}
+.arg-actions{display:flex;gap:6px;margin-top:4px}
+.arg-hint{font-size:8px;color:var(--text-dim);line-height:1.5;letter-spacing:.04em}
 .mod-name{font-family:var(--display);font-size:10px;letter-spacing:.14em;color:var(--green)}
 .mod-version{font-size:8px;color:var(--text-dim);letter-spacing:.1em}
 .mod-desc{font-size:9px;color:var(--text-mid);margin-top:5px;line-height:1.4}
@@ -1002,6 +1009,8 @@ let modJobTimer  = null;
 let modPollTimer = null;
 let logMode      = null;   // 'job' (install log) | 'proc' (service stdout)
 let superProcs   = null;   // live supervisor.getAllProcessInfo, null if RPC down
+let lastModules  = [];     // last module registry snapshot from the backend
+let editingModule = null;  // module name whose args form is open (poll re-render paused)
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
@@ -1032,7 +1041,9 @@ async function loadModules() {
     superProcs = null;
     setSuperConn(false, e.message);
   }
-  renderModules(modules);
+  lastModules = modules;
+  // Don't re-render while an args form is open — it would wipe the inputs.
+  if (!editingModule) renderModules(modules);
   setModConn(superProcs !== null,
     modules.length + ' module(s) installed' +
     (superProcs ? ' · ' + superProcs.length + ' service(s)'
@@ -1077,6 +1088,8 @@ function renderModules(modules) {
         (socks ? 'sockets: <span>' + escHtml(socks) + '</span><br>' : '') +
         (args ? 'args: <span>' + escHtml(args) + '</span>' : ''),
       uninstallable: true,
+      editing: editingModule === m.name,
+      module: m,
     });
   }).join('');
   list.innerHTML = html;
@@ -1105,18 +1118,25 @@ function svcCardHtml(o) {
     </div>`;
   }).join('');
   const namesArg = o.services.join(',');
+  const actions = o.editing ? '' : `<div class="mod-card-actions">
+      <button class="super-btn s-green" onclick="moduleAction('start','${namesArg}')">▶ START</button>
+      <button class="super-btn s-warn"  onclick="moduleAction('stop','${namesArg}')">■ STOP</button>
+      <button class="super-btn"         onclick="moduleAction('restart','${namesArg}')">↺ RESTART</button>
+      ${o.uninstallable ? `<button class="super-btn" onclick="editModuleArgs('${escHtml(o.title)}')">✎ EDIT</button>` : ''}
+      ${o.uninstallable ? `<button class="super-btn s-warn" onclick="uninstallModule('${escHtml(o.title)}')">✕ UNINSTALL</button>` : ''}
+    </div>`;
+  const body = o.editing
+    ? argsFormHtml(o.module)
+    : `${o.desc ? `<div class="mod-desc">${escHtml(o.desc)}</div>` : ''}
+       <div class="svc-list">${rows || '<div class="mod-empty">No services found.</div>'}</div>
+       ${o.metaHtml ? `<div class="mod-meta">${o.metaHtml}</div>` : ''}`;
   return `<div class="mod-card">
     <div class="mod-card-head">
       <span class="mod-name">${escHtml(o.title)}</span>
       <span class="mod-version">${escHtml(o.version)}</span>
-      <button class="super-btn s-green" onclick="moduleAction('start','${namesArg}')">▶ START</button>
-      <button class="super-btn s-warn"  onclick="moduleAction('stop','${namesArg}')">■ STOP</button>
-      <button class="super-btn"         onclick="moduleAction('restart','${namesArg}')">↺ RESTART</button>
-      ${o.uninstallable ? `<button class="super-btn s-warn" onclick="uninstallModule('${escHtml(o.title)}')">✕ UNINSTALL</button>` : ''}
+      ${actions}
     </div>
-    ${o.desc ? `<div class="mod-desc">${escHtml(o.desc)}</div>` : ''}
-    <div class="svc-list">${rows || '<div class="mod-empty">No services found.</div>'}</div>
-    ${o.metaHtml ? `<div class="mod-meta">${o.metaHtml}</div>` : ''}
+    ${body}
   </div>`;
 }
 
@@ -1187,6 +1207,7 @@ async function uninstallModule(name) {
                           {method: 'POST'});
     const data = await r.json();
     if (!r.ok) { toast(data.error || 'Uninstall failed', 'err'); return; }
+    if (editingModule === name) editingModule = null;
     toast('Module ' + name + ' uninstalled', 'ok');
     loadModules();
   } catch (e) { toast('Uninstall failed: ' + e.message, 'err'); }
@@ -1216,6 +1237,59 @@ async function moduleAction(action, namesCsv) {
     ? `${action}: ${failed} of ${names.length} service(s) failed`
     : `${action} sent to ${names.length} service(s)`, failed ? 'err' : 'ok');
   loadModules();
+}
+
+// ── Module argument editing ────────────────────────────────
+// EDIT swaps the card body for a form over the manifest's declared
+// arguments.  Saving posts the values to the backend, which rewrites the
+// module's supervisor conf and runs reread/update (restarting the affected
+// programs).  While a form is open, loadModules skips re-rendering so the
+// 5 s poll can't wipe in-progress edits.
+function argsFormHtml(m) {
+  const rows = (m.arguments || []).map(a =>
+    `<label class="arg-row">
+      <span class="arg-label">${escHtml(a.flag)}<span class="arg-name">${escHtml(a.name)} · ${escHtml(a.type)}</span></span>
+      <input class="mod-input arg-input" data-arg="${escHtml(a.name)}" value="${escHtml(String(a.default))}" spellcheck="false">
+    </label>`).join('');
+  return `<div class="arg-form" data-module="${escHtml(m.name)}">
+    ${rows || '<div class="mod-empty">This module declares no arguments.</div>'}
+    <div class="arg-actions">
+      <button class="super-btn s-green" onclick="saveModuleArgs('${escHtml(m.name)}')">✔ SAVE &amp; APPLY</button>
+      <button class="super-btn" onclick="cancelModuleArgs()">✕ CANCEL</button>
+    </div>
+    <div class="arg-hint">Saving rewrites the module's supervisor config and reloads
+    supervisord — running programs restart with the new arguments.</div>
+  </div>`;
+}
+
+function editModuleArgs(name) {
+  editingModule = name;
+  renderModules(lastModules);
+}
+
+function cancelModuleArgs() {
+  editingModule = null;
+  renderModules(lastModules);
+}
+
+async function saveModuleArgs(name) {
+  const form = document.querySelector(`.arg-form[data-module="${name}"]`);
+  if (!form) return;
+  const args = {};
+  form.querySelectorAll('.arg-input').forEach(i => { args[i.dataset.arg] = i.value; });
+  try {
+    const r = await fetch(apiUrl('/modules/' + encodeURIComponent(name) + '/args'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({args}),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Save failed', 'err'); return; }
+    editingModule = null;
+    toast('Arguments updated — supervisor reloaded', 'ok');
+    if (data.warning) toast(data.warning, 'err');
+    loadModules();
+  } catch (e) { toast('Save failed: ' + e.message, 'err'); }
 }
 
 // ── Shared log panel (install log ⇄ service stdout) ────────

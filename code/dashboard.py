@@ -689,7 +689,13 @@ def render_module_conf(manifest: dict, module_name: str, repo_url: str) -> str:
         lines.append(f"autorestart={'true' if p.get('autorestart', True) else 'false'}")
         lines.append(f"startretries={int(p.get('startretries', 10000))}")
         lines.append(f"priority={int(p.get('priority', 10))}")
-        lines.append(f"user={p.get('user', 'root')}")
+        user = p.get("user", "root")
+        lines.append(f"user={user}")
+        # supervisord gives programs a bare environment — unlike systemd it
+        # does not set HOME, which breaks tools that need a per-user dir
+        # (e.g. MAVProxy's ~/.mavproxy).  Provide it explicitly.
+        home = "/root" if user == "root" else f"/home/{user}"
+        lines.append(f'environment=HOME="{home}"')
         lines.append("stdout_logfile=/var/log/supervisor/%(program_name)s.log")
         lines.append("")
     return "\n".join(lines)

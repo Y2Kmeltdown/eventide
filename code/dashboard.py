@@ -650,11 +650,39 @@ def _create_venv(job: dict, venv_dir: Path, system_site_packages: bool) -> None:
 
 # ── Shell helpers ─────────────────────────────────────────────────────────────
 
+def _module_env() -> dict:
+    """Environment for module job commands.
+
+    The dashboard runs under systemd with a minimal PATH, so toolchains
+    installed per-user (rustup → ~/.cargo/bin) are invisible to install
+    commands even though they exist on the device.  Re-add well-known
+    cargo bin dirs to PATH, and point CARGO_HOME/RUSTUP_HOME at the same
+    user's dirs so rustup's shim binaries find their toolchains when the
+    toolchain belongs to a non-root user.
+    """
+    env = os.environ.copy()
+    candidates = [Path.home() / ".cargo", Path("/usr/local/cargo")]
+    candidates += sorted(Path("/home").glob("*/.cargo"))
+    extra: list[str] = []
+    for cargo_home in candidates:
+        if not (cargo_home / "bin").is_dir():
+            continue
+        extra.append(str(cargo_home / "bin"))
+        rustup_home = cargo_home.parent / ".rustup"
+        if rustup_home.is_dir():
+            env.setdefault("CARGO_HOME", str(cargo_home))
+            env.setdefault("RUSTUP_HOME", str(rustup_home))
+    if extra:
+        env["PATH"] = os.pathsep.join([*extra, env.get("PATH", "")])
+    return env
+
+
 def _run_logged_argv(job: dict, argv: list[str], cwd=None, timeout=600) -> str:
     _job_log(job, "$ " + shlex.join(argv))
     try:
         proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            argv, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            env=_module_env(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"command timed out after {timeout}s: {shlex.join(argv)}")
@@ -854,7 +882,9 @@ def _run_install_job(job: dict) -> None:
         _job_status(job, "building")
         inst = manifest.get("install", {})
         for cmd in inst.get("commands", []):
-            _run_logged_shell(job, cmd, cwd=module_dir, timeout=600)
+            # Compilations (cargo build --release & co.) legitimately take a
+            # long time on-device — allow 30 min per build command.
+            _run_logged_shell(job, cmd, cwd=module_dir, timeout=1800)
 
         # ── Artifacts & recordings dir ────────────────────────────────────
         _job_status(job, "artifacts")

@@ -219,11 +219,8 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .label-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 
 /* ════════════════════════════════════════
-   TAB 3 — SUPERVISORD
+   SERVICES / MODULES TAB (merged)
 ════════════════════════════════════════ */
-#ws-super{grid-template-columns:1fr}
-.super-layout{display:grid;grid-template-columns:1fr 300px;overflow:hidden;min-height:0}
-.super-main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
 .super-toolbar{display:flex;align-items:center;gap:8px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
 .super-toolbar-title{font-family:var(--display);font-size:9px;letter-spacing:.2em;color:var(--text-mid)}
 .super-spacer{flex:1}
@@ -231,18 +228,6 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .super-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
 .super-btn.s-warn:hover{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
 .super-btn.s-green:hover{border-color:var(--green);color:var(--green);background:var(--green-dim)}
-.super-table-wrap{flex:1;overflow-y:auto;min-height:0}
-.super-table-wrap::-webkit-scrollbar{width:3px}
-.super-table-wrap::-webkit-scrollbar-thumb{background:var(--border2)}
-table.proc-table{width:100%;border-collapse:collapse}
-table.proc-table thead tr{background:var(--surface);border-bottom:1px solid var(--border2);position:sticky;top:0;z-index:1}
-table.proc-table th{padding:7px 14px;text-align:left;font-family:var(--display);font-size:7px;letter-spacing:.2em;color:var(--text-dim);font-weight:normal}
-table.proc-table td{padding:8px 14px;border-bottom:1px solid #0a1520;font-size:10px;vertical-align:middle}
-table.proc-table tbody tr{cursor:pointer}
-table.proc-table tbody tr:hover{background:var(--surface2)}
-table.proc-table tbody tr.selected{background:var(--surface3)}
-.proc-name{font-weight:700;color:var(--text)}
-.proc-group{color:var(--text-dim);font-size:9px;margin-top:1px}
 .state-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:2px;font-size:9px;letter-spacing:.1em;border:1px solid var(--border2);color:var(--text-dim)}
 .state-badge .dot{width:4px;height:4px;border-radius:50%;background:currentColor;flex-shrink:0}
 .state-badge.running{border-color:rgba(0,232,157,.4);color:var(--green);background:var(--green-dim)}
@@ -259,6 +244,15 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 .super-status-bar{padding:6px 14px;border-top:1px solid var(--border);font-size:8px;color:var(--text-dim);letter-spacing:.1em;display:flex;align-items:center;gap:8px;flex-shrink:0}
 .super-status-bar .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
 .super-status-bar .dot.on{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
+
+/* Service rows inside module cards */
+.svc-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.svc-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid transparent;border-radius:var(--r);cursor:pointer}
+.svc-row:hover{background:var(--surface2)}
+.svc-row.selected{background:var(--surface3);border-color:var(--border2)}
+.svc-name{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--text)}
+.svc-meta{font-size:8px;color:var(--text-dim);letter-spacing:.06em}
+.svc-row .proc-actions{margin-left:auto}
 
 /* Modules tab */
 .mod-layout{display:grid;grid-template-columns:1fr 340px;overflow:hidden;min-height:0}
@@ -277,7 +271,6 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 .mod-name{font-family:var(--display);font-size:10px;letter-spacing:.14em;color:var(--green)}
 .mod-version{font-size:8px;color:var(--text-dim);letter-spacing:.1em}
 .mod-desc{font-size:9px;color:var(--text-mid);margin-top:5px;line-height:1.4}
-.mod-progs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .mod-meta{font-size:8px;color:var(--text-dim);margin-top:6px;line-height:1.6;word-break:break-all}
 .mod-meta span{color:var(--text-mid)}
 .mod-empty{color:var(--text-dim);font-size:9px;font-style:italic;text-align:center;padding:24px 0}
@@ -364,8 +357,7 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 <div class="tab-bar">
   <button class="tab-btn active"     id="tab-main"     onclick="switchTab('main')"><span class="tab-icon">◉</span> MAIN</button>
   <button class="tab-btn t-playback" id="tab-playback" onclick="switchTab('playback')"><span class="tab-icon">◈</span> PLAYBACK</button>
-  <button class="tab-btn t-super"    id="tab-super"    onclick="switchTab('super')"><span class="tab-icon">⬡</span> SUPERVISOR</button>
-  <button class="tab-btn t-modules"  id="tab-modules"  onclick="switchTab('modules')"><span class="tab-icon">✚</span> MODULES</button>
+  <button class="tab-btn t-modules"  id="tab-modules"  onclick="switchTab('modules')"><span class="tab-icon">⬡</span> MODULES</button>
 </div>
 
 <!-- ═════════════════════════════════════════════════════════
@@ -724,70 +716,16 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 </div><!-- /ws-playback -->
 
 
-<!-- ═════════════════════════════════════════════════════════
-     TAB 3 — SUPERVISORD  (XML-RPC via nginx proxy)
-     ─────────────────────────────────────────────────────────
-     Requires supervisord.conf:
-       [inet_http_server]
-       port = 127.0.0.1:9001
-
-     Add to nginx streams config:
-       location /supervisor/ {
-           proxy_pass http://127.0.0.1:9001/RPC2;
-           proxy_set_header Content-Type text/xml;
-       }
-════════════════════════════════════════════════════════════ -->
-<div class="workspace" id="ws-super">
-  <div class="super-layout">
-
-    <div class="super-main">
-      <div class="super-toolbar">
-        <span class="super-toolbar-title">PROCESSES</span>
-        <div class="super-spacer"></div>
-        <button class="super-btn s-green" onclick="superStartAll()">▶ START ALL</button>
-        <button class="super-btn s-warn"  onclick="superStopAll()">■ STOP ALL</button>
-        <button class="super-btn"         onclick="loadSuperProcesses()">↻ REFRESH</button>
-      </div>
-      <div class="super-table-wrap">
-        <table class="proc-table">
-          <thead><tr>
-            <th>PROCESS</th><th>STATE</th><th>PID</th><th>UPTIME</th><th>ACTIONS</th>
-          </tr></thead>
-          <tbody id="proc-tbody">
-            <tr><td colspan="5" class="empty">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="super-status-bar">
-        <div class="dot" id="super-conn-dot"></div>
-        <span id="super-conn-label">Connecting to supervisord…</span>
-      </div>
-    </div>
-
-    <div class="super-log">
-      <div class="log-header">
-        <span class="log-title" id="log-title">STDOUT LOG</span>
-        <div style="display:flex;gap:6px">
-          <button class="btn-sm" onclick="clearLog()">✕ CLEAR</button>
-          <button class="btn-sm" onclick="refreshLog()">↻ REFRESH</button>
-        </div>
-      </div>
-      <div class="log-scroll" id="log-scroll">
-        <pre id="log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Select a process to view its log.</pre>
-      </div>
-    </div>
-
-  </div>
-</div><!-- /ws-super -->
-
 <div class="workspace" id="ws-modules">
   <div class="mod-layout">
 
     <div class="mod-main">
       <div class="super-toolbar">
-        <span class="super-toolbar-title">INSTALLED MODULES</span>
+        <span class="super-toolbar-title">MODULES &amp; SERVICES</span>
         <div class="super-spacer"></div>
-        <button class="super-btn" onclick="loadModules()">↻ REFRESH</button>
+        <button class="super-btn s-green" onclick="superStartAll()">▶ START ALL</button>
+        <button class="super-btn s-warn"  onclick="superStopAll()">■ STOP ALL</button>
+        <button class="super-btn"         onclick="loadModules()">↻ REFRESH</button>
       </div>
       <div class="mod-install-bar">
         <input class="mod-input repo" id="mod-repo-input"
@@ -821,11 +759,15 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 
     <div class="super-log">
       <div class="log-header">
-        <span class="log-title">INSTALL LOG</span>
+        <span class="log-title" id="mod-log-title">INSTALL LOG</span>
         <span class="state-badge" id="mod-job-badge" style="display:none"></span>
+        <div style="display:flex;gap:6px">
+          <button class="btn-sm" onclick="logClear()">✕ CLEAR</button>
+          <button class="btn-sm" onclick="logRefresh()">↻ REFRESH</button>
+        </div>
       </div>
       <div class="log-scroll" id="mod-log-scroll">
-        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">No install job yet. Paste a GitHub repo URL and hit INSTALL.</pre>
+        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Click a service to view its stdout log, or install a module to watch the install log.</pre>
       </div>
     </div>
 
@@ -979,7 +921,6 @@ let deviceMarker   = null;
 let targetMarker   = null;
 let hasDeviceFix   = false;
 let selectedProc   = null;
-let superPollTimer = null;
 let adsbPollTimer  = null;
 let adsbMarkers    = {};   // icao → L.marker
 let activeAdsbIcao = null;
@@ -1007,17 +948,10 @@ function switchTab(tab) {
   document.getElementById('tab-' + tab).classList.add('active');
 
   if (tab === 'playback') loadAllRecordings();
-  if (tab === 'super') {
-    loadSuperProcesses();
-    if (!superPollTimer) superPollTimer = setInterval(loadSuperProcesses, 5000);
-  } else {
-    clearInterval(superPollTimer);
-    superPollTimer = null;
-  }
   if (tab === 'modules') {
     loadModules();
     loadSshKey();
-    if (!modPollTimer) modPollTimer = setInterval(loadModules, 10000);
+    if (!modPollTimer) modPollTimer = setInterval(loadModules, 5000);
   } else {
     clearInterval(modPollTimer);
     modPollTimer = null;
@@ -1048,14 +982,20 @@ function switchGimbalTab(tab) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MODULES TAB
+//  MODULES TAB (merged with the old SUPERVISOR tab)
 //  GitHub module installs run on the backend (dashboard.py) as
-//  background jobs; this tab polls job status and lists the
-//  installed-module registry. See docs/MODULES.md.
+//  background jobs; this tab polls job status, lists the
+//  installed-module registry, and merges in live supervisord
+//  process info (via XML-RPC) so every service — installed-module
+//  programs and preinstalled "base" services — is controllable
+//  from one list.  The right-hand log panel is shared between
+//  install-job output and per-service stdout tails.
 // ═══════════════════════════════════════════════════════════
 let modJobId     = null;
 let modJobTimer  = null;
 let modPollTimer = null;
+let logMode      = null;   // 'job' (install log) | 'proc' (service stdout)
+let superProcs   = null;   // live supervisor.getAllProcessInfo, null if RPC down
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
@@ -1070,48 +1010,108 @@ function setModConn(ok, msg) {
 }
 
 async function loadModules() {
+  let modules;
   try {
     const r = await fetch(apiUrl('/modules'));
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    const modules = data.modules || [];
-    renderModules(modules);
-    setModConn(true, modules.length + ' module(s) installed');
+    modules = (await r.json()).modules || [];
   } catch (e) {
     setModConn(false, 'Backend unreachable: ' + e.message);
+    return;
   }
+  try {
+    superProcs = await xmlrpcCall('supervisor.getAllProcessInfo');
+    setSuperConn(true);
+  } catch (e) {
+    superProcs = null;
+    setSuperConn(false, e.message);
+  }
+  renderModules(modules);
+  setModConn(superProcs !== null,
+    modules.length + ' module(s) installed' +
+    (superProcs ? ' · ' + superProcs.length + ' service(s)'
+                : ' · supervisord unavailable'));
+  if (logMode === 'proc' && selectedProc) refreshLog();
 }
 
 function renderModules(modules) {
   const list = document.getElementById('mod-list');
-  if (!modules.length) {
-    list.innerHTML = '<div class="mod-empty">No modules installed. Install one from a GitHub repo above.</div>';
-    return;
-  }
-  list.innerHTML = modules.map(m => {
-    const progs = (m.programs || []).map(p =>
-      `<span class="state-badge ${p.status === 'RUNNING' ? 'running' : ''}">` +
-      `${escHtml(p.name)} · ${escHtml(p.status)}</span>`
-    ).join('');
+  const procByName = {};
+  (superProcs || []).forEach(p => { procByName[p.name] = p; });
+  const claimed = new Set(modules.flatMap(m => (m.programs || []).map(p => p.name)));
+
+  // Base "module": every supervisor service not owned by an installed module.
+  let html = svcCardHtml({
+    title: 'BASE',
+    version: 'core',
+    desc: 'Preinstalled services running on this device.',
+    services: (superProcs || []).filter(p => !claimed.has(p.name)).map(p => p.name),
+    procByName,
+    fallbackStatus: {},
+    metaHtml: '',
+    uninstallable: false,
+  });
+
+  html += modules.map(m => {
     const socks = (m.sockets || []).map(s =>
       s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
     ).join(', ');
     const args = (m.arguments || []).map(a => `${a.flag}=${a.default}`).join('  ');
-    return `<div class="mod-card">
-      <div class="mod-card-head">
-        <span class="mod-name">${escHtml(m.name)}</span>
-        <span class="mod-version">v${escHtml(m.version || '?')}</span>
-        <button class="super-btn s-warn" onclick="uninstallModule('${escHtml(m.name)}')">✕ UNINSTALL</button>
-      </div>
-      <div class="mod-desc">${escHtml(m.description || '')}</div>
-      <div class="mod-progs">${progs}</div>
-      <div class="mod-meta">
-        ${m.repo_url ? 'repo: <span>' + escHtml(m.repo_url) + '</span><br>' : ''}
-        ${socks ? 'sockets: <span>' + escHtml(socks) + '</span><br>' : ''}
-        ${args ? 'args: <span>' + escHtml(args) + '</span>' : ''}
-      </div>
+    const fallback = {};
+    (m.programs || []).forEach(p => { fallback[p.name] = p.status; });
+    return svcCardHtml({
+      title: m.name,
+      version: 'v' + (m.version || '?'),
+      desc: m.description || '',
+      services: (m.programs || []).map(p => p.name),
+      procByName,
+      fallbackStatus: fallback,
+      metaHtml:
+        (m.repo_url ? 'repo: <span>' + escHtml(m.repo_url) + '</span><br>' : '') +
+        (socks ? 'sockets: <span>' + escHtml(socks) + '</span><br>' : '') +
+        (args ? 'args: <span>' + escHtml(args) + '</span>' : ''),
+      uninstallable: true,
+    });
+  }).join('');
+  list.innerHTML = html;
+}
+
+function svcCardHtml(o) {
+  const rows = o.services.map(name => {
+    const info  = o.procByName[name];
+    const state = info ? info.statename : (o.fallbackStatus[name] || 'UNKNOWN');
+    const fullName = info && info.group && info.group !== info.name
+      ? `${info.group}:${info.name}` : name;
+    const canStart = ['STOPPED','EXITED','FATAL','UNKNOWN'].includes(state);
+    const canStop  = ['RUNNING','STARTING'].includes(state);
+    const meta = info
+      ? `pid ${info.pid || '—'} · up ${fmtUptime(info.now - info.start)}`
+      : 'no live data';
+    return `<div class="svc-row ${selectedProc === fullName ? 'selected' : ''}" data-svc="${escHtml(fullName)}" onclick="selectProcess('${escHtml(fullName)}')">
+      ${stateBadge(state)}
+      <span class="svc-name">${escHtml(name)}</span>
+      <span class="svc-meta">${escHtml(meta)}</span>
+      <span class="proc-actions">
+        ${canStart ? `<button class="proc-btn start" onclick="superStart('${fullName}',event)">▶</button>` : ''}
+        ${canStop  ? `<button class="proc-btn stop"  onclick="superStop('${fullName}',event)">■</button>` : ''}
+        <button class="proc-btn restart" onclick="superRestart('${fullName}',event)">↺</button>
+      </span>
     </div>`;
   }).join('');
+  const namesArg = o.services.join(',');
+  return `<div class="mod-card">
+    <div class="mod-card-head">
+      <span class="mod-name">${escHtml(o.title)}</span>
+      <span class="mod-version">${escHtml(o.version)}</span>
+      <button class="super-btn s-green" onclick="moduleAction('start','${namesArg}')">▶ START</button>
+      <button class="super-btn s-warn"  onclick="moduleAction('stop','${namesArg}')">■ STOP</button>
+      <button class="super-btn"         onclick="moduleAction('restart','${namesArg}')">↺ RESTART</button>
+      ${o.uninstallable ? `<button class="super-btn s-warn" onclick="uninstallModule('${escHtml(o.title)}')">✕ UNINSTALL</button>` : ''}
+    </div>
+    ${o.desc ? `<div class="mod-desc">${escHtml(o.desc)}</div>` : ''}
+    <div class="svc-list">${rows || '<div class="mod-empty">No services found.</div>'}</div>
+    ${o.metaHtml ? `<div class="mod-meta">${o.metaHtml}</div>` : ''}
+  </div>`;
 }
 
 async function installModule() {
@@ -1127,6 +1127,8 @@ async function installModule() {
     const data = await r.json();
     if (!r.ok) { toast(data.error || 'Install failed to start', 'err'); return; }
     modJobId = data.job_id;
+    logMode = 'job';
+    document.getElementById('mod-log-title').textContent = 'INSTALL LOG';
     setModJobBadge('pending');
     const out = document.getElementById('mod-log-output');
     out.style.fontStyle = 'normal';
@@ -1145,10 +1147,12 @@ async function pollModJob() {
     if (!r.ok) return;
     const job = await r.json();
     setModJobBadge(job.status);
-    const out = document.getElementById('mod-log-output');
-    out.textContent = job.log.join('\n') || '(waiting for output…)';
-    const scroll = document.getElementById('mod-log-scroll');
-    scroll.scrollTop = scroll.scrollHeight;
+    if (logMode === 'job') {
+      const out = document.getElementById('mod-log-output');
+      out.textContent = job.log.join('\n') || '(waiting for output…)';
+      const scroll = document.getElementById('mod-log-scroll');
+      scroll.scrollTop = scroll.scrollHeight;
+    }
     if (job.status === 'done' || job.status === 'failed') {
       clearInterval(modJobTimer); modJobTimer = null;
       if (job.status === 'done') {
@@ -1180,6 +1184,66 @@ async function uninstallModule(name) {
     toast('Module ' + name + ' uninstalled', 'ok');
     loadModules();
   } catch (e) { toast('Uninstall failed: ' + e.message, 'err'); }
+}
+
+// ── Module / service actions ───────────────────────────────
+// Start, stop or restart every service belonging to one card (an installed
+// module or the base set).  namesCsv is a comma-separated list of full
+// supervisor process names rendered into the card's buttons.
+async function moduleAction(action, namesCsv) {
+  const names = (namesCsv || '').split(',').filter(Boolean);
+  if (!names.length) { toast('No services to ' + action, 'err'); return; }
+  let failed = 0;
+  for (const name of names) {
+    try {
+      if (action === 'start') {
+        await xmlrpcCall('supervisor.startProcess', name);
+      } else if (action === 'stop') {
+        await xmlrpcCall('supervisor.stopProcess', name);
+      } else {
+        await xmlrpcCall('supervisor.stopProcess', name).catch(() => {});
+        await xmlrpcCall('supervisor.startProcess', name);
+      }
+    } catch { failed++; }
+  }
+  toast(failed
+    ? `${action}: ${failed} of ${names.length} service(s) failed`
+    : `${action} sent to ${names.length} service(s)`, failed ? 'err' : 'ok');
+  loadModules();
+}
+
+// ── Shared log panel (install log ⇄ service stdout) ────────
+function selectProcess(name) {
+  selectedProc = name;
+  logMode = 'proc';
+  document.getElementById('mod-log-title').textContent = name.toUpperCase() + ' — STDOUT';
+  document.querySelectorAll('.svc-row').forEach(r =>
+    r.classList.toggle('selected', r.dataset.svc === name));
+  refreshLog();
+}
+
+async function refreshLog() {
+  if (!selectedProc) return;
+  try {
+    const result = await xmlrpcCall('supervisor.tailProcessStdoutLog', selectedProc, 0, 8192);
+    const text = Array.isArray(result) ? result[0] : result;
+    const el = document.getElementById('mod-log-output');
+    el.style.color = 'var(--text-mid)'; el.style.fontStyle = 'normal';
+    el.textContent = text || '(no output)';
+    const scroll = document.getElementById('mod-log-scroll');
+    scroll.scrollTop = scroll.scrollHeight;
+  } catch (e) {
+    document.getElementById('mod-log-output').textContent = 'Error: ' + e.message;
+  }
+}
+
+function logClear() {
+  document.getElementById('mod-log-output').textContent = '';
+}
+
+function logRefresh() {
+  if (logMode === 'job') pollModJob();
+  else if (logMode === 'proc') refreshLog();
 }
 
 // ── SSH key panel ──────────────────────────────────────────
@@ -1652,90 +1716,21 @@ function stateBadge(state) {
   return `<span class="state-badge ${cls}"><span class="dot"></span>${state}</span>`;
 }
 
-async function loadSuperProcesses() {
-  try {
-    const procs = await xmlrpcCall('supervisor.getAllProcessInfo');
-    renderProcTable(procs);
-    setSuperConn(true);
-    if (selectedProc) refreshLog();
-  } catch(e) { setSuperConn(false, e.message); }
-}
-
-function renderProcTable(procs) {
-  const tbody = document.getElementById('proc-tbody');
-  if (!procs?.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty">No processes found.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = procs.map(p => {
-    const fullName = (p.group && p.group !== p.name) ? `${p.group}:${p.name}` : p.name;
-    const canStart = ['STOPPED','EXITED','FATAL','UNKNOWN'].includes(p.statename);
-    const canStop  = ['RUNNING','STARTING'].includes(p.statename);
-    const uptime   = fmtUptime(p.now - p.start);
-    return `<tr class="${selectedProc===fullName?'selected':''}" onclick="selectProcess('${fullName}')">
-      <td>
-        <div class="proc-name">${p.name}</div>
-        ${p.group&&p.group!==p.name?`<div class="proc-group">${p.group}</div>`:''}
-      </td>
-      <td>${stateBadge(p.statename)}</td>
-      <td style="color:var(--text-mid)">${p.pid||'—'}</td>
-      <td style="color:var(--text-mid)">${uptime}</td>
-      <td>
-        <div class="proc-actions">
-          ${canStart?`<button class="proc-btn start" onclick="superStart('${fullName}',event)">▶</button>`:''}
-          ${canStop ?`<button class="proc-btn stop"  onclick="superStop('${fullName}',event)">■</button>` :''}
-          <button class="proc-btn restart" onclick="superRestart('${fullName}',event)">↺</button>
-        </div>
-      </td>
-    </tr>`;
-  }).join('');
-}
-
-function setSuperConn(ok, errMsg) {
-  document.getElementById('super-conn-dot').className = 'dot' + (ok?' on':'');
-  document.getElementById('super-conn-label').textContent =
-    ok ? 'Connected to supervisord' : 'supervisord unavailable' + (errMsg ? ': ' + errMsg : '');
+function setSuperConn(ok) {
+  // The merged MODULES tab reports supervisord reachability in its own
+  // status bar; here we only drive the header pill.
   const hdr = document.getElementById('hdr-dot-super');
-  if (hdr) hdr.className = 'dot' + (ok?' on':'');
-}
-
-function selectProcess(name) {
-  selectedProc = name;
-  document.getElementById('log-title').textContent = name.toUpperCase() + ' — STDOUT';
-  // Update selection highlight without full re-render
-  document.querySelectorAll('#proc-tbody tr').forEach(tr => {
-    const onclick = tr.getAttribute('onclick') || '';
-    tr.classList.toggle('selected', onclick.includes(`'${name}'`));
-  });
-  refreshLog();
-}
-
-async function refreshLog() {
-  if (!selectedProc) return;
-  try {
-    const result = await xmlrpcCall('supervisor.tailProcessStdoutLog', selectedProc, 0, 8192);
-    const text = Array.isArray(result) ? result[0] : result;
-    const el = document.getElementById('log-output');
-    el.style.color = 'var(--text-mid)'; el.style.fontStyle = 'normal';
-    el.textContent = text || '(no output)';
-    const scroll = document.getElementById('log-scroll');
-    scroll.scrollTop = scroll.scrollHeight;
-  } catch(e) {
-    document.getElementById('log-output').textContent = 'Error: ' + e.message;
-  }
-}
-function clearLog() {
-  document.getElementById('log-output').textContent = '';
+  if (hdr) hdr.className = 'dot' + (ok ? ' on' : '');
 }
 
 async function superStart(name, e) {
   e?.stopPropagation();
-  try { await xmlrpcCall('supervisor.startProcess', name); toast(name + ' started', 'ok'); loadSuperProcesses(); }
+  try { await xmlrpcCall('supervisor.startProcess', name); toast(name + ' started', 'ok'); loadModules(); }
   catch(e) { toast('Start failed: ' + e.message, 'err'); }
 }
 async function superStop(name, e) {
   e?.stopPropagation();
-  try { await xmlrpcCall('supervisor.stopProcess', name); toast(name + ' stopped'); loadSuperProcesses(); }
+  try { await xmlrpcCall('supervisor.stopProcess', name); toast(name + ' stopped'); loadModules(); }
   catch(e) { toast('Stop failed: ' + e.message, 'err'); }
 }
 async function superRestart(name, e) {
@@ -1744,15 +1739,15 @@ async function superRestart(name, e) {
     await xmlrpcCall('supervisor.stopProcess', name).catch(() => {});
     await xmlrpcCall('supervisor.startProcess', name);
     toast(name + ' restarted', 'ok');
-    loadSuperProcesses();
+    loadModules();
   } catch(e) { toast('Restart failed: ' + e.message, 'err'); }
 }
 async function superStartAll() {
-  try { await xmlrpcCall('supervisor.startAllProcesses'); toast('All processes started', 'ok'); loadSuperProcesses(); }
+  try { await xmlrpcCall('supervisor.startAllProcesses'); toast('All processes started', 'ok'); loadModules(); }
   catch(e) { toast('Start all failed: ' + e.message, 'err'); }
 }
 async function superStopAll() {
-  try { await xmlrpcCall('supervisor.stopAllProcesses'); toast('All processes stopped'); loadSuperProcesses(); }
+  try { await xmlrpcCall('supervisor.stopAllProcesses'); toast('All processes stopped'); loadModules(); }
   catch(e) { toast('Stop all failed: ' + e.message, 'err'); }
 }
 

@@ -66,7 +66,18 @@ OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 DEVICE_TREE_MODEL="${DEVICE_TREE_MODEL:-/proc/device-tree/model}"
 
 detect_os() {
-    # 1. Identify from the os-release ID.
+    # 1. Identify ARM boards from the device-tree model. This must come FIRST:
+    #    newer Raspberry Pi OS releases report ID=debian in os-release, so the
+    #    ID check alone can't tell a Pi from a generic Debian machine. The
+    #    device-tree file only exists on ARM boards, so x86/other Debian and
+    #    Ubuntu systems fall through to the ID check below.
+    if [ -r "$DEVICE_TREE_MODEL" ]; then
+        case "$(tr -d '\0' < "$DEVICE_TREE_MODEL")" in
+            *"Raspberry Pi"*) echo "raspbian"; return ;;
+            *"Orange Pi"*)    echo "orangepi"; return ;;
+        esac
+    fi
+    # 2. Identify from the os-release ID.
     local id=""
     if [ -r "$OS_RELEASE_FILE" ]; then
         id=$(bash -c ". '$OS_RELEASE_FILE'; echo \"\${ID:-}\"")
@@ -76,13 +87,6 @@ detect_os() {
         ubuntu)   echo "ubuntu";   return ;;
         debian)   echo "debian";   return ;;
     esac
-    # 2. Fall back to the device-tree model (ARM boards).
-    if [ -r "$DEVICE_TREE_MODEL" ]; then
-        case "$(tr -d '\0' < "$DEVICE_TREE_MODEL")" in
-            *"Raspberry Pi"*) echo "raspbian"; return ;;
-            *"Orange Pi"*)    echo "orangepi"; return ;;
-        esac
-    fi
     echo "unknown"
 }
 
@@ -234,16 +238,16 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 
-## MAVPROXY
-step "MAVProxy"
-sudo apt install -y \
-    python3-dev \
-    python3-opencv \
-    python3-matplotlib \
-    python3-lxml \
-    python3-pygame
-sudo pip3 install --break-system-packages future PyYAML mavproxy
-install_service mavproxy
+# ## MAVPROXY
+# step "MAVProxy"
+# sudo apt install -y \
+#     python3-dev \
+#     python3-opencv \
+#     python3-matplotlib \
+#     python3-lxml \
+#     python3-pygame
+# sudo pip3 install --break-system-packages future PyYAML mavproxy
+# install_service mavproxy
 
 ## SUPERVISOR BASE CONFIG
 step "supervisord base configuration"

@@ -127,7 +127,7 @@ system's Python (no more `pip install --break-system-packages` for modules).
 | Field       | Type   | Description |
 | ----------- | ------ | ----------- |
 | `commands`  | string[] | Build commands run in the repo root (e.g. `"cargo build --release"`). Each has a 30-minute timeout. |
-| `artifacts` | object | Map of `source path (relative to repo root)` → `absolute destination path`. Every source is verified to exist after the build; the copy preserves the file mode (`cp -p`). Parent directories of destinations are created automatically. |
+| `artifacts` | object | Map of `source path (relative to repo root)` → `destination path`. Destinations must be absolute after expansion and support the same placeholders as program commands (e.g. `{install_dir}/my_binary`). Every source is verified to exist after the build; the copy preserves the file mode (`cp -p`). Parent directories of destinations are created automatically. |
 
 #### `recordings_subdir` (optional)
 
@@ -180,8 +180,9 @@ example, typically declares two: a datalogger and an MJPEG server.
 
 ### Command placeholders
 
-Placeholders are expanded when the module's supervisor config is generated
-(install time):
+Placeholders are expanded at install time — in program commands and
+`directory` fields (when the module's supervisor config is generated) and in
+`install.artifacts` destinations (when artifacts are copied):
 
 | Placeholder        | Expands to                                   |
 | ------------------ | -------------------------------------------- |
@@ -389,13 +390,27 @@ The repo ships `eventide-module.json` — a two-service module:
 - `sockets`: unix `/tmp/picam_frames.sock` (inter-service frame socket) +
   tcp `8082` (MJPEG)
 
-### `ericltb15/aravis-ir` → `ircam-datalogger`
+### `ericltb15/aravis-ir` → `ircam-datalogger` ✅ converted
 
-- `install.commands`: `bash install.sh` (its own installer, as before)
-- `install.artifacts`: `ircam`, `ir_mjpeg.py` → `{install_dir}`
+The repo ships `eventide-module.json` — a two-service module:
+
+- `dependencies.apt`: `libaravis-dev` (plus its private pkg-config
+  requirements `libusb-1.0-0-dev`, `libxml2-dev`, `zlib1g-dev`, which the
+  distro package does not pull in), the meson/ninja toolchain, and the
+  GStreamer dev files + runtime plugins
+- `requirements.txt` (into the venv): `aiohttp`, `numpy`,
+  `opencv-python-headless`
+- `install.commands`: `meson setup build --buildtype=release`,
+  `ninja -C build`
+- `install.artifacts`: `build/ircam` and `scripts/ir_mjpeg.py` →
+  `{install_dir}`
 - `recordings_subdir`: `ircam`
-- `programs`: `infrared_camera`, `ir_mjpeg_server` (port 8083)
-- `sockets`: tcp `8083`
+- `programs`: `infrared_camera` (priority 1 — records segmented MP4 to
+  `{recordings_dir}/ircam/`, serves raw 16-bit frames on
+  `/tmp/irstream.sock`) and `ir_mjpeg_server` (priority 2 —
+  `{venv_python} {install_dir}/ir_mjpeg.py`)
+- `sockets`: unix `/tmp/irstream.sock` (inter-service frame socket) + tcp
+  `8083` (MJPEG)
 
 ### `j-vanarsdale/tripwire-gimbal-point` → `gimbal-controller`
 

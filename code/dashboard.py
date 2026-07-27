@@ -4,6 +4,12 @@ EVK4 Dashboard
 Serves the standalone dashboard.html and exposes API endpoints for
 controlling viewfinder / replay processes and listing recordings.
 
+This process CAN serve the full frontend itself (HTML at / plus an OSM
+tile proxy at /tiles/), which is handy when talking to the device
+directly (field laptop, local network).  For data-constrained links the
+decoupled frontend server (frontend.py) is still preferred: it keeps
+HTML/tile bandwidth off the link — see vehicle.nginx.
+
 Streams are proxied through nginx — this server only handles control
 and file APIs; the MJPEG streams themselves are served by nginx at:
 
@@ -29,6 +35,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -42,6 +49,7 @@ from flask import (
     Flask,
     abort,
     jsonify,
+    make_response,
     request,
     send_file,
     send_from_directory,
@@ -50,9 +58,10 @@ from flask import (
 app = Flask(__name__, static_folder=None)
 
 # ── CORS — allow the frontend server (any origin) to call the API ─────────────
-# The dashboard HTML is now served from a separate host, so the browser will
-# make cross-origin requests to this server.  We allow all origins here because
-# the frontend host/port is not known at deploy time.  If you want to restrict
+# The dashboard HTML can be served two ways: by this process (same-origin —
+# CORS irrelevant) or by the decoupled frontend server, in which case the
+# browser makes cross-origin requests here.  We allow all origins because the
+# frontend host/port is not known at deploy time.  If you want to restrict
 # this, set ALLOWED_ORIGIN in the environment or hardcode it below.
 _ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 
@@ -70,6 +79,70 @@ def cors_preflight(path=""):
     resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
+# ── Frontend: dashboard HTML + OSM tile proxy ─────────────────────────────────
+# dashboard.py can serve the whole UI itself for direct/standalone access.
+# When the page is loaded from here, the browser's relative API/stream/tile
+# URLs resolve to this process (or the nginx vhost in front of it) — no
+# backend IP needs to be configured in the UI.  The tile proxy is the same
+# one the decoupled frontend.py runs; keep in mind that tiles served from
+# here cross the device's link, so constrained-link deployments should keep
+# using frontend.py for the page.
+
+@app.route("/")
+def index():
+    html_path = Path(cfg.get("html_file", "dashboard.html")).resolve()
+    if not html_path.exists():
+        return (
+            "dashboard.html not found. "
+            "Pass --html-file or place it alongside dashboard.py."
+        ), 404
+    return send_file(html_path, mimetype="text/html")
+
+
+# In-memory tile cache: (z, x, y) → bytes.  Fine for a single-user dashboard.
+_tile_cache: dict[tuple, bytes] = {}
+_tile_lock  = threading.Lock()
+
+_OSM_BASE    = "https://tile.openstreetmap.org"
+_OSM_HEADERS = {
+    "User-Agent": "Eventide-Dashboard/1.0",
+    "Referer":    "https://www.openstreetmap.org/",
+}
+
+
+@app.route("/tiles/<int:z>/<int:x>/<int:y>.png")
+def tile_proxy(z, x, y):
+    key = (z, x, y)
+    with _tile_lock:
+        cached = _tile_cache.get(key)
+    if cached:
+        resp = make_response(cached)
+        resp.headers["Content-Type"]  = "image/png"
+        resp.headers["Cache-Control"] = "public, max-age=2592000"  # 30 days
+        resp.headers["X-Tile-Cache"]  = "HIT"
+        return resp
+
+    try:
+        upstream = _http.get(f"{_OSM_BASE}/{z}/{x}/{y}.png",
+                             headers=_OSM_HEADERS, timeout=8)
+        if upstream.status_code != 200:
+            abort(upstream.status_code)
+    except _http.exceptions.RequestException:
+        abort(502)
+
+    data = upstream.content
+    with _tile_lock:
+        # Evict oldest entry over 4 000 tiles (~250 MB).
+        if len(_tile_cache) >= 4000:
+            del _tile_cache[next(iter(_tile_cache))]
+        _tile_cache[key] = data
+
+    resp = make_response(data)
+    resp.headers["Content-Type"]  = upstream.headers.get("Content-Type", "image/png")
+    resp.headers["Cache-Control"] = "public, max-age=2592000"
+    resp.headers["X-Tile-Cache"]  = "MISS"
     return resp
 
 # ── Global process state ──────────────────────────────────────────────────────
@@ -444,7 +517,13 @@ def validate_manifest(m) -> list[str]:
             errors.append("'install.artifacts' must map source path → destination path")
         else:
             for dst in arts.values():
-                if not os.path.isabs(dst):
+                # Destinations support the same placeholders as program
+                # commands ({install_dir}, {module_dir}, ...) — expand
+                # before checking for an absolute path.
+                expanded = render_placeholders(
+                    dst, m, name if isinstance(name, str) else "module"
+                )
+                if not os.path.isabs(expanded):
                     errors.append(f"artifact destination must be an absolute path: {dst}")
 
     sub = m.get("recordings_subdir")
@@ -582,7 +661,9 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
 def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
     venv_dir = Path(cfg["packages_dir"]) / module_name / _VENV_DIR_NAME
     out = text
-    for arg in manifest.get("arguments", []):
+    for arg in manifest.get("arguments") or []:
+        if not isinstance(arg, dict) or "name" not in arg:
+            continue  # tolerate malformed manifests during validation
         out = out.replace("{arg:%s}" % arg["name"], str(arg.get("default", "")))
     out = out.replace("{install_dir}", MODULE_INSTALL_DIR)
     out = out.replace("{config_dir}", MODULE_CONFIG_DIR)
@@ -609,7 +690,13 @@ def render_module_conf(manifest: dict, module_name: str, repo_url: str) -> str:
         lines.append(f"autorestart={'true' if p.get('autorestart', True) else 'false'}")
         lines.append(f"startretries={int(p.get('startretries', 10000))}")
         lines.append(f"priority={int(p.get('priority', 10))}")
-        lines.append(f"user={p.get('user', 'root')}")
+        user = p.get("user", "root")
+        lines.append(f"user={user}")
+        # supervisord gives programs a bare environment — unlike systemd it
+        # does not set HOME, which breaks tools that need a per-user dir
+        # (e.g. MAVProxy's ~/.mavproxy).  Provide it explicitly.
+        home = "/root" if user == "root" else f"/home/{user}"
+        lines.append(f'environment=HOME="{home}"')
         lines.append("stdout_logfile=/var/log/supervisor/%(program_name)s.log")
         lines.append("")
     return "\n".join(lines)
@@ -650,16 +737,30 @@ def _create_venv(job: dict, venv_dir: Path, system_site_packages: bool) -> None:
 
 # ── Shell helpers ─────────────────────────────────────────────────────────────
 
-def _install_env() -> dict:
-    """Environment for module-install subprocesses.
+def _module_env() -> dict:
+    """Environment for module job commands.
 
-    The backend runs as root, but toolchains like rustup are installed
-    per-user (e.g. /home/tripwire/.cargo/bin) — put the common locations on
-    PATH so module build commands (cargo build, …) work regardless.
+    The dashboard runs under systemd with a minimal PATH, so toolchains
+    installed per-user (rustup → ~/.cargo/bin) are invisible to install
+    commands even though they exist on the device.  Re-add well-known
+    cargo bin dirs to PATH, and point CARGO_HOME/RUSTUP_HOME at the same
+    user's dirs so rustup's shim binaries find their toolchains when the
+    toolchain belongs to a non-root user.
     """
     env = os.environ.copy()
-    extra = sorted(glob.glob("/home/*/.cargo/bin")) + ["/usr/local/cargo/bin"]
-    env["PATH"] = ":".join(extra + [env.get("PATH", "")])
+    candidates = [Path.home() / ".cargo", Path("/usr/local/cargo")]
+    candidates += sorted(Path("/home").glob("*/.cargo"))
+    extra: list[str] = []
+    for cargo_home in candidates:
+        if not (cargo_home / "bin").is_dir():
+            continue
+        extra.append(str(cargo_home / "bin"))
+        rustup_home = cargo_home.parent / ".rustup"
+        if rustup_home.is_dir():
+            env.setdefault("CARGO_HOME", str(cargo_home))
+            env.setdefault("RUSTUP_HOME", str(rustup_home))
+    if extra:
+        env["PATH"] = os.pathsep.join([*extra, env.get("PATH", "")])
     return env
 
 
@@ -667,8 +768,8 @@ def _run_logged_argv(job: dict, argv: list[str], cwd=None, timeout=600) -> str:
     _job_log(job, "$ " + shlex.join(argv))
     try:
         proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True,
-            timeout=timeout, env=_install_env(),
+            argv, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            env=_module_env(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"command timed out after {timeout}s: {shlex.join(argv)}")
@@ -868,7 +969,8 @@ def _run_install_job(job: dict) -> None:
         _job_status(job, "building")
         inst = manifest.get("install", {})
         for cmd in inst.get("commands", []):
-            # Long timeout: a cold Rust release build on a Pi can take a while.
+            # Compilations (cargo build --release & co.) legitimately take a
+            # long time on-device — allow 30 min per build command.
             _run_logged_shell(job, cmd, cwd=module_dir, timeout=1800)
 
         # ── Artifacts & recordings dir ────────────────────────────────────
@@ -877,11 +979,11 @@ def _run_install_job(job: dict) -> None:
             src_path = module_dir / src
             if not src_path.exists():
                 raise RuntimeError(f"artifact not found after build: {src}")
-            dst_path = Path(dst)
+            dst_path = Path(render_placeholders(dst, manifest, name))
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_path, dst_path)
             copied_artifacts.append(str(dst_path))
-            _job_log(job, f"copied {src} → {dst}")
+            _job_log(job, f"copied {src} → {dst_path}")
         sub = manifest.get("recordings_subdir")
         if sub:
             rec_dir = Path(cfg["recordings_dir"]) / sub
@@ -1070,6 +1172,195 @@ def api_modules_uninstall(name):
         return jsonify({"error": f"module not installed: {name}"}), 404
     return jsonify({"ok": True, "removed": name})
 
+
+@app.route("/api/modules/<name>/args", methods=["POST"])
+def api_modules_args(name):
+    """Update a module's argument values and reload its supervisor config.
+
+    The new values become the stored defaults in the registry manifest, the
+    module's conf.d file is re-rendered from them, and supervisor is told to
+    reread/update — which restarts any running programs whose command line
+    changed.
+    """
+    registry = load_registry()
+    entry = registry.get("modules", {}).get(name)
+    if entry is None:
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    data = request.get_json() or {}
+    new_args = data.get("args")
+    if not isinstance(new_args, dict):
+        return jsonify({
+            "error": "args must be an object mapping argument name → value"
+        }), 400
+
+    manifest = entry["manifest"]
+    declared = {a["name"]: a for a in manifest.get("arguments", [])}
+    updates: dict = {}
+    errors: list[str] = []
+    for key, value in new_args.items():
+        arg = declared.get(key)
+        if arg is None:
+            errors.append(f"unknown argument: '{key}'")
+            continue
+        atype = arg.get("type")
+        try:
+            if atype == "int":
+                if isinstance(value, bool):
+                    raise ValueError
+                value = int(str(value).strip())
+            elif atype == "float":
+                if isinstance(value, bool):
+                    raise ValueError
+                value = float(str(value).strip())
+            else:
+                value = str(value)
+        except (TypeError, ValueError):
+            errors.append(f"argument '{key}' must be of type {atype}")
+            continue
+        # Values land verbatim in an ini-style supervisor conf — a newline
+        # would inject extra directives, so reject it outright.
+        if isinstance(value, str) and ("\n" in value or "\r" in value):
+            errors.append(f"argument '{key}' must be a single line")
+            continue
+        updates[key] = value
+    if errors:
+        return jsonify({"error": "; ".join(errors)}), 400
+
+    for arg in manifest.get("arguments", []):
+        if arg["name"] in updates:
+            arg["default"] = updates[arg["name"]]
+
+    conf_path = Path(
+        entry.get("conf_file")
+        or Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+    )
+    try:
+        _atomic_write(
+            conf_path,
+            render_module_conf(manifest, name, entry.get("repo_url", "")),
+        )
+    except OSError as exc:
+        return jsonify({"error": f"failed to write {conf_path}: {exc}"}), 500
+    save_registry(registry)
+
+    if not shutil.which("supervisorctl"):
+        return jsonify({
+            "ok": True,
+            "warning": "supervisorctl not found — config written but supervisor not reloaded",
+            "arguments": manifest.get("arguments", []),
+        })
+    for sargs in (("reread",), ("update",)):
+        rc, out = _supervisorctl(*sargs)
+        if rc != 0:
+            return jsonify({
+                "error": f"supervisorctl {' '.join(sargs)} failed: {out}"
+            }), 500
+    return jsonify({"ok": True, "arguments": manifest.get("arguments", [])})
+
+# ── SSH deploy key ────────────────────────────────────────────────────────────
+# Private GitHub repos are cloned over SSH (see _clone_repo's HTTPS→SSH
+# fallback).  These endpoints manage a single passphrase-less ed25519 keypair
+# for the user this service runs as; the public key is displayed in the UI so
+# the operator can add it to GitHub as a deploy key or account SSH key.
+# github.com's host key is pinned into known_hosts on generation so the first
+# SSH clone doesn't die on host-key verification.
+
+_SSH_DIR = Path(os.environ.get("EVENTIDE_SSH_DIR", str(Path.home() / ".ssh")))
+_SSH_KEY_PATH = _SSH_DIR / "id_ed25519"
+_SSH_PUB_PATH = Path(str(_SSH_KEY_PATH) + ".pub")
+
+
+def _ssh_key_info() -> dict:
+    info = {
+        "exists": False,
+        "public_key": None,
+        "fingerprint": None,
+        "path": str(_SSH_KEY_PATH),
+    }
+    if not _SSH_PUB_PATH.exists():
+        return info
+    try:
+        info["public_key"] = _SSH_PUB_PATH.read_text().strip()
+    except OSError:
+        return info
+    info["exists"] = True
+    try:
+        proc = subprocess.run(
+            ["ssh-keygen", "-lf", str(_SSH_PUB_PATH)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode == 0:
+            parts = proc.stdout.split()
+            if len(parts) >= 2:
+                info["fingerprint"] = parts[1]
+    except (subprocess.TimeoutExpired, OSError):
+        pass  # fingerprint is cosmetic — the key itself is what matters
+    return info
+
+
+@app.route("/api/ssh-key")
+def api_ssh_key_get():
+    return jsonify(_ssh_key_info())
+
+
+@app.route("/api/ssh-key/generate", methods=["POST"])
+def api_ssh_key_generate():
+    data = request.get_json(silent=True) or {}
+    if _SSH_PUB_PATH.exists() and not data.get("force"):
+        return jsonify({
+            "error": "an SSH key already exists (resubmit with force to overwrite)",
+            **_ssh_key_info(),
+        }), 409
+    try:
+        _SSH_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(_SSH_DIR, 0o700)
+        _SSH_KEY_PATH.unlink(missing_ok=True)
+        _SSH_PUB_PATH.unlink(missing_ok=True)
+        proc = subprocess.run(
+            [
+                "ssh-keygen", "-t", "ed25519", "-N", "",
+                "-C", f"eventide-{socket.gethostname()}",
+                "-f", str(_SSH_KEY_PATH),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return jsonify({"error": f"ssh-keygen failed: {proc.stderr.strip()}"}), 500
+        os.chmod(_SSH_KEY_PATH, 0o600)
+    except FileNotFoundError:
+        return jsonify({"error": "ssh-keygen not found on this device"}), 500
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return jsonify({"error": f"key generation failed: {exc}"}), 500
+
+    # Pin github.com's host key so the first SSH clone doesn't prompt/fail on
+    # host verification.  Best-effort: if the device is offline the key still
+    # generates, we just warn.
+    warning = None
+    try:
+        scan = subprocess.run(
+            ["ssh-keyscan", "github.com"],
+            capture_output=True, text=True, timeout=20,
+        )
+        entries = scan.stdout.strip()
+        if entries:
+            known_hosts = _SSH_DIR / "known_hosts"
+            existing = known_hosts.read_text() if known_hosts.exists() else ""
+            if "github.com" not in existing:
+                with known_hosts.open("a") as fh:
+                    fh.write(entries + "\n")
+                os.chmod(known_hosts, 0o600)
+        else:
+            warning = ("ssh-keyscan github.com returned nothing — "
+                       "first SSH clone may fail host verification")
+    except (subprocess.TimeoutExpired, OSError):
+        warning = ("ssh-keyscan unavailable — "
+                   "first SSH clone may fail host verification")
+
+    resp = _ssh_key_info()
+    if warning:
+        resp["warning"] = warning
+    return jsonify(resp)
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -1092,6 +1383,9 @@ def main():
                         help="Directory where per-module supervisor configs are written")
     parser.add_argument("--host",                  default="0.0.0.0")
     parser.add_argument("--port",                  type=int, default=5000)
+    parser.add_argument("--html-file",             default=str(Path(__file__).resolve().with_name("dashboard.html")),
+                        help="Path to the dashboard HTML file served at / "
+                             "(default: dashboard.html alongside this script)")
     args = parser.parse_args()
 
     cfg.update(vars(args))
@@ -1109,8 +1403,9 @@ def main():
     print(f"[backend]  Packages dir:      {args.packages_dir}")
     print(f"[backend]  Supervisor conf.d: {args.supervisor_conf_d}")
     print(f"[backend]  CORS origin:       {_ALLOWED_ORIGIN}")
+    print(f"[backend]  Dashboard HTML:    {args.html_file}  (served at /)")
+    print(f"[backend]  Tile proxy:        /tiles/<z>/<x>/<y>.png  →  {_OSM_BASE}")
     print(f"[backend]  API at:            http://{args.host}:{args.port}")
-    print(f"[backend]  NOTE: HTML is now served by frontend_server.py, not this process.")
 
     # Auto-start live EVK viewfinder
     proc, err = start_viewfinder("live", vf_configs["live"])

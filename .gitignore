@@ -1,3 +1,4 @@
 event_frame_gen
 /recordings
 /code/playback/target
+/code/__pycache__

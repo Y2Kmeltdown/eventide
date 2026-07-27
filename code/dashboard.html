@@ -282,6 +282,17 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
 .mod-meta span{color:var(--text-mid)}
 .mod-empty{color:var(--text-dim);font-size:9px;font-style:italic;text-align:center;padding:24px 0}
 
+/* SSH key panel (private GitHub repos) */
+.ssh-panel{padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+.ssh-head{display:flex;align-items:center;gap:8px}
+.ssh-title{font-family:var(--display);font-size:9px;letter-spacing:.16em;color:var(--text-dim)}
+.ssh-status{font-size:8px;letter-spacing:.08em;color:var(--text-dim)}
+.ssh-status.ok{color:var(--green)}
+.ssh-key{margin:8px 0 0;padding:6px 8px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--r);font-family:var(--mono);font-size:8px;line-height:1.5;color:var(--accent);white-space:pre-wrap;word-break:break-all;user-select:all;max-height:54px;overflow-y:auto}
+.ssh-key::-webkit-scrollbar{width:3px}
+.ssh-key::-webkit-scrollbar-thumb{background:var(--border2)}
+.ssh-hint{margin:6px 0 2px;font-size:8px;color:var(--text-dim);line-height:1.5;letter-spacing:.04em}
+
 /* Log panel */
 .super-log{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
 .log-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -785,6 +796,20 @@ table.proc-table tbody tr.selected{background:var(--surface3)}
                placeholder="ref (opt.)" spellcheck="false">
         <button class="super-btn s-green" onclick="installModule()">✚ INSTALL</button>
       </div>
+      <div class="ssh-panel">
+        <div class="ssh-head">
+          <span class="ssh-title">GITHUB SSH KEY</span>
+          <span class="ssh-status" id="ssh-status">checking…</span>
+          <div class="super-spacer"></div>
+          <button class="super-btn" id="ssh-copy-btn" style="display:none" onclick="copySshKey()">⧉ COPY</button>
+          <button class="super-btn s-green" id="ssh-gen-btn" onclick="generateSshKey()">⚿ GENERATE KEY</button>
+        </div>
+        <pre class="ssh-key" id="ssh-key-box" style="display:none"></pre>
+        <div class="ssh-hint" id="ssh-hint" style="display:none">
+          Copy this public key into GitHub (repo → Settings → Deploy keys, or your account → SSH keys).
+          Private repos can then be installed above, via HTTPS or git@ URLs.
+        </div>
+      </div>
       <div class="mod-list" id="mod-list">
         <div class="mod-empty">Loading…</div>
       </div>
@@ -865,7 +890,7 @@ function onBackendIpChange(raw) {
   ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
   fetchPlaybackSettings();
   fetchAdsbSettings();
-  if (activeTab === 'modules') loadModules();
+  if (activeTab === 'modules') { loadModules(); loadSshKey(); }
 }
 
 function setBackendConnState(state) {
@@ -991,6 +1016,7 @@ function switchTab(tab) {
   }
   if (tab === 'modules') {
     loadModules();
+    loadSshKey();
     if (!modPollTimer) modPollTimer = setInterval(loadModules, 10000);
   } else {
     clearInterval(modPollTimer);
@@ -1154,6 +1180,97 @@ async function uninstallModule(name) {
     toast('Module ' + name + ' uninstalled', 'ok');
     loadModules();
   } catch (e) { toast('Uninstall failed: ' + e.message, 'err'); }
+}
+
+// ── SSH key panel ──────────────────────────────────────────
+// The backend (dashboard.py) holds a passphrase-less ed25519 key used by git
+// when cloning private repos.  The public key is shown here so the operator
+// can register it on GitHub.
+let sshPubKey = null;
+
+async function loadSshKey() {
+  try {
+    const r = await fetch(apiUrl('/ssh-key'));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    renderSshKey(await r.json());
+  } catch {
+    const st = document.getElementById('ssh-status');
+    st.textContent = 'backend unreachable';
+    st.className = 'ssh-status';
+  }
+}
+
+function renderSshKey(info) {
+  const st      = document.getElementById('ssh-status');
+  const box     = document.getElementById('ssh-key-box');
+  const hint    = document.getElementById('ssh-hint');
+  const copyBtn = document.getElementById('ssh-copy-btn');
+  const genBtn  = document.getElementById('ssh-gen-btn');
+  sshPubKey = info.exists ? info.public_key : null;
+  if (info.exists) {
+    st.textContent = 'active' + (info.fingerprint ? ' · ' + info.fingerprint : '');
+    st.className = 'ssh-status ok';
+    box.textContent = info.public_key;
+    box.style.display = '';
+    hint.style.display = '';
+    copyBtn.style.display = '';
+    genBtn.textContent = '↻ REGENERATE';
+  } else {
+    st.textContent = 'no key — required for private repos';
+    st.className = 'ssh-status';
+    box.style.display = 'none';
+    hint.style.display = 'none';
+    copyBtn.style.display = 'none';
+    genBtn.textContent = '⚿ GENERATE KEY';
+  }
+}
+
+async function generateSshKey() {
+  const force = sshPubKey !== null;
+  if (force && !confirm('Replace the existing SSH key? The old key will stop working for any GitHub repo it was added to.')) return;
+  const genBtn = document.getElementById('ssh-gen-btn');
+  genBtn.disabled = true;
+  try {
+    const r = await fetch(apiUrl('/ssh-key/generate'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({force}),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Key generation failed', 'err'); return; }
+    renderSshKey(data);
+    if (data.warning) toast(data.warning, 'err');
+    toast('SSH key generated — copy it into GitHub', 'ok');
+  } catch (e) {
+    toast('Key generation failed: ' + e.message, 'err');
+  } finally {
+    genBtn.disabled = false;
+  }
+}
+
+function copySshKey() {
+  if (!sshPubKey) return;
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(sshPubKey)
+      .then(() => toast('Public key copied', 'ok'))
+      .catch(copySshKeyFallback);
+  } else {
+    copySshKeyFallback();  // plain-http LAN page: no clipboard API
+  }
+}
+
+function copySshKeyFallback() {
+  const ta = document.createElement('textarea');
+  ta.value = sshPubKey;
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    toast('Public key copied', 'ok');
+  } catch {
+    toast('Copy failed — select the key text manually', 'err');
+  }
+  ta.remove();
 }
 
 // ═══════════════════════════════════════════════════════════

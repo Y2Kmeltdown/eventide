@@ -28,6 +28,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -1053,6 +1054,110 @@ def api_modules_uninstall(name):
     if entry is None:
         return jsonify({"error": f"module not installed: {name}"}), 404
     return jsonify({"ok": True, "removed": name})
+
+# ── SSH deploy key ────────────────────────────────────────────────────────────
+# Private GitHub repos are cloned over SSH (see _clone_repo's HTTPS→SSH
+# fallback).  These endpoints manage a single passphrase-less ed25519 keypair
+# for the user this service runs as; the public key is displayed in the UI so
+# the operator can add it to GitHub as a deploy key or account SSH key.
+# github.com's host key is pinned into known_hosts on generation so the first
+# SSH clone doesn't die on host-key verification.
+
+_SSH_DIR = Path(os.environ.get("EVENTIDE_SSH_DIR", str(Path.home() / ".ssh")))
+_SSH_KEY_PATH = _SSH_DIR / "id_ed25519"
+_SSH_PUB_PATH = Path(str(_SSH_KEY_PATH) + ".pub")
+
+
+def _ssh_key_info() -> dict:
+    info = {
+        "exists": False,
+        "public_key": None,
+        "fingerprint": None,
+        "path": str(_SSH_KEY_PATH),
+    }
+    if not _SSH_PUB_PATH.exists():
+        return info
+    try:
+        info["public_key"] = _SSH_PUB_PATH.read_text().strip()
+    except OSError:
+        return info
+    info["exists"] = True
+    try:
+        proc = subprocess.run(
+            ["ssh-keygen", "-lf", str(_SSH_PUB_PATH)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode == 0:
+            parts = proc.stdout.split()
+            if len(parts) >= 2:
+                info["fingerprint"] = parts[1]
+    except (subprocess.TimeoutExpired, OSError):
+        pass  # fingerprint is cosmetic — the key itself is what matters
+    return info
+
+
+@app.route("/api/ssh-key")
+def api_ssh_key_get():
+    return jsonify(_ssh_key_info())
+
+
+@app.route("/api/ssh-key/generate", methods=["POST"])
+def api_ssh_key_generate():
+    data = request.get_json(silent=True) or {}
+    if _SSH_PUB_PATH.exists() and not data.get("force"):
+        return jsonify({
+            "error": "an SSH key already exists (resubmit with force to overwrite)",
+            **_ssh_key_info(),
+        }), 409
+    try:
+        _SSH_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(_SSH_DIR, 0o700)
+        _SSH_KEY_PATH.unlink(missing_ok=True)
+        _SSH_PUB_PATH.unlink(missing_ok=True)
+        proc = subprocess.run(
+            [
+                "ssh-keygen", "-t", "ed25519", "-N", "",
+                "-C", f"eventide-{socket.gethostname()}",
+                "-f", str(_SSH_KEY_PATH),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return jsonify({"error": f"ssh-keygen failed: {proc.stderr.strip()}"}), 500
+        os.chmod(_SSH_KEY_PATH, 0o600)
+    except FileNotFoundError:
+        return jsonify({"error": "ssh-keygen not found on this device"}), 500
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return jsonify({"error": f"key generation failed: {exc}"}), 500
+
+    # Pin github.com's host key so the first SSH clone doesn't prompt/fail on
+    # host verification.  Best-effort: if the device is offline the key still
+    # generates, we just warn.
+    warning = None
+    try:
+        scan = subprocess.run(
+            ["ssh-keyscan", "github.com"],
+            capture_output=True, text=True, timeout=20,
+        )
+        entries = scan.stdout.strip()
+        if entries:
+            known_hosts = _SSH_DIR / "known_hosts"
+            existing = known_hosts.read_text() if known_hosts.exists() else ""
+            if "github.com" not in existing:
+                with known_hosts.open("a") as fh:
+                    fh.write(entries + "\n")
+                os.chmod(known_hosts, 0o600)
+        else:
+            warning = ("ssh-keyscan github.com returned nothing — "
+                       "first SSH clone may fail host verification")
+    except (subprocess.TimeoutExpired, OSError):
+        warning = ("ssh-keyscan unavailable — "
+                   "first SSH clone may fail host verification")
+
+    resp = _ssh_key_info()
+    if warning:
+        resp["warning"] = warning
+    return jsonify(resp)
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 

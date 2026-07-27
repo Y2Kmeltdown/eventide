@@ -23,6 +23,7 @@ Then open http://localhost:5000  (or via nginx at http://<host>/)
 """
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -649,11 +650,25 @@ def _create_venv(job: dict, venv_dir: Path, system_site_packages: bool) -> None:
 
 # ── Shell helpers ─────────────────────────────────────────────────────────────
 
+def _install_env() -> dict:
+    """Environment for module-install subprocesses.
+
+    The backend runs as root, but toolchains like rustup are installed
+    per-user (e.g. /home/tripwire/.cargo/bin) — put the common locations on
+    PATH so module build commands (cargo build, …) work regardless.
+    """
+    env = os.environ.copy()
+    extra = sorted(glob.glob("/home/*/.cargo/bin")) + ["/usr/local/cargo/bin"]
+    env["PATH"] = ":".join(extra + [env.get("PATH", "")])
+    return env
+
+
 def _run_logged_argv(job: dict, argv: list[str], cwd=None, timeout=600) -> str:
     _job_log(job, "$ " + shlex.join(argv))
     try:
         proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            argv, cwd=cwd, capture_output=True, text=True,
+            timeout=timeout, env=_install_env(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"command timed out after {timeout}s: {shlex.join(argv)}")
@@ -853,7 +868,8 @@ def _run_install_job(job: dict) -> None:
         _job_status(job, "building")
         inst = manifest.get("install", {})
         for cmd in inst.get("commands", []):
-            _run_logged_shell(job, cmd, cwd=module_dir, timeout=600)
+            # Long timeout: a cold Rust release build on a Pi can take a while.
+            _run_logged_shell(job, cmd, cwd=module_dir, timeout=1800)
 
         # ── Artifacts & recordings dir ────────────────────────────────────
         _job_status(job, "artifacts")

@@ -779,12 +779,18 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 <script>
 // ═══════════════════════════════════════════════════════════
 //  CONFIG — BACKEND IP
-//  All API calls go to the backend device (data-constrained link).
-//  The frontend (this page + map tiles) is served from a separate
-//  server so it stays up even when the backend is unreachable.
+//  This page can be served two ways:
+//    1. By dashboard.py on the backend device itself — all API,
+//       stream, tile and supervisor URLs are same-origin and work
+//       with no configuration (backend IP left blank).
+//    2. By the decoupled frontend server — enter the backend IP in
+//       the header; all API calls then go to the backend device
+//       over the (data-constrained) link, keeping this page up even
+//       when the backend is unreachable.
 //
 //  The backend IP/hostname is stored in localStorage and applied at
-//  startup. Change it via the header input at any time.
+//  startup. Change it via the header input at any time; clear it to
+//  fall back to same-origin mode.
 // ═══════════════════════════════════════════════════════════
 
 const BACKEND_STORAGE_KEY = 'eventide_backend_ip';

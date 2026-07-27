@@ -9,8 +9,12 @@
 #   - Gimbal API (@ 127.0.0.1:5001)
 #   - Supervisord XML-RPC proxy
 #
-# The dashboard HTML and map tiles are NOT served here; they are on the
-# separate frontend server (see eventide-frontend.nginx.conf).
+# The dashboard HTML and map tiles are normally served by the separate
+# frontend server (see eventide-frontend.nginx.conf) to keep that bandwidth
+# off the data-constrained link.  dashboard.py CAN also serve them itself
+# (it handles GET / and /tiles/), in which case this vhost's "location /"
+# fallthrough makes the full UI available directly from this device — useful
+# for local/field access where link bandwidth is not a concern.
 #
 # CORS headers are added by dashboard.py itself so the browser can call
 # this server cross-origin from wherever the frontend is hosted.
@@ -137,7 +141,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
-    # NOTE: /tiles/ has been REMOVED from this server.
-    # Map tiles are now proxied by the frontend server, keeping tile
-    # bandwidth off the data-constrained link entirely.
+    # NOTE: /tiles/ is intentionally NOT a dedicated location here.
+    # Map tiles are normally proxied by the frontend server, keeping tile
+    # bandwidth off the data-constrained link entirely.  When the UI is
+    # served by dashboard.py directly (standalone/local access), /tiles/
+    # falls through to dashboard.py's own tile proxy via "location /".
 }

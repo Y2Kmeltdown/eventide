@@ -4,6 +4,12 @@ EVK4 Dashboard
 Serves the standalone dashboard.html and exposes API endpoints for
 controlling viewfinder / replay processes and listing recordings.
 
+This process CAN serve the full frontend itself (HTML at / plus an OSM
+tile proxy at /tiles/), which is handy when talking to the device
+directly (field laptop, local network).  For data-constrained links the
+decoupled frontend server (frontend.py) is still preferred: it keeps
+HTML/tile bandwidth off the link — see vehicle.nginx.
+
 Streams are proxied through nginx — this server only handles control
 and file APIs; the MJPEG streams themselves are served by nginx at:
 
@@ -42,6 +48,7 @@ from flask import (
     Flask,
     abort,
     jsonify,
+    make_response,
     request,
     send_file,
     send_from_directory,
@@ -50,9 +57,10 @@ from flask import (
 app = Flask(__name__, static_folder=None)
 
 # ── CORS — allow the frontend server (any origin) to call the API ─────────────
-# The dashboard HTML is now served from a separate host, so the browser will
-# make cross-origin requests to this server.  We allow all origins here because
-# the frontend host/port is not known at deploy time.  If you want to restrict
+# The dashboard HTML can be served two ways: by this process (same-origin —
+# CORS irrelevant) or by the decoupled frontend server, in which case the
+# browser makes cross-origin requests here.  We allow all origins because the
+# frontend host/port is not known at deploy time.  If you want to restrict
 # this, set ALLOWED_ORIGIN in the environment or hardcode it below.
 _ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 
@@ -70,6 +78,70 @@ def cors_preflight(path=""):
     resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
+# ── Frontend: dashboard HTML + OSM tile proxy ─────────────────────────────────
+# dashboard.py can serve the whole UI itself for direct/standalone access.
+# When the page is loaded from here, the browser's relative API/stream/tile
+# URLs resolve to this process (or the nginx vhost in front of it) — no
+# backend IP needs to be configured in the UI.  The tile proxy is the same
+# one the decoupled frontend.py runs; keep in mind that tiles served from
+# here cross the device's link, so constrained-link deployments should keep
+# using frontend.py for the page.
+
+@app.route("/")
+def index():
+    html_path = Path(cfg.get("html_file", "dashboard.html")).resolve()
+    if not html_path.exists():
+        return (
+            "dashboard.html not found. "
+            "Pass --html-file or place it alongside dashboard.py."
+        ), 404
+    return send_file(html_path, mimetype="text/html")
+
+
+# In-memory tile cache: (z, x, y) → bytes.  Fine for a single-user dashboard.
+_tile_cache: dict[tuple, bytes] = {}
+_tile_lock  = threading.Lock()
+
+_OSM_BASE    = "https://tile.openstreetmap.org"
+_OSM_HEADERS = {
+    "User-Agent": "Eventide-Dashboard/1.0",
+    "Referer":    "https://www.openstreetmap.org/",
+}
+
+
+@app.route("/tiles/<int:z>/<int:x>/<int:y>.png")
+def tile_proxy(z, x, y):
+    key = (z, x, y)
+    with _tile_lock:
+        cached = _tile_cache.get(key)
+    if cached:
+        resp = make_response(cached)
+        resp.headers["Content-Type"]  = "image/png"
+        resp.headers["Cache-Control"] = "public, max-age=2592000"  # 30 days
+        resp.headers["X-Tile-Cache"]  = "HIT"
+        return resp
+
+    try:
+        upstream = _http.get(f"{_OSM_BASE}/{z}/{x}/{y}.png",
+                             headers=_OSM_HEADERS, timeout=8)
+        if upstream.status_code != 200:
+            abort(upstream.status_code)
+    except _http.exceptions.RequestException:
+        abort(502)
+
+    data = upstream.content
+    with _tile_lock:
+        # Evict oldest entry over 4 000 tiles (~250 MB).
+        if len(_tile_cache) >= 4000:
+            del _tile_cache[next(iter(_tile_cache))]
+        _tile_cache[key] = data
+
+    resp = make_response(data)
+    resp.headers["Content-Type"]  = upstream.headers.get("Content-Type", "image/png")
+    resp.headers["Cache-Control"] = "public, max-age=2592000"
+    resp.headers["X-Tile-Cache"]  = "MISS"
     return resp
 
 # ── Global process state ──────────────────────────────────────────────────────
@@ -1211,6 +1283,9 @@ def main():
                         help="Directory where per-module supervisor configs are written")
     parser.add_argument("--host",                  default="0.0.0.0")
     parser.add_argument("--port",                  type=int, default=5000)
+    parser.add_argument("--html-file",             default=str(Path(__file__).resolve().with_name("dashboard.html")),
+                        help="Path to the dashboard HTML file served at / "
+                             "(default: dashboard.html alongside this script)")
     args = parser.parse_args()
 
     cfg.update(vars(args))
@@ -1228,8 +1303,9 @@ def main():
     print(f"[backend]  Packages dir:      {args.packages_dir}")
     print(f"[backend]  Supervisor conf.d: {args.supervisor_conf_d}")
     print(f"[backend]  CORS origin:       {_ALLOWED_ORIGIN}")
+    print(f"[backend]  Dashboard HTML:    {args.html_file}  (served at /)")
+    print(f"[backend]  Tile proxy:        /tiles/<z>/<x>/<y>.png  →  {_OSM_BASE}")
     print(f"[backend]  API at:            http://{args.host}:{args.port}")
-    print(f"[backend]  NOTE: HTML is now served by frontend_server.py, not this process.")
 
     # Auto-start live EVK viewfinder
     proc, err = start_viewfinder("live", vf_configs["live"])

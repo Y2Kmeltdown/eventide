@@ -241,6 +241,8 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .proc-btn.start:hover{border-color:var(--green);color:var(--green);background:var(--green-dim)}
 .proc-btn.stop:hover{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
 .proc-btn.restart:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
+.proc-btn.log:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.proc-btn.log.active{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
 .super-status-bar{padding:6px 14px;border-top:1px solid var(--border);font-size:8px;color:var(--text-dim);letter-spacing:.1em;display:flex;align-items:center;gap:8px;flex-shrink:0}
 .super-status-bar .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
 .super-status-bar .dot.on{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
@@ -783,7 +785,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
         </div>
       </div>
       <div class="log-scroll" id="mod-log-scroll">
-        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Click a service to view its stdout log, or install a module to watch the install log. You can also drag &amp; drop a module .zip anywhere on this tab to install it.</pre>
+        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Click a service to view its log (OUT/ERR choose the stream), or install a module to watch the install log.</pre>
       </div>
     </div>
 
@@ -1016,7 +1018,8 @@ function switchGimbalTab(tab) {
 let modJobId     = null;
 let modJobTimer  = null;
 let modPollTimer = null;
-let logMode      = null;   // 'job' (install log) | 'proc' (service stdout)
+let logMode      = null;   // 'job' (install log) | 'proc' (service log)
+let logStream    = 'stdout'; // 'stdout' | 'stderr' — which supervisord log to tail
 let superProcs   = null;   // live supervisor.getAllProcessInfo, null if RPC down
 let lastModules  = [];     // last module registry snapshot from the backend
 let editingModule = null;  // module name whose args form is open (poll re-render paused)
@@ -1115,7 +1118,8 @@ function svcCardHtml(o) {
     const meta = info
       ? `pid ${info.pid || '—'} · up ${fmtUptime(info.now - info.start)}`
       : 'no live data';
-    return `<div class="svc-row ${selectedProc === fullName ? 'selected' : ''}" data-svc="${escHtml(fullName)}" onclick="selectProcess('${escHtml(fullName)}')">
+    const selected = selectedProc === fullName;
+    return `<div class="svc-row ${selected ? 'selected' : ''}" data-svc="${escHtml(fullName)}" onclick="selectProcess('${escHtml(fullName)}')">
       ${stateBadge(state)}
       <span class="svc-name">${escHtml(name)}</span>
       <span class="svc-meta">${escHtml(meta)}</span>
@@ -1123,6 +1127,8 @@ function svcCardHtml(o) {
         ${canStart ? `<button class="proc-btn start" onclick="superStart('${fullName}',event)">▶</button>` : ''}
         ${canStop  ? `<button class="proc-btn stop"  onclick="superStop('${fullName}',event)">■</button>` : ''}
         <button class="proc-btn restart" onclick="superRestart('${fullName}',event)">↺</button>
+        <button class="proc-btn log ${selected && logStream === 'stdout' ? 'active' : ''}" onclick="superLog('${fullName}','stdout',event)">OUT</button>
+        <button class="proc-btn log ${selected && logStream === 'stderr' ? 'active' : ''}" onclick="superLog('${fullName}','stderr',event)">ERR</button>
       </span>
     </div>`;
   }).join('');
@@ -1349,20 +1355,32 @@ async function saveModuleArgs(name) {
   } catch (e) { toast('Save failed: ' + e.message, 'err'); }
 }
 
-// ── Shared log panel (install log ⇄ service stdout) ────────
+// ── Shared log panel (install log ⇄ service logs) ──────────
 function selectProcess(name) {
   selectedProc = name;
   logMode = 'proc';
-  document.getElementById('mod-log-title').textContent = name.toUpperCase() + ' — STDOUT';
+  document.getElementById('mod-log-title').textContent =
+    name.toUpperCase() + ' — ' + logStream.toUpperCase();
   document.querySelectorAll('.svc-row').forEach(r =>
     r.classList.toggle('selected', r.dataset.svc === name));
   refreshLog();
 }
 
+// OUT/ERR buttons on a service row: view that service's stdout or stderr.
+function superLog(name, stream, e) {
+  e?.stopPropagation();
+  logStream = stream;
+  selectProcess(name);
+  renderModules(lastModules);  // refresh OUT/ERR active states immediately
+}
+
 async function refreshLog() {
   if (!selectedProc) return;
+  const method = logStream === 'stderr'
+    ? 'supervisor.tailProcessStderrLog'
+    : 'supervisor.tailProcessStdoutLog';
   try {
-    const result = await xmlrpcCall('supervisor.tailProcessStdoutLog', selectedProc, 0, 8192);
+    const result = await xmlrpcCall(method, selectedProc, 0, 8192);
     const text = Array.isArray(result) ? result[0] : result;
     const el = document.getElementById('mod-log-output');
     el.style.color = 'var(--text-mid)'; el.style.fontStyle = 'normal';
@@ -1798,6 +1816,7 @@ function updateDeviceMarker(lat, lon, headingDeg, gimbalPanDeg, vehicleFrame) {
 //    supervisor.startAllProcesses  → array
 //    supervisor.stopAllProcesses   → array
 //    supervisor.tailProcessStdoutLog(name, offset, length) → [data, offset, overflow]
+//    supervisor.tailProcessStderrLog(name, offset, length) → [data, offset, overflow]
 // ═══════════════════════════════════════════════════════════
 function xmlrpcCall(method, ...params) {
   const paramXml = params.map(p => {

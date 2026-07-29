@@ -184,7 +184,8 @@ sudo cp -a config /usr/local/eventide/config
 sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" /usr/local/eventide
 sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" "$EVENTIDE_DIR"
 
-sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/eventide.service
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/dashboard.service
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/playback.conf
 
 ## SYSTEM PACKAGES
 step "System packages (generic)"

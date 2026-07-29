@@ -12,7 +12,18 @@ fail() { echo "[FAIL] $*" >&2; exit 1; }
 
 echo "[INFO] copying base supervisor config"
 sudo cp "$REPO_DIR/config/supervisor-base.conf" /etc/supervisor/conf.d/00-eventide-base.conf
+# playback.conf contains SEDPLACEHOLDER for the recordings dir (substituted by
+# install.sh) — carry over the value already in use on this device.
+RECORDINGS_DIR=$(sed -n 's/.*--recordings \([^ ]*\).*/\1/p' /etc/supervisor/conf.d/playback.conf 2>/dev/null | grep -v SEDPLACEHOLDER || true)
+if [ -z "$RECORDINGS_DIR" ]; then
+    RECORDINGS_DIR=$(sed -n 's/.*--recordings-dir \([^ ]*\).*/\1/p' /lib/systemd/system/dashboard.service 2>/dev/null | grep -v SEDPLACEHOLDER || true)
+fi
 sudo cp "$REPO_DIR/config/playback.conf" /etc/supervisor/conf.d/playback.conf
+if [ -n "$RECORDINGS_DIR" ]; then
+    sudo sed -i "s@SEDPLACEHOLDER@$RECORDINGS_DIR@g" /etc/supervisor/conf.d/playback.conf
+else
+    echo "[WARN] could not determine recordings dir — set --recordings in /etc/supervisor/conf.d/playback.conf manually"
+fi
 echo "[INFO] removing stale monolithic supervisor configs (pre-module installs)"
 sudo rm -f /etc/supervisor/conf.d/supervisor.conf /etc/supervisor/conf.d/supervisord.conf
 echo "[INFO] DONE"

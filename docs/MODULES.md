@@ -126,7 +126,7 @@ system's Python (no more `pip install --break-system-packages` for modules).
 
 | Field       | Type   | Description |
 | ----------- | ------ | ----------- |
-| `commands`  | string[] | Build commands run in the repo root (e.g. `"cargo build --release"`). Each has a 10-minute timeout. |
+| `commands`  | string[] | Build commands run in the repo root (e.g. `"cargo build --release"`). Each has a 30-minute timeout. |
 | `artifacts` | object | Map of `source path (relative to repo root)` → `destination path`. Destinations must be absolute after expansion and support the same placeholders as program commands (e.g. `{install_dir}/my_binary`). Every source is verified to exist after the build; the copy preserves the file mode (`cp -p`). Parent directories of destinations are created automatically. |
 
 #### `recordings_subdir` (optional)
@@ -354,21 +354,25 @@ registry entry. `404` if not installed.
 The pre-module `install.sh` cloned and installed four repositories. Each maps
 to a module as follows (the removed install.sh lines become manifest fields):
 
-### `Y2Kmeltdown/evk_datalogger` → `evk-datalogger`
+### `Y2Kmeltdown/evk_datalogger` → `evk-datalogger` ✅ converted
 
-- `dependencies.pip`: `neuromorphic_drivers==0.17.0`, `faery==0.7.0`
-- `dependencies.commands`: udev rules, now from inside the venv —
+The repo ships `eventide-module.json` — a two-service module:
+
+- `dependencies.apt`: `build-essential`, `pkg-config`, `libusb-1.0-0-dev`
+  (the crate links `rusb`/`libusb1-sys`)
+- `requirements.txt` (into the venv): `neuromorphic_drivers==0.17.0`,
+  `faery==0.7.0`
+- `dependencies.commands`: udev rules, from inside the venv —
   `{venv_dir}/bin/neuromorphic-drivers-install-udev-rules` and
   `{venv_python} {venv_dir}/lib/python3.*/site-packages/neuromorphic_drivers/udev.py`
-  (adjust the `python3.*` glob to the payload's Python version)
 - `install.commands`: `cargo build --release`
 - `install.artifacts`: `target/release/evk_datalogger` and
   `target/release/viewfinder` → `/usr/local/eventide/code/`
 - `recordings_subdir`: `evk`
-- `programs`: `event_based_camera` (`{install_dir}/evk_datalogger --output-dir
-  {recordings_dir}/evk/`) and `evk_mjpeg_server` (`{install_dir}/viewfinder
-  --bind 0.0.0.0:8081 --quality 15`)
-- `sockets`: tcp `8081` (MJPEG live stream)
+- `programs`: `event_based_camera` (priority 1) and `evk_mjpeg_server`
+  (priority 2, viewfinder on port 8081)
+- `sockets`: unix `/tmp/evk4_events.sock` + `/tmp/evk4_triggers.sock` and
+  tcp `8081` (MJPEG live stream)
 
 ### `Y2Kmeltdown/picam_datalogger` → `picam-datalogger` ✅ converted
 

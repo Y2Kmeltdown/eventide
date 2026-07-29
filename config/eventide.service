@@ -1,12 +1,12 @@
 [Unit]
-Description=dashboard
+Description=eventide backend
 After=network.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/usr/local/eventide
-ExecStart=/usr/bin/python3 /usr/local/eventide/code/dashboard.py --recordings-dir SEDPLACEHOLDER
+ExecStart=/usr/bin/python3 /usr/local/eventide/code/eventide.py --recordings-dir SEDPLACEHOLDER
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal

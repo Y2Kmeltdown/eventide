@@ -184,7 +184,7 @@ sudo cp -a config /usr/local/eventide/config
 sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" /usr/local/eventide
 sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" "$EVENTIDE_DIR"
 
-sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/dashboard.service
+sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/eventide.service
 
 ## SYSTEM PACKAGES
 step "System packages (generic)"
@@ -217,7 +217,14 @@ grep -q 'cargo/bin' "$EVENTIDE_HOME/.bashrc" 2> /dev/null || \
 
 ## SYSTEMD SERVICES
 step "systemd services (generic)"
-install_service dashboard
+# Remove the pre-rename backend service (dashboard.service → eventide.service).
+if systemctl list-unit-files 2> /dev/null | grep -q '^dashboard\.service'; then
+    echo "[INFO] removing stale dashboard.service (renamed to eventide.service)"
+    sudo systemctl disable --now dashboard.service 2> /dev/null || true
+    sudo rm -f /lib/systemd/system/dashboard.service
+    sudo systemctl daemon-reload
+fi
+install_service eventide
 
 step "OS-specific services ($OS)"
 run_os_hook services
@@ -260,7 +267,7 @@ sudo systemctl restart supervisor
 
 ## VERIFICATION
 step "Verification"
-check_file /usr/local/eventide/code/dashboard.py
+check_file /usr/local/eventide/code/eventide.py
 check_file /usr/local/eventide/code/playback/target/release/playback
 check_file /etc/supervisor/conf.d/00-eventide-base.conf
 check_file /etc/supervisor/conf.d/playback.conf

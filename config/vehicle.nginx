@@ -5,18 +5,18 @@
 # It handles ONLY:
 #   - MJPEG camera streams
 #   - Playback streams
-#   - Flask API  (dashboard.py  @ 127.0.0.1:5000)
+#   - Flask API  (eventide.py  @ 127.0.0.1:5000)
 #   - Gimbal API (@ 127.0.0.1:5001)
 #   - Supervisord XML-RPC proxy
 #
 # The dashboard HTML and map tiles are normally served by the separate
 # frontend server (see eventide-frontend.nginx.conf) to keep that bandwidth
-# off the data-constrained link.  dashboard.py CAN also serve them itself
+# off the data-constrained link.  eventide.py CAN also serve them itself
 # (it handles GET / and /tiles/), in which case this vhost's "location /"
 # fallthrough makes the full UI available directly from this device — useful
 # for local/field access where link bandwidth is not a concern.
 #
-# CORS headers are added by dashboard.py itself so the browser can call
+# CORS headers are added by eventide.py itself so the browser can call
 # this server cross-origin from wherever the frontend is hosted.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ server {
 
     # --- Supervisord XML-RPC ---
     # NOTE: /supervisor/ is no longer proxied here directly.
-    # dashboard.py now handles it in Flask (/supervisor/ → POST → supervisord
+    # eventide.py now handles it in Flask (/supervisor/ → POST → supervisord
     # at 127.0.0.1:9001/RPC2).  This is because the dashboard is cross-origin;
     # the browser sends a CORS preflight (OPTIONS) first, which supervisord's
     # own HTTP server rejects with 501.  Flask answers OPTIONS cleanly and
@@ -124,7 +124,7 @@ server {
     #     proxy_set_header Host $host;
     # }
 
-    # --- Flask API (dashboard.py) ---
+    # --- Flask API (eventide.py) ---
     # Covers /api/recordings, /api/viewfinder, /api/stream, etc.
     location / {
         proxy_pass http://127.0.0.1:5000/;
@@ -144,6 +144,6 @@ server {
     # NOTE: /tiles/ is intentionally NOT a dedicated location here.
     # Map tiles are normally proxied by the frontend server, keeping tile
     # bandwidth off the data-constrained link entirely.  When the UI is
-    # served by dashboard.py directly (standalone/local access), /tiles/
-    # falls through to dashboard.py's own tile proxy via "location /".
+    # served by eventide.py directly (standalone/local access), /tiles/
+    # falls through to eventide.py's own tile proxy via "location /".
 }

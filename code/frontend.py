@@ -8,7 +8,7 @@ This server handles everything that is NOT backend-device-specific:
   - OSM map tile proxy with caching (/tiles/<z>/<x>/<y>.png)
 
 All camera streams, API calls, gimbal, supervisor, recordings, and
-playback endpoints are handled by the backend device (dashboard.py)
+playback endpoints are handled by the backend device (eventide.py)
 and are reached directly from the browser using the IP entered in the
 dashboard header — no proxy needed here for any of that.
 

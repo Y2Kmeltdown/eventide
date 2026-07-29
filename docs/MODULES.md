@@ -25,7 +25,7 @@ This document covers:
 ┌──────────────────────────── payload (e.g. tripwire, 192.168.30.2) ─┐
 │                                                                    │
 │  base platform (install.sh)                                        │
-│    dashboard.py  ──► /api/modules/*  (module manager, runs as root)│
+│    eventide.py  ──► /api/modules/*  (module manager, runs as root)│
 │    supervisord   ──► /etc/supervisor/conf.d/                       │
 │                        00-eventide-base.conf   (inet_http_server)  │
 │                        playback.conf           (in-repo component) │
@@ -50,7 +50,7 @@ nginx, the dashboard backend, the watchdog/RTC/MAVProxy services, the playback
 server (its source ships in this repo), and the Rust toolchain so Rust modules
 can build on-device. Everything else is a module.
 
-The **backend** (`dashboard.py`) performs installs and reports status; the
+The **backend** (`eventide.py`) performs installs and reports status; the
 **frontend** (MODULES tab) only displays what the backend tells it.
 
 ---
@@ -202,13 +202,14 @@ Installing is a **background job** on the backend. The job moves through these
 statuses:
 
 ```
-pending → cloning → deps → building → artifacts → configuring → verifying → done
+pending → cloning|extracting → deps → building → artifacts → configuring → verifying → done
                                                                               ↘ failed
 ```
 
 | Status        | What happens |
 | ------------- | ------------ |
 | `cloning`     | Repo cloned to a staging dir (`packages/.staging-<job>`). HTTPS is tried first; for `github.com` URLs a SSH (`git@github.com:…`) retry follows automatically. The manifest is read and fully validated here — including name/program/socket conflicts with already-installed modules. |
+| `extracting`  | Zip installs only: the uploaded zip is stored under `packages/.uploads/` and extracted into staging (zip-slip paths are rejected). The manifest must sit at the zip root or in a single top-level folder (as GitHub's "Download ZIP" produces). Validation then proceeds exactly as for `cloning`. |
 | `deps`        | `dependencies.apt`, then the module venv is created and `requirements`/`pip` are installed into it, then `dependencies.commands`. |
 | `building`    | `install.commands` run in the repo root. |
 | `artifacts`   | Every `install.artifacts` source is checked for existence, then copied to its destination. `recordings_subdir` is created. |
@@ -265,7 +266,7 @@ and a broken module can never corrupt the rest of the system.
 
 ## Backend API reference
 
-All endpoints are served by `dashboard.py` under `/api/modules` (through nginx
+All endpoints are served by `eventide.py` under `/api/modules` (through nginx
 on the payload, like the rest of `/api`). Errors return
 `{"error": "<message>"}` with a 4xx/5xx status.
 
@@ -306,6 +307,19 @@ optional — branch or tag). Starts a background install job.
 - `202 Accepted` → `{"job_id": "…", "status": "pending"}`
 - `400` missing/invalid `repo_url` · `409` another install is already running
 
+### `POST /api/modules/install-upload`
+
+Installs a module from an uploaded zip file instead of a git clone. The
+request is `multipart/form-data` with the archive in the `file` field. The
+zip must contain `eventide-module.json` at its root or inside a single
+top-level folder (what GitHub's **Download ZIP** produces). Maximum upload
+size: 100 MB.
+
+- `202 Accepted` → `{"job_id": "…", "status": "pending"}` — poll the job as
+  usual; the first status is `extracting` instead of `cloning`
+- `400` no file / not a `.zip` · `409` another install is already running ·
+  `413` zip too large
+
 ### `GET /api/modules/jobs/<job_id>`
 
 Job status for polling:
@@ -345,7 +359,9 @@ registry entry. `404` if not installed.
    clone is not removed after install.
 5. Declare every TCP port you bind in `sockets` so the installer can catch
    port conflicts between modules.
-6. Push to GitHub and install from the dashboard's MODULES tab.
+6. Push to GitHub and install from the dashboard's MODULES tab — either by
+   repo URL, or by uploading/dragging a zip of the repository (GitHub's
+   "Download ZIP" layout works as-is).
 
 ---
 
@@ -458,5 +474,5 @@ itself.
 - **Supervisor didn't pick up a change** — `sudo supervisorctl reread &&
   sudo supervisorctl update`, then check `/etc/supervisor/conf.d/` for the
   generated `module-<name>.conf`.
-- **Full install log** — the job log is kept in memory by `dashboard.py`;
-  journald has the backend's own output: `journalctl -u dashboard.service`.
+- **Full install log** — the job log is kept in memory by `eventide.py`;
+  journald has the backend's own output: `journalctl -u eventide.service`.

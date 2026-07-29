@@ -1,8 +1,9 @@
 """
-EVK4 Dashboard
-==============
-Serves the standalone dashboard.html and exposes API endpoints for
-controlling viewfinder / replay processes and listing recordings.
+Eventide Backend
+================
+The backbone process of an eventide payload: serves the dashboard UI and
+OSM tile proxy, exposes the control/file APIs, hosts the module manager
+(/api/modules/*), and proxies supervisord's XML-RPC endpoint.
 
 This process CAN serve the full frontend itself (HTML at / plus an OSM
 tile proxy at /tiles/), which is handy when talking to the device
@@ -20,7 +21,7 @@ and file APIs; the MJPEG streams themselves are served by nginx at:
 
 Usage:
     pip install flask
-    python dashboard.py \\
+    python eventide.py \\
         --recordings-dir /tmp/evk4_raw \\
         --viewfinder-bin ./target/release/viewfinder \\
         --replay-bin     ./target/release/replay
@@ -40,6 +41,7 @@ import subprocess
 import threading
 import time
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,7 +84,7 @@ def cors_preflight(path=""):
     return resp
 
 # ── Frontend: dashboard HTML + OSM tile proxy ─────────────────────────────────
-# dashboard.py can serve the whole UI itself for direct/standalone access.
+# eventide.py can serve the whole UI itself for direct/standalone access.
 # When the page is loaded from here, the browser's relative API/stream/tile
 # URLs resolve to this process (or the nginx vhost in front of it) — no
 # backend IP needs to be configured in the UI.  The tile proxy is the same
@@ -96,7 +98,7 @@ def index():
     if not html_path.exists():
         return (
             "dashboard.html not found. "
-            "Pass --html-file or place it alongside dashboard.py."
+            "Pass --html-file or place it alongside eventide.py."
         ), 404
     return send_file(html_path, mimetype="text/html")
 
@@ -428,6 +430,7 @@ def _job_snapshot(job: dict) -> dict:
         return {
             "id": job["id"],
             "status": job["status"],
+            "source_type": job.get("source_type", "git"),
             "repo_url": job["repo_url"],
             "module": job["module"],
             "created_at": job["created_at"],
@@ -821,6 +824,35 @@ def _git_rev(repo_dir: Path) -> str | None:
         return None
 
 
+def _extract_zip(zip_path: Path, dest: Path, job: dict) -> Path:
+    """Extract an uploaded module zip into `dest` and return the directory
+    that contains eventide-module.json — either the zip root, or a single
+    top-level folder as produced by GitHub's "Download ZIP" button."""
+    try:
+        archive = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile:
+        raise RuntimeError("uploaded file is not a valid zip archive")
+    with archive:
+        names = archive.namelist()
+        for member in names:
+            parts = Path(member).parts
+            if member.startswith("/") or ".." in parts:
+                raise RuntimeError(f"unsafe path in zip: {member}")
+        archive.extractall(dest)
+    _job_log(job, f"extracted {zip_path.name} ({len(names)} entries)")
+
+    if (dest / MANIFEST_FILENAME).exists():
+        return dest
+    top = [p for p in dest.iterdir() if p.name != "__MACOSX"]
+    dirs = [p for p in top if p.is_dir()]
+    if len(top) == 1 and len(dirs) == 1 and (dirs[0] / MANIFEST_FILENAME).exists():
+        return dirs[0]
+    raise RuntimeError(
+        f"{MANIFEST_FILENAME} not found at the zip root or in a single "
+        "top-level folder"
+    )
+
+
 # ── Supervisor control ────────────────────────────────────────────────────────
 
 def _supervisorctl(*args, timeout=30) -> tuple[int, str]:
@@ -897,12 +929,18 @@ def _run_install_job(job: dict) -> None:
     name: str | None = None
     registered = False
     try:
-        # ── Clone & validate ──────────────────────────────────────────────
-        _job_status(job, "cloning")
+        # ── Acquire source & validate ─────────────────────────────────────
         staging = Path(cfg["packages_dir"]) / f".staging-{job['id']}"
-        _clone_repo(job["repo_url"], job.get("ref"), staging, job)
+        if job.get("source_type") == "zip":
+            _job_status(job, "extracting")
+            staging.mkdir(parents=True, exist_ok=True)
+            module_root = _extract_zip(Path(job["zip_path"]), staging, job)
+        else:
+            _job_status(job, "cloning")
+            _clone_repo(job["repo_url"], job.get("ref"), staging, job)
+            module_root = staging
 
-        manifest_path = staging / MANIFEST_FILENAME
+        manifest_path = module_root / MANIFEST_FILENAME
         if not manifest_path.exists():
             raise RuntimeError(f"{MANIFEST_FILENAME} not found in repository root")
         try:
@@ -924,10 +962,15 @@ def _run_install_job(job: dict) -> None:
             # Not in the registry (checked above) → leftover from a failed
             # install; safe to replace.
             shutil.rmtree(module_dir)
-        shutil.move(str(staging), str(module_dir))
+        if module_root != staging:
+            # Zip with a top-level folder: move just the module root out.
+            shutil.move(str(module_root), str(module_dir))
+            shutil.rmtree(staging, ignore_errors=True)
+        else:
+            shutil.move(str(staging), str(module_dir))
         staging = None
         commit = _git_rev(module_dir)
-        _job_log(job, f"cloned {job['repo_url']} ({commit or 'unknown commit'})")
+        _job_log(job, f"acquired {job['repo_url']} ({commit or 'unknown commit'})")
 
         # ── Dependencies ──────────────────────────────────────────────────
         _job_status(job, "deps")
@@ -1036,6 +1079,9 @@ def _run_install_job(job: dict) -> None:
                 save_registry(registry)
         _job_status(job, "failed")
     finally:
+        if job.get("zip_path"):
+            # Uploaded zips are temporary — always remove after the job.
+            Path(job["zip_path"]).unlink(missing_ok=True)
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
 
 
@@ -1122,6 +1168,41 @@ def api_modules_detail(name):
 
 _REPO_URL_RE = re.compile(r"^(https?://|git@|file://).+")
 
+# Module zips are source trees — 100 MB is generous.
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+
+
+@app.errorhandler(413)
+def upload_too_large(_):
+    return jsonify({"error": "uploaded zip is too large (max 100 MB)"}), 413
+
+
+def _new_install_job(*, source_type: str, repo_url: str,
+                     ref: str | None = None, zip_path: str | None = None) -> dict:
+    """Register a new install job (does not start it — see _launch_install_job).
+    The caller must hold install_lock; the job wrapper releases it."""
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "status": "pending",
+        "source_type": source_type,
+        "repo_url": repo_url,
+        "ref": ref,
+        "zip_path": zip_path,
+        "module": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+        "error": None,
+        "warnings": [],
+        "log": [],
+    }
+    with module_jobs_lock:
+        module_jobs[job["id"]] = job
+    return job
+
+
+def _launch_install_job(job: dict) -> None:
+    threading.Thread(target=_run_install_job_guarded, args=(job,), daemon=True).start()
+
 
 @app.route("/api/modules/install", methods=["POST"])
 def api_modules_install():
@@ -1138,21 +1219,42 @@ def api_modules_install():
     if not install_lock.acquire(blocking=False):
         return jsonify({"error": "another module install is already running"}), 409
 
-    job = {
-        "id": uuid.uuid4().hex[:12],
-        "status": "pending",
-        "repo_url": repo_url,
-        "ref": ref,
-        "module": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "finished_at": None,
-        "error": None,
-        "warnings": [],
-        "log": [],
-    }
-    with module_jobs_lock:
-        module_jobs[job["id"]] = job
-    threading.Thread(target=_run_install_job_guarded, args=(job,), daemon=True).start()
+    job = _new_install_job(source_type="git", repo_url=repo_url, ref=ref)
+    _launch_install_job(job)
+    return jsonify({"job_id": job["id"], "status": "pending"}), 202
+
+
+@app.route("/api/modules/install-upload", methods=["POST"])
+def api_modules_install_upload():
+    """Install a module from an uploaded zip file (multipart field 'file').
+
+    The zip must contain eventide-module.json at its root or inside a single
+    top-level folder (as GitHub's "Download ZIP" produces).  From there the
+    install follows the same pipeline as a git clone.
+    """
+    upload = request.files.get("file")
+    if upload is None or not (upload.filename or "").strip():
+        return jsonify({"error": "no file uploaded (multipart field 'file')"}), 400
+    filename = Path(upload.filename).name  # strip any client-side path
+    if not filename.lower().endswith(".zip"):
+        return jsonify({"error": "uploaded file must be a .zip"}), 400
+    if not install_lock.acquire(blocking=False):
+        return jsonify({"error": "another module install is already running"}), 409
+
+    job = _new_install_job(source_type="zip", repo_url=f"zip://{filename}")
+    uploads_dir = Path(cfg["packages_dir"]) / ".uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = uploads_dir / f"{job['id']}.zip"
+    try:
+        upload.save(zip_path)
+    except OSError as exc:
+        with module_jobs_lock:
+            module_jobs.pop(job["id"], None)
+        install_lock.release()
+        return jsonify({"error": f"failed to store upload: {exc}"}), 500
+
+    job["zip_path"] = str(zip_path)
+    _launch_install_job(job)
     return jsonify({"job_id": job["id"], "status": "pending"}), 202
 
 
@@ -1365,7 +1467,7 @@ def api_ssh_key_generate():
 
 def main():
     global _SUPERVISOR_RPC_URL
-    parser = argparse.ArgumentParser(description="EVK4 Dashboard — Backend API Server")
+    parser = argparse.ArgumentParser(description="Eventide Backend — API Server")
     parser.add_argument("--recordings-dir",        default="/usr/local/eventide/recordings",
                         help="Root recordings directory (sub-dirs: evk/, picam/, ircam/)")
     parser.add_argument("--viewfinder-bin",        default="./target/release/viewfinder")
@@ -1410,10 +1512,10 @@ def main():
     # Auto-start live EVK viewfinder
     proc, err = start_viewfinder("live", vf_configs["live"])
     if err:
-        print(f"[dashboard] WARNING: could not auto-start live viewfinder: {err}")
+        print(f"[backend] WARNING: could not auto-start live viewfinder: {err}")
     else:
         viewfinders["live"] = proc
-        print("[dashboard] Auto-started live viewfinder.")
+        print("[backend] Auto-started live viewfinder.")
 
     app.run(host=args.host, port=args.port, debug=False)
 

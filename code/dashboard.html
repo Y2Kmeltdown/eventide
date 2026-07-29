@@ -258,6 +258,8 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .mod-layout{display:grid;grid-template-columns:1fr 340px;overflow:hidden;min-height:0}
 .mod-main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
 .mod-install-bar{display:flex;align-items:center;gap:8px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.mod-or{font-family:var(--display);font-size:7px;letter-spacing:.14em;color:var(--text-dim)}
+#ws-modules.drop-active .mod-layout{outline:2px dashed var(--green);outline-offset:-3px}
 .mod-input{background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:10px;padding:5px 9px;border-radius:var(--r);outline:none}
 .mod-input:focus{border-color:var(--accent)}
 .mod-input.repo{flex:1;min-width:0}
@@ -723,7 +725,9 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 </div><!-- /ws-playback -->
 
 
-<div class="workspace" id="ws-modules">
+<div class="workspace" id="ws-modules"
+     ondragenter="modDragEnter(event)" ondragover="modDragOver(event)"
+     ondragleave="modDragLeave(event)" ondrop="modDrop(event)">
   <div class="mod-layout">
 
     <div class="mod-main">
@@ -740,6 +744,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
         <input class="mod-input ref" id="mod-ref-input"
                placeholder="ref (opt.)" spellcheck="false">
         <button class="super-btn s-green" onclick="installModule()">✚ INSTALL</button>
+        <span class="mod-or">OR</span>
+        <button class="super-btn s-green" title="Install a module from a .zip file"
+                onclick="document.getElementById('mod-zip-input').click()">⇪ ZIP FILE</button>
+        <input type="file" id="mod-zip-input" accept=".zip,application/zip"
+               style="display:none" onchange="modZipSelected(this)">
       </div>
       <div class="ssh-panel">
         <div class="ssh-head">
@@ -774,7 +783,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
         </div>
       </div>
       <div class="log-scroll" id="mod-log-scroll">
-        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Click a service to view its stdout log, or install a module to watch the install log.</pre>
+        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Click a service to view its stdout log, or install a module to watch the install log. You can also drag &amp; drop a module .zip anywhere on this tab to install it.</pre>
       </div>
     </div>
 
@@ -787,7 +796,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 // ═══════════════════════════════════════════════════════════
 //  CONFIG — BACKEND IP
 //  This page can be served two ways:
-//    1. By dashboard.py on the backend device itself — all API,
+//    1. By eventide.py on the backend device itself — all API,
 //       stream, tile and supervisor URLs are same-origin and work
 //       with no configuration (backend IP left blank).
 //    2. By the decoupled frontend server — enter the backend IP in
@@ -996,7 +1005,7 @@ function switchGimbalTab(tab) {
 
 // ═══════════════════════════════════════════════════════════
 //  MODULES TAB (merged with the old SUPERVISOR tab)
-//  GitHub module installs run on the backend (dashboard.py) as
+//  GitHub module installs run on the backend (eventide.py) as
 //  background jobs; this tab polls job status, lists the
 //  installed-module registry, and merges in live supervisord
 //  process info (via XML-RPC) so every service — installed-module
@@ -1152,18 +1161,66 @@ async function installModule() {
     });
     const data = await r.json();
     if (!r.ok) { toast(data.error || 'Install failed to start', 'err'); return; }
-    modJobId = data.job_id;
-    logMode = 'job';
-    document.getElementById('mod-log-title').textContent = 'INSTALL LOG';
-    setModJobBadge('pending');
-    const out = document.getElementById('mod-log-output');
-    out.style.fontStyle = 'normal';
-    out.textContent = '';
     toast('Install started', 'ok');
-    if (modJobTimer) clearInterval(modJobTimer);
-    modJobTimer = setInterval(pollModJob, 2000);
-    pollModJob();
+    startModJob(data.job_id);
   } catch (e) { toast('Install request failed: ' + e.message, 'err'); }
+}
+
+// Zip-file module installs — via the ZIP FILE button (file picker) or by
+// dragging a .zip anywhere onto this tab.  The backend extracts the zip,
+// validates eventide-module.json, then runs the normal install pipeline.
+function modZipSelected(input) {
+  const file = input.files && input.files[0];
+  input.value = '';   // allow picking the same file again
+  if (file) uploadModuleZip(file);
+}
+
+async function uploadModuleZip(file) {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    toast('Only .zip files can be installed as modules', 'err');
+    return;
+  }
+  const form = new FormData();
+  form.append('file', file, file.name);
+  try {
+    const r = await fetch(apiUrl('/modules/install-upload'), {method: 'POST', body: form});
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Zip install failed to start', 'err'); return; }
+    toast('Install started from ' + file.name, 'ok');
+    startModJob(data.job_id);
+  } catch (e) { toast('Zip upload failed: ' + e.message, 'err'); }
+}
+
+// Drag & drop — depth counter so child-element transitions don't flicker.
+let modDragDepth = 0;
+function setModDropActive(on) {
+  document.getElementById('ws-modules').classList.toggle('drop-active', on);
+}
+function modDragEnter(e) { e.preventDefault(); modDragDepth++; setModDropActive(true); }
+function modDragOver(e)  { e.preventDefault(); }
+function modDragLeave(e) {
+  e.preventDefault();
+  if (--modDragDepth <= 0) { modDragDepth = 0; setModDropActive(false); }
+}
+function modDrop(e) {
+  e.preventDefault();
+  modDragDepth = 0;
+  setModDropActive(false);
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) uploadModuleZip(file);
+}
+
+function startModJob(jobId) {
+  modJobId = jobId;
+  logMode = 'job';
+  document.getElementById('mod-log-title').textContent = 'INSTALL LOG';
+  setModJobBadge('pending');
+  const out = document.getElementById('mod-log-output');
+  out.style.fontStyle = 'normal';
+  out.textContent = '';
+  if (modJobTimer) clearInterval(modJobTimer);
+  modJobTimer = setInterval(pollModJob, 2000);
+  pollModJob();
 }
 
 async function pollModJob() {
@@ -1327,7 +1384,7 @@ function logRefresh() {
 }
 
 // ── SSH key panel ──────────────────────────────────────────
-// The backend (dashboard.py) holds a passphrase-less ed25519 key used by git
+// The backend (eventide.py) holds a passphrase-less ed25519 key used by git
 // when cloning private repos.  The public key is shown here so the operator
 // can register it on GitHub.
 let sshPubKey = null;

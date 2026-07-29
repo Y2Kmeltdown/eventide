@@ -53,7 +53,7 @@ Python libraries (e.g. `python3-picamera2`) remain visible; set
    any TCP/UNIX sockets it exposes in `sockets`, so the dashboard knows the
    module's capabilities.
 6. Push, then install from the dashboard: **MODULES → enter the repo URL →
-   INSTALL**.
+   INSTALL** — or zip the folder and use **ZIP FILE** (drag & drop works too).
 
 ## Placeholders available in commands and artifact destinations
 

@@ -96,18 +96,17 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .ui-widget.drop-above{box-shadow:inset 0 2px 0 var(--accent)}
 .ui-region-scroll.drop-into{box-shadow:inset 0 0 0 2px var(--accent-dim)}
 
-/* Center workspace */
+/* Center workspace (tiled) */
 .ui-center{display:flex;flex-direction:column;overflow:hidden;background:#020810;min-width:0}
 .ui-center-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
-.ui-center-tab{display:flex;align-items:center;gap:7px;padding:8px 14px;font-family:var(--display);font-size:7px;letter-spacing:.12em;color:var(--text-dim);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;transition:all .2s;position:relative;top:1px}
-.ui-center-tab:hover{color:var(--text-mid)}
-.ui-center-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.ui-center-tab .ui-widget-remove{position:relative;top:0}
 .ui-center-spacer{flex:1}
-.ui-center-panels{flex:1;position:relative;overflow:hidden;min-height:0}
-.ui-center-panel{position:absolute;inset:0;display:none;flex-direction:column;overflow:hidden}
-.ui-center-panel.active{display:flex}
-.ui-center-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-dim);font-size:10px;line-height:1.8;text-align:center}
+.ui-center-panels{flex:1;overflow-y:auto;min-height:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));grid-auto-rows:minmax(300px,1fr);align-content:start}
+.ui-tile{position:relative;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border);border-bottom:1px solid var(--border);min-height:0;background:#020810}
+.ui-tile .ui-widget-head{padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0}
+.ui-tile.dragging{opacity:.4}
+.ui-tile.drop-above{box-shadow:inset 0 0 0 2px var(--accent)}
+.ui-tile-body{flex:1;min-height:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.ui-center-empty{grid-column:1/-1;min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-dim);font-size:10px;line-height:1.8;text-align:center}
 .ui-center-empty .icon{font-size:26px;opacity:.5}
 
 /* Palette */
@@ -647,7 +646,8 @@ let _modInfo = null;   // last /api/modules snapshot
 
 async function refreshModuleInfo() {
   try {
-    const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(4000) });
+    // Generous timeout — /api/modules crosses the constrained link.
+    const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(10000) });
     _modInfo = r.ok ? await r.json() : null;
   } catch { _modInfo = null; }
   return _modInfo;
@@ -670,7 +670,7 @@ let _lastUiSig     = '';    // change detector so polls don't re-render
 const uiLive       = new Map();  // "mod/id" → {destroy(), map?}
 
 const LAYOUT_KEY     = () => 'eventide-layout:'    + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
-const CENTER_TAB_KEY = () => 'eventide-center-tab:' + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
+const SEEN_KEY       = () => 'eventide-ui-seen:'   + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
 const uiKey = e => `${e.m}/${e.id}`;
 
 function collectUiComponents() {
@@ -688,22 +688,45 @@ function loadLayoutState() {
     return Array.isArray(v) ? v : [];
   } catch { return []; }
 }
-function saveLayoutState() { localStorage.setItem(LAYOUT_KEY(), JSON.stringify(uiLayout)); }
+function saveLayoutState() {
+  localStorage.setItem(LAYOUT_KEY(), JSON.stringify(uiLayout));
+  // Keep the change detector in step with manual mutations so the next
+  // reconcile is a no-op (prevents a spurious re-render / stream reload).
+  _lastUiSig = JSON.stringify(uiComponents) + JSON.stringify(uiLayout);
+}
 
-// Reconcile installed components with the saved layout: drop entries whose
-// module/component vanished, auto-place new "default" components, re-render
-// only when something actually changed.
+// Components the dashboard has ever advertised — used to auto-place defaults
+// only the FIRST time they appear, so removing a default widget stays removed.
+function loadSeenSet() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY()) || '[]');
+    return new Set(Array.isArray(v) ? v : []);
+  } catch { return new Set(); }
+}
+function saveSeenSet(seen) { localStorage.setItem(SEEN_KEY(), JSON.stringify([...seen])); }
+
+// Reconcile installed components with the saved layout: auto-place brand-new
+// "default" components, re-render only when something actually changed.
 function reconcileLayout() {
   uiComponents = collectUiComponents();
-  const next = loadLayoutState().filter(e =>
-    e && uiComponents.some(c => c.mod === e.m && c.id === e.id));
+  // Backend unreachable (or nothing advertised) — leave the saved layout
+  // untouched; never wipe the user's arrangement because of a failed poll.
+  if (!uiComponents.length) return;
+  const seen = loadSeenSet();
+  // Saved entries are kept even when their component is temporarily missing
+  // (module uninstalled): they don't render, but a reinstall restores them
+  // exactly where the user had them.
+  const next = loadLayoutState().filter(e => e && e.m && e.id);
   uiComponents.forEach(c => {
-    if (c.default && !next.some(e => e.m === c.mod && e.id === c.id)) {
+    const key = c.mod + '/' + c.id;
+    if (c.default && !seen.has(key) && !next.some(e => e.m === c.mod && e.id === c.id)) {
       const region = c.region === 'center' ? 'center' : 'left';
       const maxO = next.reduce((mx, e) => (e.r === region ? Math.max(mx, e.o) : mx), -1);
       next.push({ m: c.mod, id: c.id, r: region, o: maxO + 1 });
     }
+    seen.add(key);
   });
+  saveSeenSet(seen);
   const sig = JSON.stringify(uiComponents) + JSON.stringify(next);
   if (sig === _lastUiSig) return;
   _lastUiSig = sig;
@@ -721,7 +744,11 @@ function renderWorkspace() {
     const scroll = document.getElementById(`ui-${region}-scroll`);
     if (!scroll) return;
     scroll.innerHTML = '';
-    const entries = uiLayout.filter(e => e.r === region).sort((a, b) => a.o - b.o);
+    // Skip entries whose component is currently missing (module uninstalled)
+    // — they stay in the saved layout and return after a reinstall.
+    const entries = uiLayout
+      .filter(e => e.r === region && findComponent(e.m, e.id))
+      .sort((a, b) => a.o - b.o);
     if (!entries.length) {
       scroll.innerHTML = '<div class="ui-region-empty">No components placed.<br>Open ＋ COMPONENTS to add some.</div>';
       return;
@@ -756,7 +783,12 @@ function buildSidebarWidget(entry) {
   el.addEventListener('drop', ev => {
     ev.preventDefault(); el.classList.remove('drop-above');
     const [m, id] = (ev.dataTransfer.getData('text/plain') || '').split('/');
-    if (m && id && !(m === entry.m && id === entry.id)) moveWidget(m, id, entry.r, entry);
+    if (!(m && id) || (m === entry.m && id === entry.id)) return;
+    const comp2 = findComponent(m, id);
+    if (comp2 && comp2.region === 'center') return;   // centre-only component
+    const rect = el.getBoundingClientRect();
+    const after = ev.clientY > rect.top + rect.height / 2;
+    moveWidget(m, id, entry.r, entry, after);
   });
   if (comp) {
     const instance = mountWidget(comp, el.querySelector('.ui-widget-body'));
@@ -767,86 +799,112 @@ function buildSidebarWidget(entry) {
   return el;
 }
 
-// Sidebar drop zones (drop at end of a region)
+// Sidebar drop zones (drop on empty space = append to end of region).
+// Note: ev.target can be the empty-state div or padding, not the scroll
+// element itself — check closest('.ui-widget') instead of target identity.
 function initRegionDropZones() {
   ['left', 'right'].forEach(region => {
     const scroll = document.getElementById(`ui-${region}-scroll`);
     if (!scroll) return;
     scroll.addEventListener('dragover', ev => {
-      if (ev.target === scroll) { ev.preventDefault(); scroll.classList.add('drop-into'); }
+      if (!ev.target.closest('.ui-widget')) { ev.preventDefault(); scroll.classList.add('drop-into'); }
     });
     scroll.addEventListener('dragleave', () => scroll.classList.remove('drop-into'));
     scroll.addEventListener('drop', ev => {
-      if (ev.target !== scroll) return;
+      if (ev.target.closest('.ui-widget')) return;   // widgets handle their own drops
       ev.preventDefault(); scroll.classList.remove('drop-into');
       const [m, id] = (ev.dataTransfer.getData('text/plain') || '').split('/');
-      if (m && id) moveWidget(m, id, region, null);
+      if (!(m && id)) return;
+      const comp = findComponent(m, id);
+      if (comp && comp.region === 'center') return;   // centre-only component
+      moveWidget(m, id, region, null);
     });
   });
+
+  const panels = document.getElementById('ui-center-panels');
+  if (panels) {
+    panels.addEventListener('dragover', ev => {
+      if (!ev.target.closest('.ui-tile')) ev.preventDefault();
+    });
+    panels.addEventListener('drop', ev => {
+      if (ev.target.closest('.ui-tile')) return;      // tiles handle their own drops
+      ev.preventDefault();
+      const [m, id] = (ev.dataTransfer.getData('text/plain') || '').split('/');
+      if (!(m && id)) return;
+      const comp = findComponent(m, id);
+      if (comp && comp.region !== 'center') return;   // sidebar-only component
+      moveWidget(m, id, 'center', null);
+    });
+  }
 }
 
 function renderCenterWorkspace() {
   const tabsEl   = document.getElementById('ui-center-tabs');
   const panelsEl = document.getElementById('ui-center-panels');
   if (!tabsEl || !panelsEl) return;
-  tabsEl.innerHTML = ''; panelsEl.innerHTML = '';
-  const entries = uiLayout.filter(e => e.r === 'center').sort((a, b) => a.o - b.o);
-
-  entries.forEach(e => {
-    const comp = findComponent(e.m, e.id);
-    const key  = uiKey(e);
-    tabsEl.insertAdjacentHTML('beforeend',
-      `<button class="ui-center-tab" data-tab="${key}">${escHtml(comp?.title || e.id)}<span class="ui-widget-remove" data-close="${key}" title="Remove">×</span></button>`);
-    const panel = document.createElement('div');
-    panel.className = 'ui-center-panel';
-    panel.dataset.panel = key;
-    panelsEl.appendChild(panel);
-    if (comp) {
-      const instance = mountWidget(comp, panel);
-      if (instance) uiLive.set(key, instance);
-    }
-  });
-  tabsEl.insertAdjacentHTML('beforeend',
-    `<div class="ui-center-spacer"></div>
-     <button class="ui-palette-btn" id="ui-palette-btn" onclick="togglePalette()">＋ COMPONENTS</button>`);
-  tabsEl.querySelectorAll('.ui-center-tab').forEach(t =>
-    t.addEventListener('click', ev => {
-      if (ev.target.dataset.close) return;
-      switchCenterTab(t.dataset.tab);
-    }));
-  tabsEl.querySelectorAll('[data-close]').forEach(x =>
-    x.addEventListener('click', ev => {
-      ev.stopPropagation();
-      const [m, id] = x.dataset.close.split('/');
-      removeWidget(m, id);
-    }));
+  panelsEl.innerHTML = '';
+  // The tabs bar is now just a toolbar: workspace title spacer + palette button.
+  tabsEl.innerHTML = `<div class="ui-center-spacer"></div>
+    <button class="ui-palette-btn" id="ui-palette-btn" onclick="togglePalette()">＋ COMPONENTS</button>`;
+  const entries = uiLayout
+    .filter(e => e.r === 'center' && findComponent(e.m, e.id))
+    .sort((a, b) => a.o - b.o);
 
   if (!entries.length) {
     panelsEl.innerHTML = `<div class="ui-center-empty"><div class="icon">◉</div>
       <div>WORKSPACE EMPTY<br><span style="font-size:8px">Open ＋ COMPONENTS to place module components.</span></div></div>`;
     return;
   }
-  const saved = localStorage.getItem(CENTER_TAB_KEY());
-  const active = entries.find(e => uiKey(e) === saved) || entries[0];
-  switchCenterTab(uiKey(active));
+  entries.forEach(e => panelsEl.appendChild(buildCenterTile(e)));
+  // Leaflet maps need a nudge after being (re)mounted.
+  setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
 }
 
-function switchCenterTab(key) {
-  localStorage.setItem(CENTER_TAB_KEY(), key);
-  document.querySelectorAll('.ui-center-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.tab === key));
-  document.querySelectorAll('.ui-center-panel').forEach(p =>
-    p.classList.toggle('active', p.dataset.panel === key));
-  // Leaflet maps need a nudge when their panel becomes visible.
-  const w = uiLive.get(key);
-  if (w && w.map) setTimeout(() => w.map.invalidateSize(), 50);
+function buildCenterTile(entry) {
+  const comp = findComponent(entry.m, entry.id);
+  const key  = uiKey(entry);
+  const el = document.createElement('div');
+  el.className = 'ui-tile';
+  el.innerHTML = `
+    <div class="ui-widget-head" draggable="true" title="Drag to reorder">
+      <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
+      <span class="ui-widget-mod">${escHtml(entry.m)}</span>
+      <button class="ui-widget-remove" title="Remove">×</button>
+    </div>
+    <div class="ui-tile-body"></div>`;
+  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
+  const head = el.querySelector('.ui-widget-head');
+  head.addEventListener('dragstart', ev => {
+    ev.dataTransfer.setData('text/plain', key);
+    ev.dataTransfer.effectAllowed = 'move';
+    el.classList.add('dragging');
+  });
+  head.addEventListener('dragend', () => el.classList.remove('dragging'));
+  el.addEventListener('dragover', ev => { ev.preventDefault(); el.classList.add('drop-above'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-above'));
+  el.addEventListener('drop', ev => {
+    ev.preventDefault(); el.classList.remove('drop-above');
+    const [m, id] = (ev.dataTransfer.getData('text/plain') || '').split('/');
+    if (!(m && id) || (m === entry.m && id === entry.id)) return;
+    const comp2 = findComponent(m, id);
+    if (comp2 && comp2.region !== 'center') return;   // sidebar-only component
+    const rect = el.getBoundingClientRect();
+    const after = ev.clientX > rect.left + rect.width / 2;
+    moveWidget(m, id, 'center', entry, after);
+  });
+  if (comp) {
+    const instance = mountWidget(comp, el.querySelector('.ui-tile-body'));
+    if (instance) uiLive.set(key, instance);
+  } else {
+    el.querySelector('.ui-tile-body').innerHTML = '<div class="empty">Unknown component.</div>';
+  }
+  return el;
 }
 
 // ── Layout mutations ────────────────────────────────────────────────────────
 
 function removeWidget(m, id) {
   uiLayout = uiLayout.filter(e => !(e.m === m && e.id === id));
-  _lastUiSig = '';   // force re-render on next reconcile
   saveLayoutState();
   renderWorkspace();
 }
@@ -861,16 +919,20 @@ function addComponent(m, id) {
   renderWorkspace();
 }
 
-function moveWidget(m, id, toRegion, beforeEntry) {
+function moveWidget(m, id, toRegion, beforeEntry, after) {
   const e = uiLayout.find(x => x.m === m && x.id === id);
   if (!e) return;
-  uiLayout = uiLayout.filter(x => x !== e);
+  const rest = uiLayout.filter(x => x !== e);
   e.r = toRegion;
-  const siblings = uiLayout.filter(x => x.r === toRegion).sort((a, b) => a.o - b.o);
+  const siblings = rest.filter(x => x.r === toRegion).sort((a, b) => a.o - b.o);
   let idx = beforeEntry ? siblings.findIndex(x => x.m === beforeEntry.m && x.id === beforeEntry.id) : -1;
   if (idx < 0) idx = siblings.length;
+  else if (after) idx += 1;
   siblings.splice(idx, 0, e);
   siblings.forEach((x, i) => { x.o = i; });
+  // `siblings` is a local array — the entry must rejoin the real uiLayout
+  // (previously it was dropped on the floor and the widget "disappeared").
+  uiLayout = rest.filter(x => x.r !== toRegion).concat(siblings);
   saveLayoutState();
   renderWorkspace();
 }
@@ -1496,7 +1558,12 @@ function switchTab(tab) {
     modPollTimer = null;
   }
   // Leaflet maps need a resize nudge when the main tab becomes visible.
-  if (tab === 'main') setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+  if (tab === 'main') {
+    // If the initial /api/modules fetch failed, retry so the workspace
+    // doesn't stay empty until the next backend-IP change.
+    if (!_modInfo) refreshModuleInfo().then(reconcileLayout);
+    setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

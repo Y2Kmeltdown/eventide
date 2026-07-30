@@ -485,6 +485,10 @@ _MODULE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _PROGRAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 _ARG_TYPES = ("str", "int", "float")
+_UI_COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map")
+_UI_REGIONS = ("sidebar", "center")
+_UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select")
 _KNOWN_PLACEHOLDERS = (
     "install_dir", "config_dir", "module_dir", "recordings_dir",
     "recordings_subdir", "venv_dir", "venv_python",
@@ -727,6 +731,120 @@ def validate_manifest(m) -> list[str]:
                         )
                 else:
                     errors.append(f"program '{pn}' uses unknown placeholder '{{{ph}}}'")
+
+    ui = m.get("ui", [])
+    if not isinstance(ui, list):
+        errors.append("'ui' must be a list")
+    else:
+        tcp_sock_names = {
+            s.get("name") for s in (m.get("sockets") or [])
+            if isinstance(s, dict) and s.get("type") == "tcp"
+        }
+
+        def _check_sock(cid, value, where):
+            if not isinstance(value, str) or not value:
+                errors.append(f"ui '{cid}' needs a socket name for '{where}'")
+            elif value not in tcp_sock_names:
+                errors.append(
+                    f"ui '{cid}' references undeclared tcp socket '{value}' ({where})"
+                )
+
+        def _is_path(value):
+            return isinstance(value, str) and value.startswith("/")
+
+        seen_ui_ids: set[str] = set()
+        for comp in ui:
+            if not isinstance(comp, dict):
+                errors.append("each ui component must be an object")
+                continue
+            cid = comp.get("id")
+            if not isinstance(cid, str) or not _UI_COMPONENT_ID_RE.match(cid):
+                errors.append(
+                    "each ui component needs an 'id' matching ^[a-z0-9][a-z0-9_-]*$"
+                )
+                continue
+            if cid in seen_ui_ids:
+                errors.append(f"duplicate ui component id '{cid}'")
+            seen_ui_ids.add(cid)
+            ctype = comp.get("type")
+            if ctype not in _UI_TYPES:
+                errors.append(f"ui '{cid}' type must be one of {_UI_TYPES}")
+                continue
+            if comp.get("region", "sidebar") not in _UI_REGIONS:
+                errors.append(f"ui '{cid}' region must be one of {_UI_REGIONS}")
+            if "default" in comp and not isinstance(comp["default"], bool):
+                errors.append(f"ui '{cid}' default must be a boolean")
+            if "title" in comp and not isinstance(comp["title"], str):
+                errors.append(f"ui '{cid}' title must be a string")
+
+            if ctype == "mjpeg":
+                _check_sock(cid, comp.get("socket"), "socket")
+                if not _is_path(comp.get("path")):
+                    errors.append(f"ui '{cid}' needs a 'path' like '/stream'")
+            elif ctype == "form":
+                _check_sock(cid, comp.get("socket"), "socket")
+                fields = comp.get("fields")
+                if not isinstance(fields, list) or not fields:
+                    errors.append(f"ui '{cid}' needs a non-empty 'fields' list")
+                else:
+                    for f in fields:
+                        if not isinstance(f, dict) or not isinstance(f.get("key"), str):
+                            errors.append(f"ui '{cid}' field needs a 'key'")
+                            continue
+                        kind = f.get("kind", "number")
+                        if kind not in _UI_FIELD_KINDS:
+                            errors.append(
+                                f"ui '{cid}' field '{f.get('key')}' kind must be "
+                                f"one of {_UI_FIELD_KINDS}"
+                            )
+                        if kind == "select" and not _is_str_list(f.get("options")):
+                            errors.append(
+                                f"ui '{cid}' select field '{f['key']}' needs "
+                                "'options' (list of strings)"
+                            )
+            elif ctype == "telemetry":
+                _check_sock(cid, comp.get("socket"), "socket")
+                if not _is_path(comp.get("get")):
+                    errors.append(f"ui '{cid}' needs a 'get' path")
+                rows = comp.get("rows")
+                if not isinstance(rows, list) or not rows:
+                    errors.append(f"ui '{cid}' needs a non-empty 'rows' list")
+                elif not all(
+                    isinstance(r, dict)
+                    and isinstance(r.get("label"), str)
+                    and isinstance(r.get("path"), str)
+                    for r in rows
+                ):
+                    errors.append(f"ui '{cid}' rows must all have {{label, path}}")
+            elif ctype == "joystick":
+                _check_sock(cid, comp.get("socket"), "socket")
+                if not _is_path(comp.get("put")):
+                    errors.append(f"ui '{cid}' needs a 'put' path")
+            elif ctype == "table":
+                _check_sock(cid, comp.get("socket"), "socket")
+                if not _is_path(comp.get("get")):
+                    errors.append(f"ui '{cid}' needs a 'get' path")
+                cols = comp.get("columns")
+                if not isinstance(cols, list) or not cols:
+                    errors.append(f"ui '{cid}' needs a non-empty 'columns' list")
+                ra = comp.get("row_action")
+                if ra is not None and (
+                    not isinstance(ra, dict)
+                    or not _is_path(ra.get("path"))
+                    or not isinstance(ra.get("key"), str)
+                ):
+                    errors.append(f"ui '{cid}' row_action needs {{path, key}}")
+            elif ctype == "map":
+                for binding in ("track", "adsb"):
+                    b = comp.get(binding)
+                    if b is None:
+                        continue
+                    if not isinstance(b, dict):
+                        errors.append(f"ui '{cid}' {binding} must be an object")
+                        continue
+                    _check_sock(cid, b.get("socket"), f"{binding}.socket")
+                    if not _is_path(b.get("get")):
+                        errors.append(f"ui '{cid}' {binding} needs a 'get' path")
     return errors
 
 
@@ -1336,6 +1454,7 @@ def api_modules_list():
             "repo_url": entry.get("repo_url"),
             "installed_at": entry.get("installed_at"),
             "recordings_subdir": m.get("recordings_subdir"),
+            "ui": m.get("ui", []),
             "arguments": m.get("arguments", []),
             "sockets": m.get("sockets", []),
             "programs": [

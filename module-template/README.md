@@ -105,6 +105,34 @@ its files:
 (The hello template itself binds no sockets and writes no recordings, so its
 manifest keeps `"sockets": []` and no `recordings_subdir`.)
 
+## Dashboard UI components
+
+Modules can advertise panels for the dashboard's MAIN tab in an optional
+`ui` array. The dashboard shows them in the component palette; components
+with `"default": true` are placed automatically on install. Widget types:
+`mjpeg` (centre stream view), `form` (sidebar settings form), `telemetry`
+(polled readout), `joystick` (RC pad), `table` (polled table with row
+actions), `map` (Leaflet map). All widget traffic goes through the backend
+proxy, so configs reference sockets **by name**, never by port:
+
+```json
+"ui": [
+  { "id": "live", "type": "mjpeg", "title": "MYCAM LIVE", "region": "center",
+    "default": true, "socket": "mjpeg", "path": "/stream" },
+  { "id": "stream-settings", "type": "form", "title": "MYCAM STREAM",
+    "region": "sidebar", "default": true, "socket": "mjpeg",
+    "get": "/api/settings", "put": "/api/settings",
+    "fields": [
+      {"key": "quality", "kind": "slider", "min": 1, "max": 100},
+      {"key": "streaming", "kind": "toggle",
+       "get": "/api/streaming", "put": "/api/streaming"}
+    ] }
+]
+```
+
+Full schema and per-type config reference: `docs/MODULES.md` in the main
+eventide repository ("Dashboard UI components (`ui`)").
+
 ## Local sanity check
 
 ```bash

@@ -10,6 +10,7 @@ This document covers:
 - [Architecture](#architecture)
 - [The module manifest (`eventide-module.json`)](#the-module-manifest)
 - [Network locations (ports & proxying)](#network-locations-ports--proxying)
+- [Dashboard UI components (`ui`)](#dashboard-ui-components-ui)
 - [Install lifecycle & error handling](#install-lifecycle--error-handling)
 - [How supervisor config is generated](#how-supervisor-config-is-generated)
 - [Backend API reference](#backend-api-reference)
@@ -242,6 +243,71 @@ Nothing about a module's network presence is hardcoded outside its manifest:
   looks for the `gimbal-controller` module (falling back to any module
   exposing the legacy port 5001) and uses its first TCP socket. Follow those
   naming conventions and new modules light up the UI automatically.
+
+---
+
+## Dashboard UI components (`ui`)
+
+The MAIN tab of the dashboard is a **modular workspace**: a left sidebar, a
+right sidebar, and a tabbed centre workspace. Modules advertise the panels
+they offer in an optional top-level `ui` array; the user places components
+from the palette (＋ COMPONENTS button), drags them between regions, and the
+layout persists in the browser per backend host. Components with
+`"default": true` are placed automatically when the module is installed.
+
+Every component's traffic goes through the backend proxy —
+`/proxy/<module>/<socket>/<path>` — so `socket` in a `ui` config is always a
+**socket name from the module's own `sockets` list** (tcp), never a port.
+
+### Common fields
+
+| Field    | Type    | Required | Description |
+| -------- | ------- | -------- | ----------- |
+| `id`     | string  | yes      | Component id, `^[a-z0-9][a-z0-9_-]*$`, unique within the module. |
+| `type`   | string  | yes      | Widget type (below). |
+| `title`  | string  | no       | Panel header text. |
+| `region` | string  | no       | `"sidebar"` (default) or `"center"` — where `default` placement puts it. |
+| `default`| boolean | no       | Auto-place on install (default `false`); otherwise palette-only. |
+
+### Widget types
+
+| Type       | Region  | Config (in addition to `socket`) |
+| ---------- | ------- | -------------------------------- |
+| `mjpeg`    | center  | `path` — MJPEG stream path, e.g. `"/stream"`. Renders with offline/retry handling. |
+| `form`     | sidebar | `get`, `put`, `submit_label?`, `fields[]`. GET populates, PUT applies. Field: `{key, label?, kind: number\|slider\|toggle\|text\|select, min?, max?, step?, get?, put?, options?}` — per-field `get`/`put` overrides let one form span several endpoints. |
+| `telemetry`| sidebar | `get`, `interval?` (ms), `rows[]` — polled readout. Row: `{label, path, fmt?}`; `path` is a dot-path into the JSON (`buffer.bytes`). |
+| `joystick` | sidebar | `put`, `telemetry_get?`, `paths?: {x, y}`, `fields?: {x, y, frame}` — two-axis RC pad seeded from a telemetry poll. |
+| `table`    | sidebar | `get`, `interval?`, `columns[]` (`{label, path, fmt?}`), `row_action?: {label, method, path, key}`, `stop_action?: {label, method, path}` — polled table with a per-row action button (e.g. ADS-B track/stop). |
+| `map`      | center  | `track?: {socket, get, interval?, lat, lon, heading?, gimbal?, frame?}`, `adsb?: {socket, get, interval?, lat, lon, label?, key?}` — Leaflet map with optional device/track markers. Without bindings it's a plain map. |
+
+`fmt` is one of the dashboard's named formatters: `int`, `f1`, `f2`, `f6`
+(decimal places), `m_km` (metres → m/km).
+
+### Example (evk-datalogger)
+
+```json
+"ui": [
+  { "id": "live", "type": "mjpeg", "title": "EVK4 LIVE", "region": "center",
+    "default": true, "socket": "mjpeg", "path": "/stream" },
+  { "id": "stream-settings", "type": "form", "title": "EVK4 STREAM",
+    "region": "sidebar", "default": true, "socket": "mjpeg",
+    "get": "/api/settings", "put": "/api/settings",
+    "fields": [
+      {"key": "quality", "kind": "slider", "min": 1, "max": 100},
+      {"key": "out_width", "kind": "number", "min": 1},
+      {"key": "out_height", "kind": "number", "min": 1},
+      {"key": "streaming", "kind": "toggle",
+       "get": "/api/streaming", "put": "/api/streaming"}
+    ] },
+  { "id": "biases", "type": "form", "title": "EVK4 BIASES",
+    "region": "sidebar", "default": true, "socket": "http_api",
+    "get": "/api/biases", "put": "/api/biases",
+    "fields": [
+      {"key": "diff_on", "kind": "number", "min": 0, "max": 255},
+      {"key": "diff_off", "kind": "number", "min": 0, "max": 255}
+    ] }
+]
+```
 
 ---
 

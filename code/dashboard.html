@@ -68,13 +68,77 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .workspace.active{display:grid}
 
 /* ════════════════════════════════════════
-   TAB 1 — MAIN
-   [cam-ctrl 200px | streams 1fr | map 280px | nav 175px]
+   TAB 1 — MAIN (modular component workspace)
+   [left sidebar | center workspace | right sidebar]
+   Components are advertised by installed modules
+   (eventide-module.json "ui") and placed from the palette.
 ════════════════════════════════════════ */
-#ws-main{grid-template-columns:1fr 2fr 2fr 1fr}
+#ws-main{grid-template-columns:290px 1fr 290px;position:relative}
 
-/* Camera controls column */
-.cam-controls{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+/* Component regions */
+.ui-region{background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+.ui-left{border-right:1px solid var(--border)}
+.ui-right{border-left:1px solid var(--border)}
+.ui-region-scroll{flex:1;overflow-y:auto;min-height:0}
+.ui-region-scroll::-webkit-scrollbar{width:3px}
+.ui-region-scroll::-webkit-scrollbar-thumb{background:var(--border2)}
+.ui-region-empty{padding:16px 12px;text-align:center;color:var(--text-dim);font-size:9px;line-height:1.7}
+
+/* Sidebar component widgets */
+.ui-widget{border-bottom:1px solid var(--border);padding:10px 12px}
+.ui-widget-head{display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:grab;user-select:none}
+.ui-widget-head:active{cursor:grabbing}
+.ui-widget.dragging{opacity:.4}
+.ui-widget-title{font-family:var(--display);font-size:8px;letter-spacing:.15em;color:var(--text-mid);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ui-widget-mod{font-size:6px;letter-spacing:.1em;color:var(--text-dim);border:1px solid var(--border);padding:1px 4px;border-radius:2px;flex-shrink:0}
+.ui-widget-remove{background:none;border:1px solid var(--border2);color:var(--text-dim);width:16px;height:16px;font-size:9px;line-height:1;cursor:pointer;border-radius:2px;flex-shrink:0;transition:all .15s}
+.ui-widget-remove:hover{border-color:var(--warn);color:var(--warn)}
+.ui-widget.drop-above{box-shadow:inset 0 2px 0 var(--accent)}
+.ui-region-scroll.drop-into{box-shadow:inset 0 0 0 2px var(--accent-dim)}
+
+/* Center workspace */
+.ui-center{display:flex;flex-direction:column;overflow:hidden;background:#020810;min-width:0}
+.ui-center-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.ui-center-tab{display:flex;align-items:center;gap:7px;padding:8px 14px;font-family:var(--display);font-size:7px;letter-spacing:.12em;color:var(--text-dim);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;transition:all .2s;position:relative;top:1px}
+.ui-center-tab:hover{color:var(--text-mid)}
+.ui-center-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.ui-center-tab .ui-widget-remove{position:relative;top:0}
+.ui-center-spacer{flex:1}
+.ui-center-panels{flex:1;position:relative;overflow:hidden;min-height:0}
+.ui-center-panel{position:absolute;inset:0;display:none;flex-direction:column;overflow:hidden}
+.ui-center-panel.active{display:flex}
+.ui-center-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-dim);font-size:10px;line-height:1.8;text-align:center}
+.ui-center-empty .icon{font-size:26px;opacity:.5}
+
+/* Palette */
+.ui-palette-btn{display:flex;align-items:center;gap:6px;padding:0 14px;background:none;border:none;border-left:1px solid var(--border);color:var(--text-dim);font-family:var(--display);font-size:7px;letter-spacing:.15em;cursor:pointer;transition:all .2s}
+.ui-palette-btn:hover,.ui-palette-btn.open{color:var(--accent)}
+.ui-palette{position:absolute;top:0;right:0;bottom:0;width:290px;background:var(--surface);border-left:1px solid var(--border);z-index:60;display:none;flex-direction:column;box-shadow:-10px 0 30px rgba(0,0,0,.55)}
+.ui-palette.open{display:flex}
+.ui-palette-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);font-family:var(--display);font-size:8px;letter-spacing:.2em;color:var(--text-dim);flex-shrink:0}
+.ui-palette-list{flex:1;overflow-y:auto;padding:8px 10px;min-height:0}
+.ui-palette-mod{font-family:var(--display);font-size:7px;letter-spacing:.15em;color:var(--text-dim);margin:10px 2px 5px}
+.ui-palette-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:var(--r);margin-bottom:5px;background:var(--surface2)}
+.ui-palette-item-info{flex:1;min-width:0}
+.ui-palette-item-title{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ui-palette-item-type{font-size:7px;color:var(--text-dim);letter-spacing:.1em;margin-top:1px}
+.ui-palette-add{background:none;border:1px solid var(--border2);color:var(--text-dim);padding:2px 8px;font-family:var(--mono);font-size:8px;cursor:pointer;border-radius:var(--r);transition:all .15s;flex-shrink:0}
+.ui-palette-add:hover{border-color:var(--accent);color:var(--accent)}
+.ui-palette-add.placed{border-color:var(--green);color:var(--green)}
+
+/* Widget internals */
+.ui-form-err{font-size:8px;color:var(--warn);margin-top:5px;display:none}
+.ui-status-line{font-size:8px;color:var(--text-dim);letter-spacing:.06em;margin-top:6px;line-height:1.6}
+.ui-mjpeg{position:relative;flex:1;overflow:hidden;background:#020810;min-height:0}
+.ui-mjpeg img{width:100%;height:100%;object-fit:contain}
+.ui-mjpeg-label{position:absolute;top:8px;left:10px;font-family:var(--display);font-size:8px;letter-spacing:.2em;color:var(--text-dim);z-index:2;text-shadow:0 1px 3px #000}
+.ui-mjpeg-dot{position:absolute;top:10px;right:10px;width:6px;height:6px;border-radius:50%;background:var(--text-dim);z-index:2;transition:all .3s}
+.ui-mjpeg-dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}
+.ui-map{flex:1;min-height:0;position:relative}
+.ui-map .map-host{position:absolute;inset:0}
+
+/* Keep the camera controls column class for the (deleted) legacy layout; the
+   classes below are shared with the playback/modules tabs. */
 .sidebar-header{padding:10px 12px 8px;border-bottom:1px solid var(--border);font-family:var(--display);font-size:8px;letter-spacing:.2em;color:var(--text-dim);flex-shrink:0}
 .sidebar-scroll{flex:1;overflow-y:auto;min-height:0}
 .sidebar-scroll::-webkit-scrollbar{width:3px}
@@ -356,9 +420,6 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
              oninput="onBackendIpChange(this.value)"
              onchange="onBackendIpChange(this.value)">
     </div>
-    <div class="status-pill"><div class="dot on" id="hdr-dot-evk"></div>EVK</div>
-    <div class="status-pill"><div class="dot" id="hdr-dot-picam"></div>PICAM</div>
-    <div class="status-pill"><div class="dot" id="hdr-dot-ircam"></div>IRCAM</div>
     <div class="status-pill"><div class="dot" id="hdr-dot-super"></div>SUPERVISOR</div>
     <div class="hdr-time" id="hdr-clock">--:--:--</div>
   </div>
@@ -372,276 +433,37 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 </div>
 
 <!-- ═════════════════════════════════════════════════════════
-     TAB 1 — MAIN  [cam-ctrl | streams | map | nav]
+     TAB 1 — MAIN (modular component workspace)
+     Left/right sidebars + tabbed centre workspace. Components are
+     advertised by installed modules (eventide-module.json "ui"),
+     placed from the palette, and persisted in localStorage.
 ════════════════════════════════════════════════════════════ -->
 <div class="workspace active" id="ws-main">
 
-  <!-- Column 1: camera stream controls -->
-  <div class="cam-controls">
-    <div class="sidebar-header">STREAM CONTROLS</div>
-    <div class="sidebar-scroll">
-
-      <div class="cam-block">
-        <div class="cam-title-row">
-          <div class="cam-name">EVK4</div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="tog-evk" checked onchange="toggleStream('evk',this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <div class="form-row"><div class="form-col">
-          <label class="form-label">Quality — <span id="evk-q-val">80</span></label>
-          <input class="form-input" type="range" id="evk-quality" min="1" max="100" value="80"
-                 oninput="document.getElementById('evk-q-val').textContent=this.value">
-        </div></div>
-        <div class="form-row">
-          <div class="form-col"><label class="form-label">W</label><input class="form-input" type="number" id="evk-width" value="1280" min="1"></div>
-          <div class="form-col"><label class="form-label">H</label><input class="form-input" type="number" id="evk-height" value="720" min="1"></div>
-        </div>
-        <button class="apply-btn" onclick="applyStream('evk')">↺ APPLY</button>
-      </div>
-
-      <div class="cam-block">
-        <div class="cam-title-row">
-          <div class="cam-name picam">PICAM</div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="tog-picam" checked onchange="toggleStream('picam',this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <div class="form-row"><div class="form-col">
-          <label class="form-label">Quality — <span id="picam-q-val">80</span></label>
-          <input class="form-input" type="range" id="picam-quality" min="1" max="100" value="80"
-                 oninput="document.getElementById('picam-q-val').textContent=this.value">
-        </div></div>
-        <div class="form-row">
-          <div class="form-col"><label class="form-label">W</label><input class="form-input" type="number" id="picam-width" value="1280" min="1"></div>
-          <div class="form-col"><label class="form-label">H</label><input class="form-input" type="number" id="picam-height" value="720" min="1"></div>
-        </div>
-        <button class="apply-btn green" onclick="applyStream('picam')">↺ APPLY</button>
-      </div>
-
-      <div class="cam-block">
-        <div class="cam-title-row">
-          <div class="cam-name ircam">IRCAM</div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="tog-ircam" checked onchange="toggleStream('ircam',this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <div class="form-row"><div class="form-col">
-          <label class="form-label">Quality — <span id="ircam-q-val">80</span></label>
-          <input class="form-input" type="range" id="ircam-quality" min="1" max="100" value="80"
-                 oninput="document.getElementById('ircam-q-val').textContent=this.value">
-        </div></div>
-        <div class="form-row">
-          <div class="form-col"><label class="form-label">W</label><input class="form-input" type="number" id="ircam-width" value="1280" min="1"></div>
-          <div class="form-col"><label class="form-label">H</label><input class="form-input" type="number" id="ircam-height" value="720" min="1"></div>
-        </div>
-        <button class="apply-btn amber" onclick="applyStream('ircam')">↺ APPLY</button>
-      </div>
-
-    </div>
+  <!-- Left sidebar -->
+  <div class="ui-region ui-left">
+    <div class="sidebar-header">COMPONENTS</div>
+    <div class="ui-region-scroll" id="ui-left-scroll"></div>
   </div>
 
-  <!-- Column 2: 3 stacked live streams -->
-  <div class="stream-main">
-    <div class="stream-cell on" id="cell-evk">
-      <img id="img-evk" src="about:blank" alt="EVK4">
-      <div class="stream-label">EVK4</div>
-      <div class="stream-status-dot"></div>
-      <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
-    </div>
-    <div class="stream-cell on" id="cell-picam">
-      <img id="img-picam" src="about:blank" alt="PICAM">
-      <div class="stream-label" style="color:var(--green)">PICAM</div>
-      <div class="stream-status-dot"></div>
-      <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
-    </div>
-    <div class="stream-cell on" id="cell-ircam">
-      <img id="img-ircam" src="about:blank" alt="IRCAM">
-      <div class="stream-label" style="color:var(--amber)">IRCAM</div>
-      <div class="stream-status-dot"></div>
-      <div class="stream-offline"><div class="icon">⬡</div><div>STREAM OFFLINE</div></div>
-    </div>
+  <!-- Centre workspace (tabbed) -->
+  <div class="ui-center">
+    <div class="ui-center-tabs" id="ui-center-tabs"></div>
+    <div class="ui-center-panels" id="ui-center-panels"></div>
   </div>
 
-  <!-- Column 3: OpenStreetMap -->
-  <div class="map-panel">
-    <div id="map"></div>
-    <div class="map-crosshair"></div>
+  <!-- Right sidebar -->
+  <div class="ui-region ui-right">
+    <div class="sidebar-header">COMPONENTS</div>
+    <div class="ui-region-scroll" id="ui-right-scroll"></div>
   </div>
 
-  <!-- Column 4: Gimbal control + telemetry -->
-  <div class="nav-panel">
-    <div class="sidebar-header">GIMBAL CONTROL</div>
-    <div class="sidebar-scroll">
-
-      <!-- Connection status -->
-      <div class="position-section" style="padding:8px 12px">
-        <div style="display:flex;align-items:center;gap:7px">
-          <div class="dot" id="gimbal-conn-dot"></div>
-          <span style="font-size:8px;letter-spacing:.1em;color:var(--text-dim)" id="gimbal-conn-label">Connecting…</span>
-          <span style="margin-left:auto;font-size:7px;letter-spacing:.12em;padding:1px 6px;border-radius:10px;border:1px solid var(--border2);color:var(--text-dim)" id="gimbal-mode-badge">—</span>
-        </div>
-      </div>
-
-      <!-- Gimbal control nested tabs -->
-      <div class="gimbal-tab-bar">
-        <button class="gimbal-tab active" id="gimbal-tab-target" onclick="switchGimbalTab('target')">TARGET</button>
-        <button class="gimbal-tab" id="gimbal-tab-rc" onclick="switchGimbalTab('rc')">RC</button>
-        <button class="gimbal-tab" id="gimbal-tab-adsb" onclick="switchGimbalTab('adsb')">ADS-B</button>
-      </div>
-
-      <!-- Targeting mode panel -->
-      <div class="gimbal-panel active" id="gimbal-panel-target">
-        <div class="position-section">
-          <div class="section-title">TARGET POSITION</div>
-          <div class="form-col" style="margin-bottom:6px">
-            <label class="form-label">Latitude</label>
-            <input class="form-input" type="number" id="gimbal-lat" step="0.000001" placeholder="-33.765350">
-          </div>
-          <div class="form-col" style="margin-bottom:6px">
-            <label class="form-label">Longitude</label>
-            <input class="form-input" type="number" id="gimbal-lon" step="0.000001" placeholder="150.740870">
-          </div>
-          <div class="form-col" style="margin-bottom:8px">
-            <label class="form-label">Altitude (m)</label>
-            <input class="form-input" type="number" id="gimbal-alt" step="0.1" placeholder="50.0">
-            <div class="nudge-row">
-              <button class="nudge-btn" onclick="usePlatformAlt()">⤓ PLATFORM ALT</button>
-            </div>
-          </div>
-          <button class="apply-btn" id="gimbal-submit-btn" onclick="submitGimbalTarget()">⊕ POINT GIMBAL</button>
-        </div>
-        <div class="position-section">
-          <div class="section-title">ACTIVE TARGET</div>
-          <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-tgt-lat">—</span></div>
-          <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-tgt-lon">—</span></div>
-          <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-tgt-alt">—</span></div>
-        </div>
-      </div>
-
-      <!-- RC control panel -->
-      <div class="gimbal-panel" id="gimbal-panel-rc">
-        <div class="position-section">
-          <div class="section-title">RC CONTROL</div>
-          <div class="form-row" style="margin-bottom:2px">
-            <div class="form-col">
-              <label class="form-label">Pan (°)</label>
-              <input class="form-input" type="number" id="rc-pan" step="0.1" min="-180" max="180" placeholder="0.0" onchange="clampRcInputs()">
-            </div>
-            <div class="form-col">
-              <label class="form-label">Tilt (°)</label>
-              <input class="form-input" type="number" id="rc-tilt" step="0.1" min="-90" max="90" placeholder="0.0" onchange="clampRcInputs()">
-            </div>
-          </div>
-          <div class="rc-joystick-wrap">
-            <div class="rc-joystick-grid">
-              <button class="rc-arrow up"    title="Tilt +5°" onclick="nudgeRcDelta(0, +5)">▲</button>
-              <button class="rc-arrow down"  title="Tilt −5°" onclick="nudgeRcDelta(0, -5)">▼</button>
-              <button class="rc-arrow left"  title="Pan −5°"  onclick="nudgeRcDelta(-5, 0)">◀</button>
-              <button class="rc-arrow right" title="Pan +5°"  onclick="nudgeRcDelta(+5, 0)">▶</button>
-              <div class="rc-joystick" id="rc-joystick">
-                <div class="rc-joystick-knob" id="rc-joystick-knob"></div>
-              </div>
-            </div>
-            <div class="rc-joystick-hint">↔ PAN · ↕ TILT · 1–15° PER TICK · ARROWS ±5°</div>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div>
-              <div style="font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px">Frame</div>
-              <div style="display:flex;align-items:center;gap:7px">
-                <span style="font-size:8px;color:var(--text-dim)" id="rc-frame-label">EARTH</span>
-                <label class="toggle-switch amber-toggle">
-                  <input type="checkbox" id="rc-frame-toggle" onchange="onFrameToggleChange(this.checked)">
-                  <div class="toggle-track"></div>
-                </label>
-                <span style="font-size:8px;color:var(--text-dim)">VEHICLE</span>
-              </div>
-            </div>
-            <div>
-              <div style="font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px;text-align:right">Axis lock</div>
-              <div style="display:flex;align-items:center;gap:7px">
-                <span style="font-size:8px;color:var(--text-dim)" id="rc-lock-label">OFF</span>
-                <label class="toggle-switch amber-toggle">
-                  <input type="checkbox" id="rc-lock-toggle" onchange="onLockToggleChange(this.checked)">
-                  <div class="toggle-track"></div>
-                </label>
-                <span style="font-size:8px;color:var(--text-dim)">ON</span>
-              </div>
-            </div>
-          </div>
-          <button class="apply-btn amber" id="rc-submit-btn" onclick="submitRcControl()">⊕ SEND RC</button>
-        </div>
-      </div>
-
-      <!-- ADS-B tracking panel -->
-      <div class="gimbal-panel" id="gimbal-panel-adsb">
-        <div class="position-section">
-          <div class="section-title">ADS-B TARGETS</div>
-          <div id="adsb-table-wrap">
-            <div class="empty" style="padding:8px 0">Waiting for data…</div>
-          </div>
-          <button class="apply-btn" id="adsb-stop-btn" onclick="stopAdsbTracking()" style="margin-top:8px;display:none">■ STOP ADS-B TRACK</button>
-        </div>
-        <div class="position-section">
-          <div class="section-title">ADS-B SETTINGS</div>
-          <div class="form-col" style="margin-bottom:6px">
-            <label class="form-label">Lead time (s)</label>
-            <input class="form-input" type="number" id="adsb-lead-time" step="0.1" min="0" max="20" value="1.0">
-            <div class="nudge-row">
-              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-lead-time', -0.5, 0, 20)">−0.5</button>
-              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-lead-time', +0.5, 0, 20)">+0.5</button>
-            </div>
-          </div>
-          <div class="form-col" style="margin-bottom:8px">
-            <label class="form-label">Alt offset (m)</label>
-            <input class="form-input" type="number" id="adsb-alt-offset" step="1" value="0">
-            <div class="nudge-row">
-              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-alt-offset', -10)">−10</button>
-              <button class="nudge-btn" onclick="nudgeAdsbSetting('adsb-alt-offset', +10)">+10</button>
-            </div>
-          </div>
-          <button class="apply-btn" onclick="applyAdsbSettings()">↺ APPLY</button>
-        </div>
-      </div>
-
-      <!-- Platform telemetry — always visible below tabs -->
-      <div class="position-section">
-        <div class="section-title">PLATFORM</div>
-        <div class="telem-row"><span class="telem-key">LAT</span><span class="telem-val" id="tl-lat">—</span></div>
-        <div class="telem-row"><span class="telem-key">LON</span><span class="telem-val" id="tl-lon">—</span></div>
-        <div class="telem-row"><span class="telem-key">ALT</span><span class="telem-val" id="tl-alt">—</span></div>
-        <div class="telem-row"><span class="telem-key">HDG</span><span class="telem-val" id="tl-hdg">—</span></div>
-        <div class="telem-row">
-          <span class="telem-key">GPS</span>
-          <span class="telem-val" id="tl-live">—</span>
-        </div>
-        <div class="telem-row"><span class="telem-key">PI TEMP</span><span class="telem-val" id="tl-pi-temp">—</span></div>
-        <div class="telem-row"><span class="telem-key">PI THROTTLE</span><span class="telem-val" id="tl-pi-throttle">—</span></div>
-        <div class="telem-row"><span class="telem-key">CUBE TEMP</span><span class="telem-val" id="tl-cube-temp">—</span></div>
-      </div>
-      <!-- Gimbal output -->
-      <div class="position-section">
-        <div class="section-title">GIMBAL OUTPUT</div>
-        <div class="telem-row"><span class="telem-key">PAN OUT</span><span class="telem-val" id="tl-pan-out">—</span></div>
-        <div class="telem-row"><span class="telem-key">TILT OUT</span><span class="telem-val" id="tl-tilt-out">—</span></div>
-        <div class="telem-row"><span class="telem-key">FRAME FLAG</span><span class="telem-val" id="tl-frame-flag">—</span></div>
-        <div class="telem-row"><span class="telem-key">MODE</span><span class="telem-val" id="tl-mode">—</span></div>
-      </div>
-
-      <!-- Measured gimbal attitude -->
-      <div class="position-section">
-        <div class="section-title">GIMBAL MEASURED</div>
-        <div class="telem-row"><span class="telem-key">ROLL</span><span class="telem-val" id="tl-roll">—</span></div>
-        <div class="telem-row"><span class="telem-key">PITCH</span><span class="telem-val" id="tl-pitch-meas">—</span></div>
-        <div class="telem-row"><span class="telem-key">YAW</span><span class="telem-val" id="tl-yaw-meas">—</span></div>
-      </div>
-
-      <div style="font-size:7px;color:var(--text-dim);letter-spacing:.08em;margin:6px 12px" id="tl-timestamp">LAST UPDATE: —</div>
-
+  <!-- Component palette (slide-over) -->
+  <div class="ui-palette" id="ui-palette">
+    <div class="ui-palette-head">COMPONENT PALETTE
+      <button class="ui-widget-remove" onclick="togglePalette()">×</button>
     </div>
+    <div class="ui-palette-list" id="ui-palette-list"></div>
   </div>
 
 </div><!-- /ws-main -->
@@ -815,13 +637,12 @@ function supervisorUrl()    { return getBase() + '/supervisor/'; }
 function playbackUrl(path)  { return getBase() + '/playback' + (path || '/'); }
 function apiUrl(path)       { return getBase() + '/api' + path; }
 
-// ── Module socket resolution ──────────────────────────────────────────────
-// Module HTTP services (MJPEG streams, per-camera settings, the gimbal API)
-// are reached through the backend's generic proxy:
+// ── Module info & proxy URLs ────────────────────────────────────────────────
+// Module HTTP services (MJPEG streams, settings APIs, the gimbal API) are
+// reached through the backend's generic proxy:
 //   /proxy/<module>/<socket>/<upstream path>  →  127.0.0.1:<allocated port>
-// There are no per-module nginx locations — the cam → (module, socket)
-// mapping comes from /api/modules: the module whose recordings_subdir (or
-// name) matches the cam key, preferring a tcp socket named 'mjpeg'.
+// UI components reference their module + socket by name (from the manifest's
+// "ui" section); the proxy resolves the allocated port from the registry.
 let _modInfo = null;   // last /api/modules snapshot
 
 async function refreshModuleInfo() {
@@ -832,37 +653,769 @@ async function refreshModuleInfo() {
   return _modInfo;
 }
 
-function _findCamSocket(cam) {
-  const mods = _modInfo?.modules || [];
-  const m = mods.find(m => m.recordings_subdir === cam || m.name === cam)
-         || mods.find(m => (m.name || '').startsWith(cam));
-  if (!m) return null;
-  const tcp  = (m.sockets || []).filter(s => s.type === 'tcp' && s.port);
-  const sock = tcp.find(s => s.name === 'mjpeg') || tcp[0];
-  return sock ? { module: m.name, socket: sock.name } : null;
+function proxyUrl(mod, sock, path) {
+  return `${getBase()}/proxy/${mod}/${sock}${path}`;
 }
 
-function streamUrl(cam) {
-  const hit = _findCamSocket(cam);
-  return hit ? `${getBase()}/proxy/${hit.module}/${hit.socket}/stream` : '';
+// ═══════════════════════════════════════════════════════════
+//  MODULAR COMPONENT WORKSPACE (MAIN tab)
+//  Installed modules advertise UI components in their manifests
+//  ("ui" array → /api/modules). The user places components into
+//  the left/right sidebars or the tabbed centre workspace from
+//  the palette; the layout persists per backend host.
+// ═══════════════════════════════════════════════════════════
+let uiLayout       = [];    // [{m, id, r:'left'|'right'|'center', o}]
+let uiComponents   = [];    // available components from /api/modules
+let _lastUiSig     = '';    // change detector so polls don't re-render
+const uiLive       = new Map();  // "mod/id" → {destroy(), map?}
+
+const LAYOUT_KEY     = () => 'eventide-layout:'    + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
+const CENTER_TAB_KEY = () => 'eventide-center-tab:' + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
+const uiKey = e => `${e.m}/${e.id}`;
+
+function collectUiComponents() {
+  const out = [];
+  (_modInfo?.modules || []).forEach(m => {
+    (m.ui || []).forEach(c => { if (c && c.id && c.type) out.push({ mod: m.name, ...c }); });
+  });
+  return out;
 }
-function settingsUrl(cam) {
-  const hit = _findCamSocket(cam);
-  return hit ? `${getBase()}/proxy/${hit.module}/${hit.socket}/api/settings` : '';
+const findComponent = (m, id) => uiComponents.find(c => c.mod === m && c.id === id);
+
+function loadLayoutState() {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAYOUT_KEY()) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
 }
-function viewUrl(cam) {
-  const hit = _findCamSocket(cam);
-  return hit ? `${getBase()}/proxy/${hit.module}/${hit.socket}/api/streaming` : '';
+function saveLayoutState() { localStorage.setItem(LAYOUT_KEY(), JSON.stringify(uiLayout)); }
+
+// Reconcile installed components with the saved layout: drop entries whose
+// module/component vanished, auto-place new "default" components, re-render
+// only when something actually changed.
+function reconcileLayout() {
+  uiComponents = collectUiComponents();
+  const next = loadLayoutState().filter(e =>
+    e && uiComponents.some(c => c.mod === e.m && c.id === e.id));
+  uiComponents.forEach(c => {
+    if (c.default && !next.some(e => e.m === c.mod && e.id === c.id)) {
+      const region = c.region === 'center' ? 'center' : 'left';
+      const maxO = next.reduce((mx, e) => (e.r === region ? Math.max(mx, e.o) : mx), -1);
+      next.push({ m: c.mod, id: c.id, r: region, o: maxO + 1 });
+    }
+  });
+  const sig = JSON.stringify(uiComponents) + JSON.stringify(next);
+  if (sig === _lastUiSig) return;
+  _lastUiSig = sig;
+  uiLayout = next;
+  saveLayoutState();
+  renderWorkspace();
 }
-function gimbalUrl(path) {
-  // Convention: the gimbal module is named 'gimbal-controller'; fall back to
-  // any module still exposing the legacy port 5001.  If none is installed,
-  // point at the conventional name anyway — the proxy's 404 says what's missing.
-  const mods = _modInfo?.modules || [];
-  const m = mods.find(m => m.name === 'gimbal-controller')
-         || mods.find(m => (m.sockets || []).some(s => s.type === 'tcp' && s.port === 5001));
-  const sock = m && (m.sockets || []).find(s => s.type === 'tcp' && s.port);
-  return `${getBase()}/proxy/${m ? m.name : 'gimbal-controller'}/${sock ? sock.name : 'api'}${path}`;
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+
+function renderWorkspace() {
+  uiLive.forEach(w => { try { w.destroy && w.destroy(); } catch {} });
+  uiLive.clear();
+  ['left', 'right'].forEach(region => {
+    const scroll = document.getElementById(`ui-${region}-scroll`);
+    if (!scroll) return;
+    scroll.innerHTML = '';
+    const entries = uiLayout.filter(e => e.r === region).sort((a, b) => a.o - b.o);
+    if (!entries.length) {
+      scroll.innerHTML = '<div class="ui-region-empty">No components placed.<br>Open ＋ COMPONENTS to add some.</div>';
+      return;
+    }
+    entries.forEach(e => scroll.appendChild(buildSidebarWidget(e)));
+  });
+  renderCenterWorkspace();
+}
+
+function buildSidebarWidget(entry) {
+  const comp = findComponent(entry.m, entry.id);
+  const el = document.createElement('div');
+  el.className = 'ui-widget';
+  el.dataset.m = entry.m; el.dataset.id = entry.id;
+  el.innerHTML = `
+    <div class="ui-widget-head" draggable="true" title="Drag to move">
+      <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
+      <span class="ui-widget-mod">${escHtml(entry.m)}</span>
+      <button class="ui-widget-remove" title="Remove">×</button>
+    </div>
+    <div class="ui-widget-body"></div>`;
+  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
+  const head = el.querySelector('.ui-widget-head');
+  head.addEventListener('dragstart', ev => {
+    ev.dataTransfer.setData('text/plain', uiKey(entry));
+    ev.dataTransfer.effectAllowed = 'move';
+    el.classList.add('dragging');
+  });
+  head.addEventListener('dragend', () => el.classList.remove('dragging'));
+  el.addEventListener('dragover', ev => { ev.preventDefault(); el.classList.add('drop-above'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-above'));
+  el.addEventListener('drop', ev => {
+    ev.preventDefault(); el.classList.remove('drop-above');
+    const [m, id] = (ev.dataTransfer.getData('text/plain') || '').split('/');
+    if (m && id && !(m === entry.m && id === entry.id)) moveWidget(m, id, entry.r, entry);
+  });
+  if (comp) {
+    const instance = mountWidget(comp, el.querySelector('.ui-widget-body'));
+    if (instance) uiLive.set(uiKey(entry), instance);
+  } else {
+    el.querySelector('.ui-widget-body').innerHTML = '<div class="empty">Unknown component.</div>';
+  }
+  return el;
+}
+
+// Sidebar drop zones (drop at end of a region)
+function initRegionDropZones() {
+  ['left', 'right'].forEach(region => {
+    const scroll = document.getElementById(`ui-${region}-scroll`);
+    if (!scroll) return;
+    scroll.addEventListener('dragover', ev => {
+      if (ev.target === scroll) { ev.preventDefault(); scroll.classList.add('drop-into'); }
+    });
+    scroll.addEventListener('dragleave', () => scroll.classList.remove('drop-into'));
+    scroll.addEventListener('drop', ev => {
+      if (ev.target !== scroll) return;
+      ev.preventDefault(); scroll.classList.remove('drop-into');
+      const [m, id] = (ev.dataTransfer.getData('text/plain') || '').split('/');
+      if (m && id) moveWidget(m, id, region, null);
+    });
+  });
+}
+
+function renderCenterWorkspace() {
+  const tabsEl   = document.getElementById('ui-center-tabs');
+  const panelsEl = document.getElementById('ui-center-panels');
+  if (!tabsEl || !panelsEl) return;
+  tabsEl.innerHTML = ''; panelsEl.innerHTML = '';
+  const entries = uiLayout.filter(e => e.r === 'center').sort((a, b) => a.o - b.o);
+
+  entries.forEach(e => {
+    const comp = findComponent(e.m, e.id);
+    const key  = uiKey(e);
+    tabsEl.insertAdjacentHTML('beforeend',
+      `<button class="ui-center-tab" data-tab="${key}">${escHtml(comp?.title || e.id)}<span class="ui-widget-remove" data-close="${key}" title="Remove">×</span></button>`);
+    const panel = document.createElement('div');
+    panel.className = 'ui-center-panel';
+    panel.dataset.panel = key;
+    panelsEl.appendChild(panel);
+    if (comp) {
+      const instance = mountWidget(comp, panel);
+      if (instance) uiLive.set(key, instance);
+    }
+  });
+  tabsEl.insertAdjacentHTML('beforeend',
+    `<div class="ui-center-spacer"></div>
+     <button class="ui-palette-btn" id="ui-palette-btn" onclick="togglePalette()">＋ COMPONENTS</button>`);
+  tabsEl.querySelectorAll('.ui-center-tab').forEach(t =>
+    t.addEventListener('click', ev => {
+      if (ev.target.dataset.close) return;
+      switchCenterTab(t.dataset.tab);
+    }));
+  tabsEl.querySelectorAll('[data-close]').forEach(x =>
+    x.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const [m, id] = x.dataset.close.split('/');
+      removeWidget(m, id);
+    }));
+
+  if (!entries.length) {
+    panelsEl.innerHTML = `<div class="ui-center-empty"><div class="icon">◉</div>
+      <div>WORKSPACE EMPTY<br><span style="font-size:8px">Open ＋ COMPONENTS to place module components.</span></div></div>`;
+    return;
+  }
+  const saved = localStorage.getItem(CENTER_TAB_KEY());
+  const active = entries.find(e => uiKey(e) === saved) || entries[0];
+  switchCenterTab(uiKey(active));
+}
+
+function switchCenterTab(key) {
+  localStorage.setItem(CENTER_TAB_KEY(), key);
+  document.querySelectorAll('.ui-center-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === key));
+  document.querySelectorAll('.ui-center-panel').forEach(p =>
+    p.classList.toggle('active', p.dataset.panel === key));
+  // Leaflet maps need a nudge when their panel becomes visible.
+  const w = uiLive.get(key);
+  if (w && w.map) setTimeout(() => w.map.invalidateSize(), 50);
+}
+
+// ── Layout mutations ────────────────────────────────────────────────────────
+
+function removeWidget(m, id) {
+  uiLayout = uiLayout.filter(e => !(e.m === m && e.id === id));
+  _lastUiSig = '';   // force re-render on next reconcile
+  saveLayoutState();
+  renderWorkspace();
+}
+
+function addComponent(m, id) {
+  const comp = findComponent(m, id);
+  if (!comp || uiLayout.some(e => e.m === m && e.id === id)) return;
+  const region = comp.region === 'center' ? 'center' : 'left';
+  const maxO = uiLayout.reduce((mx, e) => (e.r === region ? Math.max(mx, e.o) : mx), -1);
+  uiLayout.push({ m, id, r: region, o: maxO + 1 });
+  saveLayoutState();
+  renderWorkspace();
+}
+
+function moveWidget(m, id, toRegion, beforeEntry) {
+  const e = uiLayout.find(x => x.m === m && x.id === id);
+  if (!e) return;
+  uiLayout = uiLayout.filter(x => x !== e);
+  e.r = toRegion;
+  const siblings = uiLayout.filter(x => x.r === toRegion).sort((a, b) => a.o - b.o);
+  let idx = beforeEntry ? siblings.findIndex(x => x.m === beforeEntry.m && x.id === beforeEntry.id) : -1;
+  if (idx < 0) idx = siblings.length;
+  siblings.splice(idx, 0, e);
+  siblings.forEach((x, i) => { x.o = i; });
+  saveLayoutState();
+  renderWorkspace();
+}
+
+// ── Palette ─────────────────────────────────────────────────────────────────
+
+function togglePalette() {
+  const p = document.getElementById('ui-palette');
+  if (!p) return;
+  p.classList.toggle('open');
+  document.getElementById('ui-palette-btn')?.classList.toggle('open', p.classList.contains('open'));
+  if (p.classList.contains('open')) renderPalette();
+}
+
+function renderPalette() {
+  const list = document.getElementById('ui-palette-list');
+  if (!list) return;
+  if (!uiComponents.length) {
+    list.innerHTML = '<div class="empty">No components advertised.<br>Install a module that declares a "ui" section.</div>';
+    return;
+  }
+  const byMod = {};
+  uiComponents.forEach(c => { (byMod[c.mod] = byMod[c.mod] || []).push(c); });
+  list.innerHTML = Object.keys(byMod).sort().map(mod => `
+    <div class="ui-palette-mod">${escHtml(mod)}</div>
+    ${byMod[mod].map(c => {
+      const placed = uiLayout.some(e => e.m === c.mod && e.id === c.id);
+      return `<div class="ui-palette-item">
+        <div class="ui-palette-item-info">
+          <div class="ui-palette-item-title">${escHtml(c.title || c.id)}</div>
+          <div class="ui-palette-item-type">${escHtml(c.type)} · ${escHtml(c.region === 'center' ? 'center' : 'sidebar')}</div>
+        </div>
+        <button class="ui-palette-add ${placed ? 'placed' : ''}" data-mod="${escHtml(c.mod)}" data-id="${escHtml(c.id)}">${placed ? '✓' : '＋'}</button>
+      </div>`;
+    }).join('')}`).join('');
+  list.querySelectorAll('.ui-palette-add').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const { mod, id } = btn.dataset;
+      if (uiLayout.some(e => e.m === mod && e.id === id)) removeWidget(mod, id);
+      else addComponent(mod, id);
+      renderPalette();
+    }));
+}
+
+// ── Widget renderers ────────────────────────────────────────────────────────
+
+function dotPath(obj, path) {
+  return String(path).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+const UI_FMT = {
+  int:  v => (typeof v === 'number') ? String(Math.round(v)) : '—',
+  f1:   v => (typeof v === 'number') ? v.toFixed(1) : '—',
+  f2:   v => (typeof v === 'number') ? v.toFixed(2) : '—',
+  f6:   v => (typeof v === 'number') ? v.toFixed(6) : '—',
+  m_km: v => (typeof v === 'number') ? (v < 1000 ? Math.round(v) + 'm' : (v / 1000).toFixed(1) + 'km') : '—',
+};
+function fmtVal(v, fmt) {
+  if (v == null) return '—';
+  const f = fmt && UI_FMT[fmt];
+  return f ? f(v) : String(v);
+}
+
+function mountWidget(comp, bodyEl) {
+  const renderer = WIDGET_RENDERERS[comp.type];
+  if (!renderer) {
+    bodyEl.innerHTML = `<div class="empty">Unknown widget type: ${escHtml(comp.type)}</div>`;
+    return null;
+  }
+  try { return renderer(bodyEl, comp) || null; }
+  catch (e) {
+    bodyEl.innerHTML = `<div class="empty">Widget failed: ${escHtml(e.message)}</div>`;
+    return null;
+  }
+}
+
+const WIDGET_RENDERERS = {
+
+  // MJPEG live stream (centre workspace)
+  mjpeg(bodyEl, comp) {
+    bodyEl.classList.add('ui-mjpeg');
+    bodyEl.innerHTML = `
+      <img alt="${escHtml(comp.title || comp.id)}" style="display:none">
+      <div class="ui-mjpeg-label">${escHtml(comp.title || comp.id)}</div>
+      <div class="ui-mjpeg-dot"></div>
+      <div class="stream-offline" style="display:flex"><div class="icon">⬡</div><div>CONNECTING…</div></div>`;
+    const img     = bodyEl.querySelector('img');
+    const offline = bodyEl.querySelector('.stream-offline');
+    const dot     = bodyEl.querySelector('.ui-mjpeg-dot');
+    const url     = proxyUrl(comp.mod, comp.socket, comp.path || '/stream');
+    let retry = 500, timer = null, dead = false;
+    function connect() {
+      if (dead) return;
+      img.onerror = () => {
+        offline.style.display = 'flex';
+        offline.innerHTML = '<div class="icon">⬡</div><div>STREAM OFFLINE</div>';
+        img.style.display = 'none';
+        dot.classList.remove('on');
+        timer = setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 8000);
+      };
+      img.onload = () => {
+        retry = 500;
+        offline.style.display = 'none';
+        img.style.display = 'block';
+        dot.classList.add('on');
+      };
+      img.src = url;
+    }
+    connect();
+    return { destroy() { dead = true; clearTimeout(timer); img.onerror = null; img.src = 'about:blank'; } };
+  },
+
+  // Settings form (sidebar): GET populates, PUT applies. Fields may override
+  // the form-level get/put endpoint so one form can span several endpoints.
+  form(bodyEl, comp) {
+    const fields = comp.fields || [];
+    const getEps = [...new Set(fields.map(f => f.get || comp.get).filter(Boolean))];
+    const putEps = [...new Set(fields.map(f => f.put || comp.put).filter(Boolean))];
+
+    bodyEl.innerHTML = fields.map((f, i) => formFieldHtml(f, i)).join('')
+      + (putEps.length ? `<button class="apply-btn">${escHtml(comp.submit_label || '↺ APPLY')}</button>` : '')
+      + `<div class="ui-form-err"></div>`;
+    const inputs = fields.map((f, i) => bodyEl.querySelector(`[data-fi="${i}"]`));
+    fields.forEach((f, i) => {
+      if ((f.kind || 'number') === 'slider') {
+        const span = bodyEl.querySelector(`[data-fv="${i}"]`);
+        inputs[i].addEventListener('input', () => { span.textContent = inputs[i].value; });
+      }
+    });
+
+    async function populate() {
+      for (const ep of getEps) {
+        try {
+          const r = await fetch(proxyUrl(comp.mod, comp.socket, ep));
+          if (!r.ok) continue;
+          const data = await r.json();
+          fields.forEach((f, i) => {
+            if ((f.get || comp.get) !== ep) return;
+            const v = dotPath(data, f.key);
+            if (v !== undefined) setFieldValue(f, inputs[i], v);
+          });
+        } catch { /* module offline */ }
+      }
+    }
+    populate();
+
+    const applyBtn = bodyEl.querySelector('.apply-btn');
+    if (applyBtn) applyBtn.addEventListener('click', async () => {
+      const errEl = bodyEl.querySelector('.ui-form-err');
+      errEl.style.display = 'none';
+      applyBtn.disabled = true;
+      try {
+        for (const ep of putEps) {
+          const body = {};
+          fields.forEach((f, i) => {
+            if ((f.put || comp.put) !== ep) return;
+            body[f.key] = getFieldValue(f, inputs[i]);
+          });
+          const r = await fetch(proxyUrl(comp.mod, comp.socket, ep), {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) {
+            const b = await r.json().catch(() => ({}));
+            throw new Error(b.error || (b.errors || []).join('; ') || r.statusText);
+          }
+        }
+        toast((comp.title || comp.id) + ' applied', 'ok');
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = 'block';
+      } finally {
+        applyBtn.disabled = false;
+      }
+    });
+
+    // A map widget's click dispatches 'eventide:target' — fill lat/lon fields.
+    function onTarget(ev) {
+      fields.forEach((f, i) => {
+        if (f.key === 'lat') setFieldValue(f, inputs[i], ev.detail.lat);
+        if (f.key === 'lon') setFieldValue(f, inputs[i], ev.detail.lon);
+      });
+    }
+    window.addEventListener('eventide:target', onTarget);
+    return { destroy() { window.removeEventListener('eventide:target', onTarget); } };
+  },
+
+  // Polled read-only telemetry rows (sidebar)
+  telemetry(bodyEl, comp) {
+    const rows = comp.rows || [];
+    bodyEl.innerHTML = rows.map((r, i) =>
+      `<div class="telem-row"><span class="telem-key">${escHtml(r.label)}</span><span class="telem-val" data-tr="${i}">—</span></div>`
+    ).join('');
+    const els = rows.map((r, i) => bodyEl.querySelector(`[data-tr="${i}"]`));
+    let dead = false;
+    async function poll() {
+      if (dead) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get));
+        if (!r.ok) return;
+        const data = await r.json();
+        rows.forEach((row, i) => { els[i].textContent = fmtVal(dotPath(data, row.path), row.fmt); });
+      } catch { /* module offline */ }
+    }
+    poll();
+    const timer = setInterval(poll, comp.interval || 2000);
+    return { destroy() { dead = true; clearInterval(timer); } };
+  },
+
+  // Polled table with an optional per-row action (sidebar)
+  table(bodyEl, comp) {
+    const cols = comp.columns || [];
+    let activeKey = null, dead = false;
+    bodyEl.innerHTML = `<div class="ui-table-wrap"><div class="empty" style="padding:8px 0">Waiting for data…</div></div>`;
+    const wrap = bodyEl.firstChild;
+
+    async function poll() {
+      if (dead) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get), { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) return;
+        const data = await r.json();
+        renderRows(Array.isArray(data) ? data : (data.items || []));
+      } catch { /* module offline */ }
+    }
+
+    function renderRows(items) {
+      if (!items.length) {
+        wrap.innerHTML = `<div class="empty" style="padding:8px 0">${escHtml(comp.empty_text || 'No data')}</div>`;
+        return;
+      }
+      wrap.innerHTML = `<table class="adsb-table"><thead><tr>
+          ${cols.map(c => `<th>${escHtml(c.label)}</th>`).join('')}${comp.row_action ? '<th></th>' : ''}
+        </tr></thead><tbody>
+          ${items.map((it, ri) => {
+            const key = comp.row_action ? dotPath(it, comp.row_action.key) : null;
+            const isActive = key != null && key === activeKey;
+            return `<tr class="${isActive ? 'selected' : ''}">
+              ${cols.map(c => `<td>${escHtml(fmtVal(dotPath(it, c.path), c.fmt))}</td>`).join('')}
+              ${comp.row_action ? `<td style="text-align:right">
+                <button class="adsb-track-btn ${isActive ? 'active' : ''}" data-ri="${ri}">
+                  ${isActive && comp.stop_action ? escHtml(comp.stop_action.label || 'STOP') : escHtml(comp.row_action.label || 'GO')}
+                </button></td>` : ''}
+            </tr>`;
+          }).join('')}</tbody></table>`;
+      wrap.querySelectorAll('[data-ri]').forEach(btn =>
+        btn.addEventListener('click', () => onAction(items[+btn.dataset.ri])));
+    }
+
+    async function onAction(item) {
+      const key = dotPath(item, comp.row_action.key);
+      const isActive = key === activeKey;
+      const act = (isActive && comp.stop_action) ? comp.stop_action : comp.row_action;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, act.path), {
+          method: act.method || 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          ...((act.method || 'POST') !== 'DELETE' ? { body: JSON.stringify({ [comp.row_action.key]: key }) } : {}),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { toast((comp.title || 'Action') + ' failed: ' + (data.error || r.statusText), 'err'); return; }
+        activeKey = isActive ? null : key;
+        toast(isActive ? (comp.title || '') + ' stopped' : (comp.title || '') + ' started', 'ok');
+        poll();
+      } catch (e) { toast('Action failed: ' + e.message, 'err'); }
+    }
+
+    poll();
+    const timer = setInterval(poll, comp.interval || 5000);
+    return { destroy() { dead = true; clearInterval(timer); } };
+  },
+
+  // Two-axis RC pad with telemetry-seeded baseline (sidebar)
+  joystick(bodyEl, comp) {
+    const fx = comp.fields?.x || 'pan', fy = comp.fields?.y || 'tilt';
+    const ff = comp.fields?.frame || 'frame';
+    const px = comp.paths?.x || 'pan_out', py = comp.paths?.y || 'tilt_out';
+    bodyEl.innerHTML = `
+      <div class="form-row" style="margin-bottom:2px">
+        <div class="form-col"><label class="form-label">Pan (°)</label>
+          <input class="form-input" type="number" data-j="x" step="0.1" min="-180" max="180"></div>
+        <div class="form-col"><label class="form-label">Tilt (°)</label>
+          <input class="form-input" type="number" data-j="y" step="0.1" min="-90" max="90"></div>
+      </div>
+      <div class="rc-joystick-wrap">
+        <div class="rc-joystick-grid">
+          <button class="rc-arrow up" data-n="0,5">▲</button>
+          <button class="rc-arrow down" data-n="0,-5">▼</button>
+          <button class="rc-arrow left" data-n="-5,0">◀</button>
+          <button class="rc-arrow right" data-n="5,0">▶</button>
+          <div class="rc-joystick"><div class="rc-joystick-knob"></div></div>
+        </div>
+        <div class="rc-joystick-hint">↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
+        <span class="form-label" style="flex:1;margin:0">VEHICLE FRAME</span>
+        <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
+      </div>
+      <button class="apply-btn amber">⊕ SEND</button>`;
+
+    const xEl = bodyEl.querySelector('[data-j="x"]');
+    const yEl = bodyEl.querySelector('[data-j="y"]');
+    const frameEl = bodyEl.querySelector('[data-j="frame"]');
+    const pad  = bodyEl.querySelector('.rc-joystick');
+    const knob = bodyEl.querySelector('.rc-joystick-knob');
+    let lastX = 0, lastY = 0, dead = false, dragging = false, maxR = 0, dx = 0, dy = 0, tickTimer = null;
+
+    async function send(x, y) {
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.put), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [fx]: x, [fy]: y, [ff]: frameEl.checked }),
+        });
+        if (r.ok) { lastX = x; lastY = y; }
+      } catch { /* module offline */ }
+    }
+    function nudge(dX, dY) {
+      const nx = Math.min(180, Math.max(-180, +(lastX + dX).toFixed(1)));
+      const ny = Math.min(90,  Math.max(-90,  +(lastY + dY).toFixed(1)));
+      xEl.value = nx; yEl.value = ny;
+      send(nx, ny);
+    }
+    bodyEl.querySelectorAll('.rc-arrow').forEach(b =>
+      b.addEventListener('click', () => { const [ax, ay] = b.dataset.n.split(',').map(Number); nudge(ax, ay); }));
+    bodyEl.querySelector('.apply-btn').addEventListener('click', () => {
+      const x = parseFloat(xEl.value), y = parseFloat(yEl.value);
+      if (Number.isFinite(x) && Number.isFinite(y)) send(x, y);
+    });
+
+    function tick() {
+      const dist = Math.hypot(dx, dy);
+      const d = dist / maxR;
+      if (!Number.isFinite(d) || d < 0.08) return;
+      const mag = 1 + 14 * d;   // 1–15° per tick by deflection
+      nudge(mag * dx / dist, -mag * dy / dist);
+    }
+    function onMove(e) {
+      if (!dragging) return;
+      const r = pad.getBoundingClientRect();
+      dx = e.clientX - (r.left + r.width / 2);
+      dy = e.clientY - (r.top + r.height / 2);
+      const dist = Math.hypot(dx, dy);
+      if (dist > maxR) { dx = dx / dist * maxR; dy = dy / dist * maxR; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      dx = dy = 0;
+      knob.style.transform = 'translate(0px, 0px)';
+      clearInterval(tickTimer); tickTimer = null;
+    }
+    pad.addEventListener('pointerdown', e => {
+      maxR = (pad.clientWidth - knob.clientWidth) / 2;
+      if (!(maxR > 0)) return;
+      dragging = true;
+      if (pad.setPointerCapture) pad.setPointerCapture(e.pointerId);
+      onMove(e); tick();
+      tickTimer = setInterval(tick, 100);
+    });
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+
+    // Seed the baseline from telemetry so nudges are relative to reality.
+    async function seed() {
+      if (dead || dragging || !comp.telemetry_get) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.telemetry_get));
+        if (!r.ok) return;
+        const d = await r.json();
+        const sx = dotPath(d, px), sy = dotPath(d, py);
+        if (typeof sx === 'number') { lastX = sx; xEl.value = +sx.toFixed(1); }
+        if (typeof sy === 'number') { lastY = sy; yEl.value = +sy.toFixed(1); }
+      } catch { /* module offline */ }
+    }
+    seed();
+    const seedTimer = setInterval(seed, 3000);
+    return { destroy() {
+      dead = true;
+      clearInterval(seedTimer); clearInterval(tickTimer);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    } };
+  },
+
+  // Leaflet map with optional device tracking + ADS-B markers (centre)
+  map(bodyEl, comp) {
+    bodyEl.classList.add('ui-map');
+    bodyEl.innerHTML = `<div class="map-host"></div><div class="map-crosshair"></div>`;
+    const lat0 = -33.8688, lon0 = 151.2093;
+    const map = L.map(bodyEl.querySelector('.map-host'), { center: [lat0, lon0], zoom: 15, zoomControl: true });
+    L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+    setTimeout(() => map.invalidateSize(), 50);
+
+    const devIcon = L.divIcon({
+      className: '',
+      html: `<div class="dev-marker"><div class="dev-heading" data-role="dev-heading" style="transform-origin:50% 100%;transform:rotate(0deg)"></div><div class="dev-gimbal" data-role="dev-gimbal" style="transform-origin:50% 100%;transform:rotate(0deg)"></div><div class="dev-dot"></div></div>`,
+      iconSize: [18, 18], iconAnchor: [9, 9],
+    });
+    const device = L.marker([lat0, lon0], { icon: devIcon, interactive: false }).addTo(map);
+    device.bindTooltip('DEVICE', { direction: 'top', opacity: 0.9 });
+    const tgtIcon = L.divIcon({ className: '', html: `<div class="tgt-marker"></div>`, iconSize: [14, 14], iconAnchor: [7, 7] });
+    const target = L.marker([lat0, lon0], { icon: tgtIcon, interactive: false, opacity: 0 }).addTo(map);
+    target.bindTooltip('TARGET', { direction: 'top', opacity: 0.9 });
+    const adsbMarkers = {};
+    let hasFix = false;
+
+    map.on('click', e => {
+      target.setLatLng(e.latlng); target.setOpacity(1);
+      window.dispatchEvent(new CustomEvent('eventide:target', {
+        detail: { lat: +e.latlng.lat.toFixed(6), lon: +e.latlng.lng.toFixed(6) },
+      }));
+    });
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(p => {
+        if (!hasFix) map.setView([p.coords.latitude, p.coords.longitude], 15);
+      });
+    }
+
+    const timers = [];
+    if (comp.track) {
+      const t = comp.track;
+      const pollTrack = async () => {
+        try {
+          const r = await fetch(proxyUrl(comp.mod, t.socket, t.get));
+          if (!r.ok) return;
+          const d = await r.json();
+          const lat = dotPath(d, t.lat || 'lat'), lon = dotPath(d, t.lon || 'lon');
+          if (typeof lat !== 'number' || typeof lon !== 'number') return;
+          device.setLatLng([lat, lon]);
+          device.setTooltipContent(`DEVICE\n${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+          if (!hasFix) { hasFix = true; map.setView([lat, lon], Math.max(map.getZoom(), 15)); }
+          const el = device.getElement();
+          if (el) {
+            let hdg = t.heading ? dotPath(d, t.heading) : null;
+            hdg = (typeof hdg === 'number' && Number.isFinite(hdg)) ? ((hdg % 360) + 360) % 360 : null;
+            let pan = t.gimbal ? dotPath(d, t.gimbal) : null;
+            // vehicle-frame pan is relative to the vehicle nose
+            const vf = t.frame ? Number(dotPath(d, t.frame)) === 1 : false;
+            if (typeof pan === 'number') {
+              if (vf && hdg !== null) pan += hdg;
+              pan = ((pan % 360) + 360) % 360;
+            } else pan = null;
+            const hEl = el.querySelector('[data-role="dev-heading"]');
+            if (hEl && hdg !== null) hEl.style.transform = `rotate(${hdg}deg)`;
+            const gEl = el.querySelector('[data-role="dev-gimbal"]');
+            if (gEl && pan !== null) gEl.style.transform = `rotate(${pan}deg)`;
+          }
+          const tgt = d.target;
+          if (tgt && typeof tgt.lat === 'number' && typeof tgt.lon === 'number') {
+            target.setLatLng([tgt.lat, tgt.lon]); target.setOpacity(1);
+          }
+        } catch { /* module offline */ }
+      };
+      pollTrack();
+      timers.push(setInterval(pollTrack, t.interval || 1000));
+    }
+    if (comp.adsb) {
+      const a = comp.adsb;
+      const pollAdsb = async () => {
+        try {
+          const r = await fetch(proxyUrl(comp.mod, a.socket, a.get), { signal: AbortSignal.timeout(5000) });
+          if (!r.ok) return;
+          const tracks = await r.json();
+          const seen = new Set();
+          (Array.isArray(tracks) ? tracks : []).forEach(tr => {
+            const lat = dotPath(tr, a.lat || 'lat'), lon = dotPath(tr, a.lon || 'lon');
+            if (lat == null || lon == null) return;
+            const key = a.key ? dotPath(tr, a.key) : (tr.icao || `${lat},${lon}`);
+            const label = (a.label && dotPath(tr, a.label)) || key;
+            seen.add(key);
+            if (!adsbMarkers[key]) {
+              const icon = L.divIcon({
+                className: '',
+                html: `<div class="adsb-marker"><div class="adsb-label">${escHtml(String(label))}</div><div class="adsb-dot"></div></div>`,
+                iconSize: [16, 16], iconAnchor: [8, 8],
+              });
+              adsbMarkers[key] = L.marker([lat, lon], { icon, interactive: false }).addTo(map);
+            } else {
+              adsbMarkers[key].setLatLng([lat, lon]);
+            }
+          });
+          Object.keys(adsbMarkers).forEach(k => {
+            if (!seen.has(k)) { map.removeLayer(adsbMarkers[k]); delete adsbMarkers[k]; }
+          });
+        } catch { /* module offline */ }
+      };
+      pollAdsb();
+      timers.push(setInterval(pollAdsb, a.interval || 5000));
+    }
+    return { map, destroy() { timers.forEach(clearInterval); map.remove(); } };
+  },
+};
+
+// ── Form field helpers ──────────────────────────────────────────────────────
+
+function formFieldHtml(f, i) {
+  const label = escHtml(f.label || f.key);
+  const kind  = f.kind || 'number';
+  if (kind === 'slider') {
+    return `<div class="form-row"><div class="form-col">
+      <label class="form-label">${label} — <span data-fv="${i}">${f.min ?? 0}</span></label>
+      <input class="form-input" type="range" data-fi="${i}" min="${f.min ?? 0}" max="${f.max ?? 100}" step="${f.step ?? 1}">
+    </div></div>`;
+  }
+  if (kind === 'toggle') {
+    return `<div class="form-row" style="align-items:center;display:flex;justify-content:space-between">
+      <label class="form-label" style="margin:0">${label}</label>
+      <label class="toggle-switch"><input type="checkbox" data-fi="${i}"><div class="toggle-track"></div></label>
+    </div>`;
+  }
+  if (kind === 'text') {
+    return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
+      <input class="form-input" type="text" data-fi="${i}"></div></div>`;
+  }
+  if (kind === 'select') {
+    const opts = (f.options || []).map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('');
+    return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
+      <select class="form-input" data-fi="${i}">${opts}</select></div></div>`;
+  }
+  return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
+    <input class="form-input" type="number" data-fi="${i}"
+      ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${f.step ?? 'any'}"></div></div>`;
+}
+
+function getFieldValue(f, el) {
+  const kind = f.kind || 'number';
+  if (kind === 'toggle') return el.checked;
+  if (kind === 'text' || kind === 'select') return el.value;
+  const n = parseFloat(el.value);
+  return Number.isFinite(n) ? n : 0;
+}
+function setFieldValue(f, el, v) {
+  const kind = f.kind || 'number';
+  if (kind === 'toggle') { el.checked = !!v; return; }
+  el.value = v;
+  if (kind === 'slider') {
+    const span = el.closest('.form-col')?.querySelector('[data-fv]');
+    if (span) span.textContent = v;
+  }
 }
 
 // Called whenever the IP input changes.
@@ -876,14 +1429,11 @@ async function onBackendIpChange(raw) {
   setBackendConnState('pending');
   // Probe the backend with a lightweight call.
   probeBackend();
-  // Module/socket resolution must be fresh before building stream URLs.
+  // Component definitions come from /api/modules — refresh, then rebuild
+  // the workspace layout for this backend.
   await refreshModuleInfo();
-  // Refresh live stream src so they point to the new host.
-  refreshStreamSrcs();
-  // Re-fetch camera settings for the new backend.
-  ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam));
+  reconcileLayout();
   fetchPlaybackSettings();
-  fetchAdsbSettings();
   if (activeTab === 'modules') { loadModules(); loadSshKey(); }
 }
 
@@ -901,66 +1451,6 @@ async function probeBackend() {
   } catch { setBackendConnState('err'); }
 }
 
-function refreshStreamSrcs() {
-  ['evk', 'picam', 'ircam'].forEach(cam => {
-    const tog = document.getElementById('tog-' + cam);
-    const img = document.getElementById('img-' + cam);
-    if (tog && tog.checked && img && getBase()) {
-      img.src = 'about:blank';
-      setTimeout(() => { connectStream(cam); }, 100);
-    }
-  });
-}
-
-// ── Stream watchdog ───────────────────────────────────────────────────────────
-// When an MJPEG <img> errors (stream offline, process not yet started, CORS
-// block, etc.) we retry with exponential backoff up to 8 s.  Once the stream
-// comes back the backoff resets so a brief dropout recovers quickly.
-// This is the main fix for the EVK viewfinder not appearing after supervisor
-// starts it — the browser would get a 503/connection-refused on the first
-// attempt and give up forever.
-
-const _streamRetryDelay = {}; // cam → current retry ms
-const _streamRetryTimer = {}; // cam → setTimeout handle
-
-function connectStream(cam) {
-  const img = document.getElementById('img-' + cam);
-  const tog = document.getElementById('tog-' + cam);
-  if (!img || !tog || !tog.checked || !getBase()) return;
-
-  // Clear any pending retry
-  clearTimeout(_streamRetryTimer[cam]);
-
-  const url = streamUrl(cam);
-  if (!url) {
-    // No installed module provides this camera's stream socket.
-    document.getElementById('cell-' + cam)?.classList.replace('on', 'off');
-    document.getElementById('hdr-dot-' + cam)?.classList.remove('on');
-    return;
-  }
-
-  img.onerror = () => {
-    // Only retry if the toggle is still on
-    if (!document.getElementById('tog-' + cam)?.checked) return;
-    const delay = _streamRetryDelay[cam] || 500;
-    _streamRetryDelay[cam] = Math.min(delay * 2, 8000);
-    _streamRetryTimer[cam] = setTimeout(() => connectStream(cam), delay);
-    // Show offline state while retrying
-    document.getElementById('cell-' + cam)?.classList.replace('on', 'off');
-    document.getElementById('hdr-dot-' + cam)?.classList.remove('on');
-  };
-
-  img.onload = () => {
-    // Stream came up — reset backoff and show online state
-    _streamRetryDelay[cam] = 500;
-    document.getElementById('cell-' + cam)?.classList.replace('off', 'on');
-    const dot = document.getElementById('hdr-dot-' + cam);
-    if (dot) dot.className = 'dot on';
-  };
-
-  img.src = url;
-}
-
 // ── Restore saved IP on load ──────────────────────────────
 (function restoreBackendIp() {
   const saved = localStorage.getItem(BACKEND_STORAGE_KEY) || '';
@@ -974,16 +1464,7 @@ let activeTab      = 'main';
 let activeInnerTab = 'evk';
 let playbackCam    = 'evk';
 let playingFile    = null;
-let mapInstance    = null;
-let deviceMarker   = null;
-let targetMarker   = null;
-let hasDeviceFix   = false;
 let selectedProc   = null;
-let adsbPollTimer  = null;
-let adsbMarkers    = {};   // icao → L.marker
-let activeAdsbIcao = null;
-let _adsbUserStopTime = 0; // timestamp when user last clicked stop tracking
-const ADSB_STOP_GRACE_MS = 2500;
 
 // ═══════════════════════════════════════════════════════════
 //  CLOCK
@@ -1014,8 +1495,8 @@ function switchTab(tab) {
     clearInterval(modPollTimer);
     modPollTimer = null;
   }
-  // Invalidate map size if switching back to main
-  if (tab === 'main' && mapInstance) setTimeout(() => mapInstance.invalidateSize(), 50);
+  // Leaflet maps need a resize nudge when the main tab becomes visible.
+  if (tab === 'main') setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1027,16 +1508,6 @@ function switchInnerTab(cam) {
   document.querySelectorAll('.inner-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('pb-tab-' + cam)?.classList.add('active');
   document.getElementById('pb-panel-' + cam)?.classList.add('active');
-}
-
-// ═══════════════════════════════════════════════════════════
-//  GIMBAL NESTED TABS
-// ═══════════════════════════════════════════════════════════
-function switchGimbalTab(tab) {
-  document.querySelectorAll('.gimbal-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.gimbal-panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('gimbal-tab-' + tab).classList.add('active');
-  document.getElementById('gimbal-panel-' + tab).classList.add('active');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1076,7 +1547,8 @@ async function loadModules() {
     const r = await fetch(apiUrl('/modules'));
     if (!r.ok) throw new Error('HTTP ' + r.status);
     modules = (await r.json()).modules || [];
-    _modInfo = { modules };   // keep stream/gimbal URL resolution fresh
+    _modInfo = { modules };   // keep workspace components fresh
+    reconcileLayout();        // no-op unless the component set changed
   } catch (e) {
     setModConn(false, 'Backend unreachable: ' + e.message);
     return;
@@ -1528,99 +2000,6 @@ function copySshKeyFallback() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MJPEG SERVER API HELPERS
-//  settingsUrl(cam) → module's mjpeg server /api/settings   (via /proxy/…)
-//  viewUrl(cam)     → module's mjpeg server /api/streaming  (via /proxy/…)
-//  Both resolve through the installed-modules registry — empty when no
-//  module provides that camera.
-// ═══════════════════════════════════════════════════════════
-async function mjpegGetSettings(cam) {
-  const url = settingsUrl(cam);
-  if (!url) return null;
-  try { const r = await fetch(url); return r.ok ? r.json() : null; }
-  catch { return null; }
-}
-async function mjpegPutSettings(cam, out_width, out_height, quality) {
-  const url = settingsUrl(cam);
-  if (!url) throw new Error('no stream module installed for ' + cam);
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ out_width, out_height, quality }),
-  });
-  if (!r.ok) {
-    const b = await r.json().catch(() => ({}));
-    throw new Error((b.errors || [r.statusText]).join('; '));
-  }
-  return r.json();
-}
-async function mjpegPutStreaming(cam, streaming) {
-  const url = viewUrl(cam);
-  if (!url) throw new Error('no stream module installed for ' + cam);
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ streaming }),
-  });
-  if (!r.ok) throw new Error(r.statusText);
-  return r.json();
-}
-async function fetchAndPopulateSettings(cam) {
-  const s = await mjpegGetSettings(cam);
-  if (!s) return;
-  const qEl = document.getElementById(cam + '-quality');
-  const wEl = document.getElementById(cam + '-width');
-  const hEl = document.getElementById(cam + '-height');
-  const qv  = document.getElementById(cam + '-q-val');
-  if (qEl) { qEl.value = s.quality; if (qv) qv.textContent = s.quality; }
-  if (wEl) wEl.value = s.out_width;
-  if (hEl) hEl.value = s.out_height;
-}
-
-// ═══════════════════════════════════════════════════════════
-//  STREAM CONTROLS
-// ═══════════════════════════════════════════════════════════
-async function toggleStream(cam, on) {
-  try { await mjpegPutStreaming(cam, on); }
-  catch(e) { toast(cam.toUpperCase() + ' toggle failed: ' + e.message, 'err'); }
-  const cell = document.getElementById('cell-' + cam);
-  const img  = document.getElementById('img-' + cam);
-  if (on) {
-    cell.classList.replace('off', 'on');
-    setTimeout(() => connectStream(cam), 150);
-    toast(cam.toUpperCase() + ' stream enabled', 'ok');
-  } else {
-    // Cancel any pending watchdog retry before blanking the src
-    clearTimeout(_streamRetryTimer[cam]);
-    _streamRetryDelay[cam] = 500;
-    cell.classList.replace('on', 'off');
-    img.onerror = null;
-    img.src = 'about:blank';
-    toast(cam.toUpperCase() + ' stream disabled');
-  }
-  updateHeaderDots();
-}
-async function applyStream(cam) {
-  const quality = parseInt(document.getElementById(cam + '-quality').value);
-  const width   = parseInt(document.getElementById(cam + '-width').value);
-  const height  = parseInt(document.getElementById(cam + '-height').value);
-  try {
-    await mjpegPutSettings(cam, width, height, quality);
-    toast(cam.toUpperCase() + ' settings applied', 'ok');
-    const img = document.getElementById('img-' + cam);
-    img.src = 'about:blank';
-    setTimeout(() => connectStream(cam), 100);
-  } catch(e) { toast(cam.toUpperCase() + ' apply failed: ' + e.message, 'err'); }
-}
-function updateHeaderDots() {
-  ['evk','picam','ircam'].forEach(cam => {
-    const on  = document.getElementById('tog-' + cam).checked;
-    const dot = document.getElementById('hdr-dot-' + cam);
-    if (dot) dot.className = 'dot' + (on ? ' on' : '');
-  });
-}
-
-// ═══════════════════════════════════════════════════════════
 //  RECORDINGS
 // ═══════════════════════════════════════════════════════════
 function fmtSize(b) {
@@ -1795,94 +2174,6 @@ async function fetchPlaybackSettings() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MAP
-// ═══════════════════════════════════════════════════════════
-function initMap() {
-  const lat0 = -33.8688, lon0 = 151.2093;
-  mapInstance = L.map('map', { center:[lat0,lon0], zoom:15, zoomControl:true });
-  L.tileLayer('/tiles/{z}/{x}/{y}.png', {
-    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
-    maxZoom: 19,
-  }).addTo(mapInstance);
-  const devIcon = L.divIcon({
-    className:'',
-    html:`<div class="dev-marker"><div class="dev-heading" data-role="dev-heading" style="transform-origin:50% 100%;transform:rotate(0deg)"></div><div class="dev-gimbal" data-role="dev-gimbal" style="transform-origin:50% 100%;transform:rotate(0deg)"></div><div class="dev-dot"></div></div>`,
-    iconSize:[18,18], iconAnchor:[9,9],
-  });
-  deviceMarker = L.marker([lat0,lon0],{icon:devIcon, interactive:false}).addTo(mapInstance);
-  deviceMarker.bindTooltip('DEVICE', { direction:'top', opacity:0.9 });
-
-  const tgtIcon = L.divIcon({
-    className:'',
-    html:`<div class="tgt-marker"></div>`,
-    iconSize:[14,14], iconAnchor:[7,7],
-  });
-  targetMarker = L.marker([lat0,lon0],{icon:tgtIcon, interactive:false, opacity:0}).addTo(mapInstance);
-  targetMarker.bindTooltip('TARGET', { direction:'top', opacity:0.9 });
-
-  mapInstance.on('click', e => {
-    const { lat, lng } = e.latlng;
-    setSelectedTarget(lat, lng, true);
-  });
-
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const {latitude:lat,longitude:lon,accuracy:acc} = pos.coords;
-      mapInstance.setView([lat,lon],16);
-      deviceMarker.setLatLng([lat,lon]);
-      document.getElementById('pos-coords').innerHTML =
-        `LAT: ${lat.toFixed(6)}<br>LON: ${lon.toFixed(6)}<br>ACC: ±${acc.toFixed(0)}m`;
-    }, () => {
-      document.getElementById('pos-coords').innerHTML = 'LAT: —<br>LON: —<br>ACC: Location unavailable';
-    });
-  }
-}
-
-function setSelectedTarget(lat, lon, updateInputs) {
-  if (!mapInstance) return;
-  if (!targetMarker) return;
-  targetMarker.setLatLng([lat, lon]);
-  targetMarker.setOpacity(1);
-  targetMarker.setTooltipContent(`TARGET\n${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`);
-  if (updateInputs) {
-    const latEl = document.getElementById('gimbal-lat');
-    const lonEl = document.getElementById('gimbal-lon');
-    if (latEl) latEl.value = Number(lat).toFixed(6);
-    if (lonEl) lonEl.value = Number(lon).toFixed(6);
-  }
-}
-
-function updateDeviceMarker(lat, lon, headingDeg, gimbalPanDeg, vehicleFrame) {
-  if (!mapInstance || !deviceMarker) return;
-  if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
-  deviceMarker.setLatLng([lat, lon]);
-  deviceMarker.setTooltipContent(`DEVICE\n${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`);
-
-  // Only auto-center the first time we get a real telemetry fix.
-  if (!hasDeviceFix) {
-    hasDeviceFix = true;
-    mapInstance.setView([lat, lon], Math.max(mapInstance.getZoom(), 16));
-  }
-
-  const el = deviceMarker.getElement();
-  if (!el) return;
-
-  const hdg = (typeof headingDeg === 'number' && Number.isFinite(headingDeg))
-    ? ((headingDeg % 360) + 360) % 360 : null;
-  const headingEl = el.querySelector('[data-role="dev-heading"]');
-  if (headingEl && hdg !== null) headingEl.style.transform = `rotate(${hdg}deg)`;
-
-  // In vehicle frame the pan angle is relative to the vehicle nose, so on
-  // the north-up map it must be drawn at heading + pan; in earth frame the
-  // pan angle is already north-referenced.
-  let pan = (typeof gimbalPanDeg === 'number' && Number.isFinite(gimbalPanDeg)) ? gimbalPanDeg : null;
-  if (pan !== null && vehicleFrame && hdg !== null) pan += hdg;
-  if (pan !== null) pan = ((pan % 360) + 360) % 360;
-  const gimbalEl = el.querySelector('[data-role="dev-gimbal"]');
-  if (gimbalEl && pan !== null) gimbalEl.style.transform = `rotate(${pan}deg)`;
-}
-
-// ═══════════════════════════════════════════════════════════
 //  SUPERVISORD — XML-RPC
 //
 //  supervisord exposes XML-RPC at /RPC2 on its inet_http_server.
@@ -2000,605 +2291,18 @@ function toast(msg, type='') {
 // ═══════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════
-updateHeaderDots();
-initMap();
-// Populate stream + playback settings once backend IP is available.
-// Module/socket resolution (/api/modules) must load first — stream,
-// settings and gimbal URLs are derived from it.
+initRegionDropZones();
+// Populate playback settings and build the component workspace once the
+// backend IP is available (component definitions come from /api/modules).
+renderWorkspace();   // empty states until a backend provides components
 if (getBase()) {
   refreshModuleInfo().then(() => {
-    ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam));
+    reconcileLayout();
     fetchPlaybackSettings();
-    fetchAdsbSettings();
-    refreshStreamSrcs();
   });
-}
-
-// ═══════════════════════════════════════════════════════════
-//  GIMBAL API
-//  URLs resolve through the module registry via gimbalUrl()
-//  (/proxy/gimbal-controller/<socket>/…  →  the module's tcp socket).
-//  PUT  /target    — set target {lat, lon, alt}
-//  GET  /target    — read current target
-//  PUT  /rc        — direct pan/tilt/frame control
-//  GET  /telemetry — live telemetry from gimbal loop
-// ═══════════════════════════════════════════════════════════
-
-let gimbalPollTimer = null;
-
-// Last platform altitude from telemetry (null until first fix)
-let _lastPlatformAlt = null;
-
-// Fill the target altitude box with the platform's current altitude
-function usePlatformAlt() {
-  const el = document.getElementById('gimbal-alt');
-  if (!el) return;
-  if (typeof _lastPlatformAlt !== 'number') {
-    toast('No platform altitude yet', 'err');
-    return;
-  }
-  el.value = _lastPlatformAlt.toFixed(1);
-}
-
-// Submit target via the gimbal API (PUT /target, via gimbalUrl)
-async function submitGimbalTarget() {
-  const lat = parseFloat(document.getElementById('gimbal-lat').value);
-  const lon = parseFloat(document.getElementById('gimbal-lon').value);
-  const alt = parseFloat(document.getElementById('gimbal-alt').value);
-
-  if (isNaN(lat) || isNaN(lon) || isNaN(alt)) {
-    toast('Enter valid lat, lon and alt values', 'err');
-    return;
-  }
-
-  const btn = document.getElementById('gimbal-submit-btn');
-  btn.textContent = '⏳ SENDING…';
-  btn.disabled = true;
-
-  try {
-    const r = await fetch(gimbalUrl('/target'), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lat, lon, alt }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      toast('Gimbal error: ' + (data.error || r.statusText), 'err');
-    } else {
-      toast(`Target set — ${lat.toFixed(6)}, ${lon.toFixed(6)}, ${alt.toFixed(1)}m`, 'ok');
-    }
-  } catch(e) {
-    toast('Gimbal unreachable: ' + e.message, 'err');
-    setGimbalConn(false);
-  } finally {
-    btn.textContent = '⊕ POINT GIMBAL';
-    btn.disabled = false;
-  }
-}
-
-// RC axis limits — pan −180…+180°, tilt −90…+90°
-const clampRcPan  = v => Math.min(180, Math.max(-180, v));
-const clampRcTilt = v => Math.min(90,  Math.max(-90, v));
-
-// Clamp the RC input boxes in place (called when the user edits them)
-function clampRcInputs() {
-  const panEl  = document.getElementById('rc-pan');
-  const tiltEl = document.getElementById('rc-tilt');
-  const pan  = parseFloat(panEl.value);
-  const tilt = parseFloat(tiltEl.value);
-  if (!isNaN(pan))  panEl.value  = clampRcPan(pan).toFixed(1);
-  if (!isNaN(tilt)) tiltEl.value = clampRcTilt(tilt).toFixed(1);
-}
-
-// Submit direct RC pan/tilt via the gimbal API (PUT /rc)
-async function submitRcControl() {
-  let pan  = parseFloat(document.getElementById('rc-pan').value);
-  let tilt = parseFloat(document.getElementById('rc-tilt').value);
-  const frame = document.getElementById('rc-frame-toggle').checked; // true = vehicle
-
-  if (isNaN(pan) || isNaN(tilt)) {
-    toast('Enter valid pan and tilt values', 'err');
-    return;
-  }
-
-  // Enforce axis limits and reflect the clamped values in the inputs
-  pan  = clampRcPan(pan);
-  tilt = clampRcTilt(tilt);
-  document.getElementById('rc-pan').value  = pan.toFixed(1);
-  document.getElementById('rc-tilt').value = tilt.toFixed(1);
-
-  const btn = document.getElementById('rc-submit-btn');
-  btn.textContent = '⏳ SENDING…';
-  btn.disabled = true;
-
-  try {
-    const r = await fetch(gimbalUrl('/rc'), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pan, tilt, frame }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      toast('RC error: ' + (data.error || r.statusText), 'err');
-    } else {
-      toast(`RC set — pan:${pan.toFixed(1)}° tilt:${tilt.toFixed(1)}° frame:${frame?'VEHICLE':'EARTH'}`, 'ok');
-    }
-  } catch(e) {
-    toast('Gimbal unreachable: ' + e.message, 'err');
-    setGimbalConn(false);
-  } finally {
-    btn.textContent = '⊕ SEND RC';
-    btn.disabled = false;
-  }
-}
-
-// Nudge pan/tilt by a delta from the current pan_out/tilt_out and send immediately
-let _lastPanOut  = 0;
-let _lastTiltOut = 0;
-
-async function nudgeRcDelta(deltaPan, deltaTilt) {
-  const frame = document.getElementById('rc-frame-toggle').checked;
-
-  const newPan  = clampRcPan(_lastPanOut  + deltaPan);
-  const newTilt = clampRcTilt(_lastTiltOut + deltaTilt);
-
-  // Never send NaN/Infinity to the backend (e.g. from a zero-radius joystick)
-  if (!Number.isFinite(newPan) || !Number.isFinite(newTilt)) return;
-
-  // Reflect in input fields so the user can see the result
-  document.getElementById('rc-pan').value  = newPan.toFixed(1);
-  document.getElementById('rc-tilt').value = newTilt.toFixed(1);
-
-  try {
-    const r = await fetch(gimbalUrl('/rc'), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pan: newPan, tilt: newTilt, frame }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      toast('RC error: ' + (data.error || r.statusText), 'err');
-    } else {
-      _lastPanOut  = newPan;
-      _lastTiltOut = newTilt;
-    }
-  } catch(e) {
-    toast('Gimbal unreachable: ' + e.message, 'err');
-    setGimbalConn(false);
-  }
-}
-
-// ── RC joystick ─────────────────────────────────────────────
-// Drag the knob to jog the gimbal. Horizontal deflection drives
-// pan, vertical drives tilt (up = positive tilt). Deflection
-// distance scales the per-tick step from MIN_DEG to MAX_DEG.
-// While held, an RC command is sent every TICK_MS; on release
-// the knob springs back to centre and sending stops.
-const RC_JOY = {
-  el: null, knob: null,
-  active: false,
-  maxRadius: 0,          // px the knob centre may travel
-  dx: 0, dy: 0,          // current clamped knob offset (px)
-  timer: null,
-  axisLock: false,       // true = snap movement to the dominant axis
-  MIN_DEG: 1,            // step at smallest effective deflection
-  MAX_DEG: 15,           // step at full extension
-  DEADZONE: 0.08,        // fraction of travel that does nothing
-  TICK_MS: 100,
-};
-
-function initRcJoystick() {
-  RC_JOY.el   = document.getElementById('rc-joystick');
-  RC_JOY.knob = document.getElementById('rc-joystick-knob');
-  if (!RC_JOY.el || !RC_JOY.knob) return;
-  RC_JOY.el.addEventListener('pointerdown', rcJoyStart);
-  window.addEventListener('pointermove', rcJoyMove);
-  window.addEventListener('pointerup', rcJoyEnd);
-  window.addEventListener('pointercancel', rcJoyEnd);
-}
-
-function rcJoyStart(e) {
-  // Measure travel here, not at init: the RC panel starts hidden
-  // (display:none), where clientWidth is 0 and maxRadius would be 0.
-  RC_JOY.maxRadius = (RC_JOY.el.clientWidth - RC_JOY.knob.clientWidth) / 2;
-  if (!(RC_JOY.maxRadius > 0)) return;
-  RC_JOY.active = true;
-  RC_JOY.el.classList.add('active');
-  if (RC_JOY.el.setPointerCapture) RC_JOY.el.setPointerCapture(e.pointerId);
-  rcJoyMove(e);
-  rcJoyTick();                                  // immediate first step…
-  RC_JOY.timer = setInterval(rcJoyTick, RC_JOY.TICK_MS);  // …then repeat
-}
-
-function rcJoyMove(e) {
-  if (!RC_JOY.active) return;
-  const r  = RC_JOY.el.getBoundingClientRect();
-  let dx = e.clientX - (r.left + r.width  / 2);
-  let dy = e.clientY - (r.top  + r.height / 2);
-  const dist = Math.hypot(dx, dy);
-  if (dist > RC_JOY.maxRadius) {               // bound knob inside the ring
-    dx = dx / dist * RC_JOY.maxRadius;
-    dy = dy / dist * RC_JOY.maxRadius;
-  }
-  if (RC_JOY.axisLock) {                       // snap to dominant axis —
-    if (Math.abs(dx) >= Math.abs(dy)) dy = 0;  // pure pan or pure tilt
-    else dx = 0;
-  }
-  RC_JOY.dx = dx;
-  RC_JOY.dy = dy;
-  RC_JOY.knob.style.transform = `translate(${dx}px, ${dy}px)`;
-}
-
-function rcJoyEnd() {
-  if (!RC_JOY.active) return;
-  RC_JOY.active = false;
-  RC_JOY.dx = RC_JOY.dy = 0;
-  RC_JOY.el.classList.remove('active');
-  RC_JOY.knob.style.transform = 'translate(0px, 0px)';
-  clearInterval(RC_JOY.timer);
-  RC_JOY.timer = null;
-}
-
-function rcJoyTick() {
-  const dist = Math.hypot(RC_JOY.dx, RC_JOY.dy);
-  const d = dist / RC_JOY.maxRadius;            // 0..1 deflection
-  if (!Number.isFinite(d) || d < RC_JOY.DEADZONE) return;
-  const mag = RC_JOY.MIN_DEG + (RC_JOY.MAX_DEG - RC_JOY.MIN_DEG) * d;
-  nudgeRcDelta(mag * RC_JOY.dx / dist, -mag * RC_JOY.dy / dist);
-}
-
-// Frame toggle changed by user
-function onFrameToggleChange(checked) {
-  const label = document.getElementById('rc-frame-label');
-  if (label) label.textContent = checked ? 'VEHICLE' : 'EARTH';
-}
-
-// Axis-lock toggle changed by user
-function onLockToggleChange(checked) {
-  RC_JOY.axisLock = checked;
-  const label = document.getElementById('rc-lock-label');
-  if (label) label.textContent = checked ? 'ON' : 'OFF';
-}
-
-// Force the frame toggle to a specific state (used when targeting mode activates)
-function setFrameToggle(vehicleFrame) {
-  const tog = document.getElementById('rc-frame-toggle');
-  if (tog) { tog.checked = vehicleFrame; onFrameToggleChange(vehicleFrame); }
-}
-
-// Poll the gimbal API (GET /telemetry) and update the readout fields
-async function pollGimbalTelemetry() {
-  try {
-    const r = await fetch(gimbalUrl('/telemetry'));
-    if (r.status === 503) {
-      setGimbalConn(true, 'Waiting for telemetry…');
-      return;
-    }
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    setGimbalConn(true);
-    updateTelemDisplay(d);
-  } catch(e) {
-    setGimbalConn(false);
-  }
-}
-
-function updateTelemDisplay(d) {
-  const fmt6 = v => (typeof v === 'number') ? v.toFixed(6) : '—';
-  const fmt2 = v => (typeof v === 'number') ? v.toFixed(2) : '—';
-  const fmt1 = v => (typeof v === 'number') ? v.toFixed(1) : '—';
-
-  // Platform
-  setText('tl-lat', fmt6(d.lat));
-  setText('tl-lon', fmt6(d.lon));
-  setText('tl-alt', fmt1(d.alt) + ' m');
-  if (typeof d.alt === 'number') _lastPlatformAlt = d.alt;
-  setText('tl-hdg', fmt1(d.heading) + '°');
-
-  const liveEl = document.getElementById('tl-live');
-  if (liveEl) {
-    liveEl.textContent = d.live ? 'LIVE' : 'FALLBACK';
-    liveEl.className   = 'telem-val ' + (d.live ? 'green' : 'warn');
-  }
-
-  setText('tl-pi-temp', fmt1(d.pi_temp) + ' °C');
-  setText('tl-pi-throttle', (typeof d.pi_throttle === 'number') ? d.pi_throttle.toString() : '—');
-  setText('tl-cube-temp', fmt1(d.cube_temp) + ' °C');
-  // Active target (new shape: d.target = {lat,lon,alt} or null)
-  const tgt = d.target;
-  setText('tl-tgt-lat', tgt ? fmt6(tgt.lat) : '—');
-  setText('tl-tgt-lon', tgt ? fmt6(tgt.lon) : '—');
-  setText('tl-tgt-alt', tgt ? fmt1(tgt.alt) + ' m' : '—');
-
-  // Gimbal output
-  setText('tl-pan-out',    fmt2(d.pan_out)    + '°');
-  setText('tl-tilt-out',   fmt2(d.tilt_out)   + '°');
-  setText('tl-frame-flag', typeof d.frame_flag === 'number' ? d.frame_flag.toString() : '—');
-
-  // Keep nudge baseline in sync with actual gimbal output
-  if (typeof d.pan_out  === 'number') _lastPanOut  = d.pan_out;
-  if (typeof d.tilt_out === 'number') _lastTiltOut = d.tilt_out;
-
-  const modeEl = document.getElementById('tl-mode');
-  const modeBadge = document.getElementById('gimbal-mode-badge');
-  const modeStr = (d.mode || '').toUpperCase();
-  if (modeEl) {
-    modeEl.textContent = modeStr || '—';
-    modeEl.className = 'telem-val ' + (d.mode === 'targeting' || d.mode === 'adsb' ? 'green' : 'warn');
-  }
-  if (modeBadge) {
-    modeBadge.textContent = modeStr || '—';
-    modeBadge.style.borderColor = (d.mode === 'targeting' || d.mode === 'adsb') ? 'rgba(0,232,157,.4)' : 'rgba(255,184,48,.4)';
-    modeBadge.style.color = (d.mode === 'targeting' || d.mode === 'adsb') ? 'var(--green)' : 'var(--amber)';
-  }
-
-  // Sync ADS-B tracking state from telemetry
-  if (d.adsb_icao) {
-    // Ignore stale telemetry that still carries the old ICAO for a short
-    // while after the user explicitly clicked stop tracking.
-    if (!_adsbUserStopTime || Date.now() - _adsbUserStopTime > ADSB_STOP_GRACE_MS) {
-      activeAdsbIcao = d.adsb_icao;
-    }
-  } else if (d.mode !== 'adsb') {
-    activeAdsbIcao = null;
-    _adsbUserStopTime = 0; // confirmed stopped — clear grace period
-  }
-  const stopBtn = document.getElementById('adsb-stop-btn');
-  if (stopBtn) stopBtn.style.display = activeAdsbIcao ? '' : 'none';
-  refreshAdsbMarkerStyles();
-
-  // Measured gimbal attitude
-  setText('tl-roll',       fmt2(d.roll_meas)  + '°');
-  setText('tl-pitch-meas', fmt2(d.pitch_meas) + '°');
-  setText('tl-yaw-meas',   fmt2(d.yaw_meas)   + '°');
-
-  // Map: device position + heading arrow (green) + gimbal pan arrow (cyan).
-  // frame_flag 1 = vehicle frame → pan arrow drawn relative to heading.
-  updateDeviceMarker(d.lat, d.lon, d.heading, d.pan_out, Number(d.frame_flag) === 1);
-
-  const ts = d.t ? new Date(d.t * 1000).toUTCString().split(' ')[4] + ' UTC' : '—';
-  setText('tl-timestamp', 'LAST UPDATE: ' + ts);
-}
-
-function setText(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val;
-}
-
-function setGimbalConn(ok, msg) {
-  const dot   = document.getElementById('gimbal-conn-dot');
-  const label = document.getElementById('gimbal-conn-label');
-  if (dot)   dot.className    = 'dot' + (ok ? ' on' : '');
-  if (label) label.textContent = msg || (ok ? 'Connected' : 'Gimbal API unreachable');
-}
-
-// ═══════════════════════════════════════════════════════════
-//  ADS-B API  (gimbal module endpoints, via gimbalUrl)
-//  GET  /adsb/tracks   — list of visible aircraft
-//  PUT  /adsb/track    — lock onto aircraft by ICAO
-//  DELETE /adsb/track  — stop ADS-B tracking
-// ═══════════════════════════════════════════════════════════
-
-async function pollAdsbTracks() {
-  if (!getBase()) return;
-  try {
-    const r = await fetch(gimbalUrl('/adsb/tracks'), { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return;
-    const tracks = await r.json();
-    renderAdsbTable(tracks);
-    updateAdsbMarkers(tracks);
-  } catch { /* silent — backend may be unreachable */ }
-}
-
-function renderAdsbTable(tracks) {
-  const wrap = document.getElementById('adsb-table-wrap');
-  if (!wrap) return;
-  if (!Array.isArray(tracks) || !tracks.length) {
-    wrap.innerHTML = '<div class="empty" style="padding:8px 0">No ADS-B targets</div>';
-    return;
-  }
-  const html = `
-    <table class="adsb-table">
-      <thead><tr>
-        <th>CS</th><th>DIST</th><th>ALT</th><th>SPD</th><th></th>
-      </tr></thead>
-      <tbody>
-        ${tracks.map(t => {
-          const dist = t.distance_m != null ? (t.distance_m < 1000 ? t.distance_m + 'm' : (t.distance_m/1000).toFixed(1) + 'km') : '—';
-          const alt = t.alt_ft != null ? Math.round(t.alt_ft) + '\'' : '—';
-          const spd = t.speed != null ? Math.round(t.speed) : '—';
-          const selected = activeAdsbIcao === t.icao;
-          return `<tr class="${selected ? 'selected' : ''}" onclick="selectAdsbTrack('${t.icao}')">
-            <td title="${t.icao}">${t.callsign || t.icao}</td>
-            <td>${dist}</td>
-            <td>${alt}</td>
-            <td>${spd}</td>
-            <td style="text-align:right">
-              <button class="adsb-track-btn ${selected ? 'active' : ''}" onclick="event.stopPropagation();selectAdsbTrack('${t.icao}')">
-                ${selected ? '● TRACKING' : 'TRACK'}
-              </button>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>`;
-  wrap.innerHTML = html;
-}
-
-async function selectAdsbTrack(icao) {
-  if (!icao) return;
-  const btn = document.getElementById('adsb-stop-btn');
-  if (btn) { btn.textContent = '⏳ ACQUIRING…'; btn.disabled = true; }
-  try {
-    const r = await fetch(gimbalUrl('/adsb/track'), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ icao }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      toast('ADS-B track failed: ' + (data.error || r.statusText), 'err');
-    } else {
-      activeAdsbIcao = icao;
-      _adsbUserStopTime = 0; // clear any stop grace period
-      toast('ADS-B tracking: ' + icao + (data.callsign ? ' (' + data.callsign + ')' : ''), 'ok');
-      await pollAdsbTracks();
-      await pollGimbalTelemetry();
-    }
-  } catch(e) {
-    toast('ADS-B unreachable: ' + e.message, 'err');
-  } finally {
-    if (btn) { btn.textContent = '■ STOP ADS-B TRACK'; btn.disabled = false; }
-  }
-}
-
-async function stopAdsbTracking() {
-  const btn = document.getElementById('adsb-stop-btn');
-  if (btn) { btn.textContent = '⏳ STOPPING…'; btn.disabled = true; }
-  try {
-    const r = await fetch(gimbalUrl('/adsb/track'), { method: 'DELETE' });
-    const data = await r.json();
-    if (!r.ok) {
-      toast('ADS-B stop failed: ' + (data.error || r.statusText), 'err');
-    } else {
-      activeAdsbIcao = null;
-      _adsbUserStopTime = Date.now();
-      toast('ADS-B tracking stopped', 'ok');
-      await pollAdsbTracks();
-      await pollGimbalTelemetry();
-    }
-  } catch(e) {
-    toast('ADS-B unreachable: ' + e.message, 'err');
-  } finally {
-    if (btn) { btn.textContent = '■ STOP ADS-B TRACK'; btn.disabled = false; }
-  }
-}
-
-function updateAdsbMarkers(tracks) {
-  if (!mapInstance) return;
-  const seen = new Set();
-  (tracks || []).forEach(t => {
-    if (t.lat == null || t.lon == null) return;
-    seen.add(t.icao);
-    let m = adsbMarkers[t.icao];
-    if (!m) {
-      const icon = L.divIcon({
-        className: '',
-        html: `<div class="adsb-marker ${activeAdsbIcao === t.icao ? 'selected' : ''}" id="adsb-mkr-${t.icao}">
-          <div class="adsb-label">${t.callsign || t.icao}</div>
-          <div class="adsb-dot"></div>
-        </div>`,
-        iconSize: [16, 16],
-        iconAnchor: [8, 8],
-      });
-      m = L.marker([t.lat, t.lon], { icon, interactive: true }).addTo(mapInstance);
-      m.on('click', () => selectAdsbTrack(t.icao));
-      adsbMarkers[t.icao] = m;
-    } else {
-      m.setLatLng([t.lat, t.lon]);
-      const el = document.getElementById(`adsb-mkr-${t.icao}`);
-      if (el) {
-        el.classList.toggle('selected', activeAdsbIcao === t.icao);
-        const lbl = el.querySelector('.adsb-label');
-        if (lbl) lbl.textContent = t.callsign || t.icao;
-      }
-    }
-  });
-  // Remove stale markers
-  Object.keys(adsbMarkers).forEach(icao => {
-    if (!seen.has(icao)) {
-      mapInstance.removeLayer(adsbMarkers[icao]);
-      delete adsbMarkers[icao];
-    }
-  });
-}
-
-function refreshAdsbMarkerStyles() {
-  Object.keys(adsbMarkers).forEach(icao => {
-    const el = document.getElementById(`adsb-mkr-${icao}`);
-    if (el) el.classList.toggle('selected', activeAdsbIcao === icao);
-  });
-}
-
-// Nudge an ADS-B setting input by delta, clamp to [min, max], then apply
-function nudgeAdsbSetting(id, delta, min, max) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  let v = parseFloat(el.value);
-  if (isNaN(v)) v = 0;
-  v += delta;
-  if (typeof min === 'number') v = Math.max(min, v);
-  if (typeof max === 'number') v = Math.min(max, v);
-  el.value = parseFloat(v.toFixed(2));
-  applyAdsbSettings();
-}
-
-async function applyAdsbSettings() {
-  const lead = parseFloat(document.getElementById('adsb-lead-time').value);
-  const offset = parseFloat(document.getElementById('adsb-alt-offset').value);
-
-  if (isNaN(lead) || isNaN(offset)) {
-    toast('Enter valid values', 'err');
-    return;
-  }
-
-  try {
-    const [r1, r2] = await Promise.all([
-      fetch(gimbalUrl('/adsb/lead_time'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_time_s: lead }),
-      }),
-      fetch(gimbalUrl('/adsb/alt_offset'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alt_offset_m: offset }),
-      }),
-    ]);
-    if (r1.ok && r2.ok) {
-      toast(`ADS-B settings applied — lead: ${lead}s  offset: ${offset}m`, 'ok');
-    } else {
-      toast('ADS-B settings failed', 'err');
-    }
-  } catch(e) {
-    toast('ADS-B unreachable: ' + e.message, 'err');
-  }
-}
-
-async function fetchAdsbSettings() {
-  if (!getBase()) return;
-  try {
-    const [r1, r2] = await Promise.all([
-      fetch(gimbalUrl('/adsb/lead_time')),
-      fetch(gimbalUrl('/adsb/alt_offset')),
-    ]);
-    if (r1.ok) {
-      const d = await r1.json();
-      const el = document.getElementById('adsb-lead-time');
-      if (el) el.value = d.lead_time_s;
-    }
-    if (r2.ok) {
-      const d = await r2.json();
-      const el = document.getElementById('adsb-alt-offset');
-      if (el) el.value = d.alt_offset_m;
-    }
-  } catch { /* backend not up yet */ }
-}
-
-function startAdsbPolling() {
-  pollAdsbTracks();
-  if (!adsbPollTimer) adsbPollTimer = setInterval(pollAdsbTracks, 1500);
-}
-
-function startGimbalPolling() {
-  pollGimbalTelemetry();
-  if (!gimbalPollTimer) gimbalPollTimer = setInterval(pollGimbalTelemetry, 500);
 }
 
 setInterval(loadAllRecordings, 15000);
-startGimbalPolling();
-startAdsbPolling();
-initRcJoystick();
 </script>
 </body>
 </html>

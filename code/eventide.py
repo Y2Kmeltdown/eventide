@@ -255,6 +255,62 @@ def supervisor_proxy():
         )
     return upstream.content, upstream.status_code, {"Content-Type": "text/xml"}
 
+# ── Playback server proxy ─────────────────────────────────────────────────────
+# On a real payload nginx fronts the base playback server (/playback/ →
+# 127.0.0.1:8084 — see eventide.nginx).  When this process is talked to
+# directly instead (a remote frontend pointed at this port, bench installs
+# without nginx), /playback/ would 404/405 here.  Forward it so the backend
+# behaves identically with or without nginx in front.
+
+_PLAYBACK_UPSTREAM_URL = os.environ.get(
+    "PLAYBACK_UPSTREAM_URL", "http://127.0.0.1:8084"
+)
+
+
+@app.route("/playback/", defaults={"rest": ""},
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+@app.route("/playback/<path:rest>",
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+def playback_proxy(rest):
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    url = f"{_PLAYBACK_UPSTREAM_URL}/{rest}"
+    if request.query_string:
+        url += "?" + request.query_string.decode()
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP_HEADERS
+    }
+    try:
+        upstream = _http.request(
+            request.method,
+            url,
+            headers=headers,
+            data=request.get_data(),
+            stream=True,
+            # Connect deadline only — no read deadline, or MJPEG streams die.
+            timeout=(5, None),
+        )
+    except _http.exceptions.ConnectionError:
+        return jsonify({"error": "playback server is unreachable"}), 502
+    except _http.exceptions.RequestException as exc:
+        return jsonify({"error": f"proxy error: {exc}"}), 502
+
+    resp_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_HEADERS
+    }
+    return Response(
+        upstream.iter_content(chunk_size=64 * 1024),
+        status=upstream.status_code,
+        headers=resp_headers,
+    )
+
 # ── Module socket proxy ───────────────────────────────────────────────────────
 # Generic reverse proxy for HTTP services exposed by installed modules.  The
 # dashboard resolves module/socket names from /api/modules and calls

@@ -736,11 +736,14 @@ fn handle_client(
         }
 
         // ── CORS preflight ────────────────────────────────────────────────────
+        // The dashboard calls this server cross-origin whenever the UI is
+        // served by the decoupled frontend (frontend.py).  PUT must be listed
+        // or the browser blocks `PUT /settings` before it is ever sent.
         ("OPTIONS", _) => {
             let _ = stream.write_all(
                 b"HTTP/1.1 204 No Content\r\n\
                   Access-Control-Allow-Origin: *\r\n\
-                  Access-Control-Allow-Methods: GET, POST\r\n\
+                  Access-Control-Allow-Methods: GET, POST, PUT\r\n\
                   Access-Control-Allow-Headers: Content-Type\r\n\r\n",
             );
         }

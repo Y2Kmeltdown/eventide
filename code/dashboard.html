@@ -100,7 +100,9 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .ui-center{display:flex;flex-direction:column;overflow:hidden;background:#020810;min-width:0}
 .ui-center-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
 .ui-center-spacer{flex:1}
-.ui-center-panels{flex:1;overflow-y:auto;min-height:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));grid-auto-rows:minmax(300px,1fr);align-content:start}
+/* The column/row templates are set by JS (layoutCenterGrid) so tiles fill the
+   workspace in BOTH dimensions; the rules here are just the pre-JS fallback. */
+.ui-center-panels{flex:1;overflow-y:auto;min-height:0;display:grid;grid-template-columns:1fr;grid-auto-rows:minmax(260px,1fr);align-content:start}
 .ui-tile{position:relative;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border);border-bottom:1px solid var(--border);min-height:0;background:#020810}
 .ui-tile .ui-widget-head{padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0}
 .ui-tile.dragging{opacity:.4}
@@ -134,7 +136,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .ui-mjpeg-dot{position:absolute;top:10px;right:10px;width:6px;height:6px;border-radius:50%;background:var(--text-dim);z-index:2;transition:all .3s}
 .ui-mjpeg-dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}
 .ui-map{flex:1;min-height:0;position:relative}
-.ui-map .map-host{position:absolute;inset:0}
+/* !important: widgets are mounted while their tile is still detached from the
+   document, so Leaflet's init reads position:static and force-sets an inline
+   position:relative.  Without !important that inline style beats this rule
+   and the map host collapses to zero height (blank map). */
+.ui-map .map-host{position:absolute !important;inset:0}
 
 /* Keep the camera controls column class for the (deleted) legacy layout; the
    classes below are shared with the playback/modules tabs. */
@@ -856,8 +862,38 @@ function renderCenterWorkspace() {
     return;
   }
   entries.forEach(e => panelsEl.appendChild(buildCenterTile(e)));
+  layoutCenterGrid();
   // Leaflet maps need a nudge after being (re)mounted.
   setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+}
+
+// Even 2-D tiling: pick the column count whose tiles come closest to a 16:9
+// camera-frame aspect for the current panel size, so the workspace fills in
+// BOTH dimensions (2 tiles stack, 4 tiles make 2×2, …) instead of flowing
+// into a single horizontal band.  Empty grid cells carry a small score
+// penalty so balanced grids win ties.  Re-run on every render and on resize.
+function layoutCenterGrid() {
+  const panelsEl = document.getElementById('ui-center-panels');
+  if (!panelsEl) return;
+  const n = panelsEl.querySelectorAll('.ui-tile').length;
+  if (!n) {
+    panelsEl.style.gridTemplateColumns = '1fr';
+    panelsEl.style.gridTemplateRows = '';
+    return;
+  }
+  const W = panelsEl.clientWidth, H = panelsEl.clientHeight;
+  if (!W || !H) return;   // MAIN tab hidden — keep the previous template
+  let best = null;
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const aspect = (W / cols) / (H / rows);
+    const score = Math.abs(Math.log(aspect / (16 / 9))) + (cols * rows - n) * 0.15;
+    if (!best || score < best.score) best = { cols, rows, score };
+  }
+  panelsEl.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+  // Rows share the panel height equally; past ~4 rows the 260 px floor makes
+  // the grid scroll vertically instead of squashing tiles to nothing.
+  panelsEl.style.gridTemplateRows = `repeat(${best.rows}, minmax(260px, 1fr))`;
 }
 
 function buildCenterTile(entry) {
@@ -888,8 +924,12 @@ function buildCenterTile(entry) {
     if (!(m && id) || (m === entry.m && id === entry.id)) return;
     const comp2 = findComponent(m, id);
     if (comp2 && comp2.region !== 'center') return;   // sidebar-only component
+    // 2-D grid: top/bottom thirds insert before/after the target's slot; the
+    // middle band falls back to the horizontal half for same-row moves.
     const rect = el.getBoundingClientRect();
-    const after = ev.clientX > rect.left + rect.width / 2;
+    const relY = (ev.clientY - rect.top) / rect.height;
+    const relX = (ev.clientX - rect.left) / rect.width;
+    const after = relY < 0.35 ? false : relY > 0.65 ? true : relX > 0.5;
     moveWidget(m, id, 'center', entry, after);
   });
   if (comp) {
@@ -1480,8 +1520,11 @@ function setFieldValue(f, el, v) {
   }
 }
 
-// Called whenever the IP input changes.
-async function onBackendIpChange(raw) {
+// Called whenever the IP input changes.  Keystroke-debounced: every
+// intermediate host ("1", "12.7", …) would otherwise fire its own
+// probe/refresh storm while the operator is still typing.
+let _ipChangeTimer = null;
+function onBackendIpChange(raw) {
   _backendBase = buildBaseUrl(raw);
   if (raw.trim()) {
     localStorage.setItem(BACKEND_STORAGE_KEY, raw.trim());
@@ -1489,14 +1532,17 @@ async function onBackendIpChange(raw) {
     localStorage.removeItem(BACKEND_STORAGE_KEY);
   }
   setBackendConnState('pending');
-  // Probe the backend with a lightweight call.
-  probeBackend();
-  // Component definitions come from /api/modules — refresh, then rebuild
-  // the workspace layout for this backend.
-  await refreshModuleInfo();
-  reconcileLayout();
-  fetchPlaybackSettings();
-  if (activeTab === 'modules') { loadModules(); loadSshKey(); }
+  clearTimeout(_ipChangeTimer);
+  _ipChangeTimer = setTimeout(async () => {
+    // Probe the backend with a lightweight call.
+    probeBackend();
+    // Component definitions come from /api/modules — refresh, then rebuild
+    // the workspace layout for this backend.
+    await refreshModuleInfo();
+    reconcileLayout();
+    fetchPlaybackSettings();
+    if (activeTab === 'modules') { loadModules(); loadSshKey(); }
+  }, 350);
 }
 
 function setBackendConnState(state) {
@@ -1505,12 +1551,16 @@ function setBackendConnState(state) {
   dot.className = 'backend-conn-dot' + (state === 'ok' ? ' on' : state === 'err' ? ' err' : '');
 }
 
+// Only the latest probe may touch the dot — a slow failure from a superseded
+// host must not overwrite a newer probe's result.
+let _probeSeq = 0;
 async function probeBackend() {
+  const seq = ++_probeSeq;
   if (!getBase()) { setBackendConnState(''); return; }
   try {
     const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(3000) });
-    setBackendConnState(r.ok ? 'ok' : 'err');
-  } catch { setBackendConnState('err'); }
+    if (seq === _probeSeq) setBackendConnState(r.ok ? 'ok' : 'err');
+  } catch { if (seq === _probeSeq) setBackendConnState('err'); }
 }
 
 // ── Restore saved IP on load ──────────────────────────────
@@ -1562,6 +1612,7 @@ function switchTab(tab) {
     // If the initial /api/modules fetch failed, retry so the workspace
     // doesn't stay empty until the next backend-IP change.
     if (!_modInfo) refreshModuleInfo().then(reconcileLayout);
+    layoutCenterGrid();   // no-op render while hidden leaves stale geometry
     setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
   }
 }
@@ -2359,15 +2410,21 @@ function toast(msg, type='') {
 //  INIT
 // ═══════════════════════════════════════════════════════════
 initRegionDropZones();
-// Populate playback settings and build the component workspace once the
-// backend IP is available (component definitions come from /api/modules).
+// Build the component workspace and populate the playback settings.
+// /api/modules is fetched unconditionally so the workspace populates on first
+// load when the page is served same-origin too (no backend IP configured);
+// a failed fetch just leaves the empty states in place.
 renderWorkspace();   // empty states until a backend provides components
-if (getBase()) {
-  refreshModuleInfo().then(() => {
-    reconcileLayout();
-    fetchPlaybackSettings();
-  });
-}
+refreshModuleInfo().then(() => {
+  reconcileLayout();
+  fetchPlaybackSettings();
+});
+
+// Re-tile the centre workspace and refresh Leaflet maps on window resize.
+window.addEventListener('resize', () => {
+  layoutCenterGrid();
+  setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+});
 
 setInterval(loadAllRecordings, 15000);
 </script>

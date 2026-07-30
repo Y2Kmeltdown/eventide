@@ -31,6 +31,9 @@ server {
     server_name _;  # matches any hostname / IP
 
     # --- MJPEG playback (base component, fixed port) ---
+    # (When nginx is absent — bench installs, a remote frontend pointed
+    # straight at eventide.py's port — eventide.py proxies /playback/ to
+    # the same upstream itself, so both deployments behave identically.)
     location /playback/ {
         proxy_pass http://127.0.0.1:8084/;
         proxy_buffering off;

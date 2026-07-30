@@ -11,7 +11,7 @@
 //!
 //! HTTP API
 //! --------
-//!   POST /play     { "file": "/path/to/recording.raw", "speed": 1.0 }
+//!   POST /play     { "cam": "<recordings subdir>", "filename": "rec.raw", "speed": 1.0 }
 //!   POST /stop
 //!   GET  /status   → { "playing": bool, "file": str|null, "type": str|null }
 //!   GET  /settings → { "quality": u8, "out_width": u32, "out_height": u32, "fps": u64 }
@@ -611,33 +611,35 @@ fn handle_client(
 
         // ── POST /play ────────────────────────────────────────────────────────
         ("POST", "/play") => {
-            // Parse JSON body: { "file": "...", "speed": 1.0 }
+            // Parse JSON body: { "cam": "<recordings subdir>", "filename": "...", "speed": 1.0 }
+            // `cam` is the recordings sub-directory a module declared in its
+            // manifest (recordings_subdir) — any installed module's source is
+            // accepted, nothing is hardcoded per camera.
             let cam_val = json_str_field(&body, "cam");
             let file_val = json_str_field(&body, "filename");
             let speed_val = json_f64_field(&body, "speed").unwrap_or(1.0);
 
-            let file = match file_val {
-                Some(f) if !f.is_empty() => PathBuf::from(f),
+            let cam = match cam_val {
+                Some(c) if is_safe_component(c) => c,
                 _ => {
                     respond_json(&mut stream, "400 Bad Request",
-                        r#"{"error":"missing field: file"}"#);
+                        r#"{"error":"invalid or missing cam"}"#);
+                    return;
+                }
+            };
+            let file = match file_val {
+                Some(f) if is_safe_component(f) => f,
+                _ => {
+                    respond_json(&mut stream, "400 Bad Request",
+                        r#"{"error":"missing or invalid field: filename"}"#);
                     return;
                 }
             };
 
-            let filepath = match cam_val {
-                Some("picam") => PathBuf::from(format!("{}/picam/{}", args.recordings, file.display())),
-                Some("ircam") => PathBuf::from(format!("{}/ircam/{}", args.recordings, file.display())),
-                Some("evk") => PathBuf::from(format!("{}/evk/{}", args.recordings, file.display())),
-                _ => {
-                    respond_json(&mut stream, "404 Not Found",
-                    r#"{"error":"Invalid Camera Type or no camera supplied"}"#);
-                    return
-                    }
-            };
+            // Both components are validated single path components, so this
+            // join cannot escape <recordings>/<cam>/.
+            let filepath = PathBuf::from(&args.recordings).join(cam).join(file);
 
-            //println!("{}", filepath.display());
-            
             if !filepath.exists() {
                 respond_json(&mut stream, "404 Not Found",
                     r#"{"error":"file not found"}"#);
@@ -663,7 +665,7 @@ fn handle_client(
 
             let resp = format!(
                 r#"{{"ok":true,"file":"{}","speed":{}}}"#,
-                file.display(), speed_val
+                file, speed_val
             );
             respond_json(&mut stream, "200 OK", &resp);
         }
@@ -752,6 +754,13 @@ fn handle_client(
 // ── Minimal JSON field extractors ─────────────────────────────────────────────
 // Avoids pulling in serde_json for the server binary.
 
+/// A single safe path component — non-empty, no separators, not "." or "..".
+/// Mirrors the eventide.py rules for `recordings_subdir` and keeps /play
+/// requests from escaping the recordings tree.
+fn is_safe_component(s: &str) -> bool {
+    !s.is_empty() && s != "." && s != ".." && !s.contains('/') && !s.contains('\\')
+}
+
 fn json_str_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let needle = format!(r#""{key}""#);
     let start  = json.find(&needle)? + needle.len();
@@ -827,7 +836,7 @@ fn main() {
 
     println!("[playback] Listening on http://{}", args.bind);
     println!("[playback] MJPEG stream: http://{}/", args.bind);
-    println!("[playback] POST /play   {{ \"file\": \"/path/to/file.raw\", \"speed\": 1.0 }}");
+    println!("[playback] POST /play   {{ \"cam\": \"<recordings subdir>\", \"filename\": \"file.raw\", \"speed\": 1.0 }}");
     println!("[playback] POST /stop");
     println!("[playback] GET  /status");
     println!("[playback] GET  /settings");

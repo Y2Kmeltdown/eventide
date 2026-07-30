@@ -11,13 +11,14 @@ directly (field laptop, local network).  For data-constrained links the
 decoupled frontend server (frontend.py) is still preferred: it keeps
 HTML/tile bandwidth off the link — see vehicle.nginx.
 
-Streams are proxied through nginx — this server only handles control
-and file APIs; the MJPEG streams themselves are served by nginx at:
+Module network locations are NOT hardcoded in nginx.  TCP ports for module
+sockets are allocated by this server at install time (see --port-pool), and
+any HTTP service a module exposes is reachable through the generic proxy
 
-  /stream/evk/        → 127.0.0.1:8081
-  /stream/picam/      → 127.0.0.1:8082/stream
-  /stream/ircam/      → 127.0.0.1:8083
-  /playback/
+  /proxy/<module>/<socket>/<upstream path>  →  127.0.0.1:<allocated port>/<upstream path>
+
+resolved from the installed-modules registry at request time.  nginx only
+fronts this process (location /) and the base playback server (/playback/).
 
 Usage:
     pip install flask
@@ -49,6 +50,7 @@ import requests as _http
 
 from flask import (
     Flask,
+    Response,
     abort,
     jsonify,
     make_response,
@@ -253,6 +255,89 @@ def supervisor_proxy():
         )
     return upstream.content, upstream.status_code, {"Content-Type": "text/xml"}
 
+# ── Module socket proxy ───────────────────────────────────────────────────────
+# Generic reverse proxy for HTTP services exposed by installed modules.  The
+# dashboard resolves module/socket names from /api/modules and calls
+#   /proxy/<module>/<socket>/<upstream path>
+# which is forwarded to 127.0.0.1:<allocated port>/<upstream path>.  This
+# replaces per-module nginx locations: nginx only fronts eventide.py, and a
+# module's network location is derived from the registry at request time, so
+# modules can come and go without any web-server config changes.
+#
+# Responses are streamed (requests stream=True + a generator Response) so
+# long-lived MJPEG streams work; Flask's dev server is threaded by default,
+# so an open stream does not block ordinary API calls.
+
+_HOP_BY_HOP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length",
+}
+
+
+def _module_tcp_port(module: str, socket_name: str) -> int | None:
+    """Allocated TCP port of an installed module's socket, or None."""
+    entry = load_registry().get("modules", {}).get(module)
+    if entry is None:
+        return None
+    for s in entry.get("manifest", {}).get("sockets", []):
+        if s.get("name") == socket_name and s.get("type") == "tcp":
+            port = s.get("port")
+            return port if isinstance(port, int) else None
+    return None
+
+
+@app.route("/proxy/<module>/<socket_name>/", defaults={"rest": ""},
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+@app.route("/proxy/<module>/<socket_name>/<path:rest>",
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+def module_socket_proxy(module, socket_name, rest):
+    port = _module_tcp_port(module, socket_name)
+    if port is None:
+        return jsonify({
+            "error": f"no such module tcp socket: {module}/{socket_name}"
+        }), 404
+
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    url = f"http://127.0.0.1:{port}/{rest}"
+    if request.query_string:
+        url += "?" + request.query_string.decode()
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP_HEADERS
+    }
+    try:
+        upstream = _http.request(
+            request.method,
+            url,
+            headers=headers,
+            data=request.get_data(),
+            stream=True,
+            # Connect deadline only — no read deadline, or MJPEG streams die.
+            timeout=(5, None),
+        )
+    except _http.exceptions.ConnectionError:
+        return jsonify({
+            "error": f"{module}/{socket_name} is unreachable on port {port}"
+        }), 502
+    except _http.exceptions.RequestException as exc:
+        return jsonify({"error": f"proxy error: {exc}"}), 502
+
+    resp_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_HEADERS
+    }
+    return Response(
+        upstream.iter_content(chunk_size=64 * 1024),
+        status=upstream.status_code,
+        headers=resp_headers,
+    )
+
 # ── Viewfinder API ────────────────────────────────────────────────────────────
 
 @app.route("/api/viewfinder/<mode>/start", methods=["POST"])
@@ -321,35 +406,44 @@ def api_stream_config_get(cam):
     return jsonify(stream_configs[cam])
 
 # ── Recordings ────────────────────────────────────────────────────────────────
-# Each camera has its own sub-directory under recordings_dir:
-#   <recordings_dir>/evk/
-#   <recordings_dir>/picam/
-#   <recordings_dir>/ircam/
-# Falls back to the root dir for backwards-compatibility (evk only).
+# Recording sources are module-driven: every installed module that declares
+# `recordings_subdir` in its manifest gets a recordings directory
+# (<recordings_dir>/<recordings_subdir>) and shows up as a source here.  The
+# dashboard's PLAYBACK tab builds one inner tab per source — sources no
+# installed module declares simply do not exist.
 
-def _recordings_dir(cam: str) -> Path:
-    base = Path(cfg["recordings_dir"])
-    sub  = base / cam
-    return sub if sub.exists() else base
+def _recording_sources() -> list[dict]:
+    """Recording sources declared by installed modules: [{name, module}]."""
+    sources = []
+    for mod_name, entry in load_registry().get("modules", {}).items():
+        sub = entry.get("manifest", {}).get("recordings_subdir")
+        if isinstance(sub, str) and sub:
+            sources.append({"name": sub, "module": mod_name})
+    sources.sort(key=lambda s: s["name"])
+    return sources
+
+
+def _recordings_dir(source: str) -> Path:
+    return Path(cfg["recordings_dir"]) / source
 
 
 @app.route("/api/recordings")
-def list_recordings_legacy():
-    """Legacy endpoint — returns EVK recordings from the root dir."""
-    return _list_recordings_for("evk")
+def list_recording_sources():
+    """List the recording sources declared by installed modules."""
+    return jsonify({"sources": _recording_sources()})
 
 
-@app.route("/api/recordings/<cam>")
-def list_recordings_cam(cam):
-    if cam not in ("evk", "picam", "ircam", "telemetry"):
-        abort(400)
-    return _list_recordings_for(cam)
+@app.route("/api/recordings/<source>")
+def list_recordings_source(source):
+    if source not in {s["name"] for s in _recording_sources()}:
+        return jsonify({"error": f"unknown recording source: {source}"}), 404
+    return _list_recordings_for(source)
 
 
 RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264", "*.jsonl")
 
-def _list_recordings_for(cam: str):
-    recordings_dir = _recordings_dir(cam)
+def _list_recordings_for(source: str):
+    recordings_dir = _recordings_dir(source)
     if not recordings_dir.exists():
         return jsonify({"files": []})
     seen = set()
@@ -363,23 +457,17 @@ def _list_recordings_for(cam: str):
     return jsonify({"files": entries})
 
 
-@app.route("/api/recordings/<cam>/<filename>/download")
-def download_recording(cam, filename):
-    if cam not in ("evk", "picam", "ircam", "telemetry"):
-        abort(400)
-    recordings_dir = _recordings_dir(cam)
+@app.route("/api/recordings/<source>/<filename>/download")
+def download_recording(source, filename):
+    if source not in {s["name"] for s in _recording_sources()}:
+        return jsonify({"error": f"unknown recording source: {source}"}), 404
+    recordings_dir = _recordings_dir(source)
     filepath = (recordings_dir / filename).resolve()
     if filepath.parent != recordings_dir.resolve():
         abort(400)
     if not filepath.exists():
         abort(404)
     return send_file(filepath, as_attachment=True, download_name=filename)
-
-
-# Legacy download route (evk, root dir)
-@app.route("/api/recordings/<filename>/download")
-def download_recording_legacy(filename):
-    return download_recording("evk", filename)
 
 # ── Module manager ────────────────────────────────────────────────────────────
 # Modules are GitHub repositories containing an eventide-module.json manifest
@@ -399,7 +487,7 @@ _ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 _ARG_TYPES = ("str", "int", "float")
 _KNOWN_PLACEHOLDERS = (
     "install_dir", "config_dir", "module_dir", "recordings_dir",
-    "venv_dir", "venv_python",
+    "recordings_subdir", "venv_dir", "venv_python",
 )
 _VENV_DIR_NAME = ".venv"
 _SUPERVISOR_STATES = {
@@ -565,6 +653,7 @@ def validate_manifest(m) -> list[str]:
             elif atype == "str" and not isinstance(a["default"], str):
                 errors.append(f"argument '{an}' default must be a string")
 
+    sock_names: set[str] = set()
     sockets = m.get("sockets", [])
     if not isinstance(sockets, list):
         errors.append("'sockets' must be a list")
@@ -581,13 +670,18 @@ def validate_manifest(m) -> list[str]:
             if sn in seen_sock_names:
                 errors.append(f"duplicate socket name '{sn}'")
             seen_sock_names.add(sn)
+            sock_names.add(sn)
             stype = s.get("type")
             if stype not in ("tcp", "unix"):
                 errors.append(f"socket '{sn}' type must be 'tcp' or 'unix'")
             elif stype == "tcp":
+                # 'port' is optional: when omitted, eventide allocates one
+                # from --port-pool at install time.
                 port = s.get("port")
-                if not isinstance(port, int) or not (1 <= port <= 65535):
-                    errors.append(f"socket '{sn}' needs a valid tcp 'port' (1-65535)")
+                if port is not None and (
+                    not isinstance(port, int) or not (1 <= port <= 65535)
+                ):
+                    errors.append(f"socket '{sn}' tcp 'port' must be 1-65535 when given")
             else:
                 spath = s.get("path")
                 if not isinstance(spath, str) or not spath.startswith("/"):
@@ -615,11 +709,21 @@ def validate_manifest(m) -> list[str]:
                 continue
             for ph in re.findall(r"\{([^}]*)\}", cmd):
                 if ph in _KNOWN_PLACEHOLDERS:
+                    if ph == "recordings_subdir" and not m.get("recordings_subdir"):
+                        errors.append(
+                            f"program '{pn}' uses '{{recordings_subdir}}' but the "
+                            "manifest declares no 'recordings_subdir'"
+                        )
                     continue
                 if ph.startswith("arg:"):
                     if ph[4:] not in arg_names:
                         errors.append(
                             f"program '{pn}' uses undeclared argument '{{{ph}}}'"
+                        )
+                elif ph.startswith("socket:"):
+                    if ph[7:] not in sock_names:
+                        errors.append(
+                            f"program '{pn}' uses undeclared socket '{{{ph}}}'"
                         )
                 else:
                     errors.append(f"program '{pn}' uses unknown placeholder '{{{ph}}}'")
@@ -645,6 +749,17 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
             errors.append(
                 f"program name '{p['name']}' is already used by another installed module"
             )
+    existing_subs = {
+        e["manifest"].get("recordings_subdir"): ename
+        for ename, e in installed.items()
+        if e["manifest"].get("recordings_subdir")
+    }
+    sub = manifest.get("recordings_subdir")
+    if sub and sub in existing_subs:
+        errors.append(
+            f"recordings_subdir '{sub}' is already used by module "
+            f"'{existing_subs[sub]}'"
+        )
     existing_ports: dict[int, str] = {}
     for ename, e in installed.items():
         for s in e["manifest"].get("sockets", []):
@@ -659,6 +774,63 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
     return errors
 
 
+# ── Port allocation ───────────────────────────────────────────────────────────
+# TCP ports are platform-assigned: a module socket may request an explicit
+# 'port' (honoured if free), but the default is to leave it out and let the
+# installer pick one from --port-pool.  The allocated port is written back
+# into the manifest before it is rendered and registered, so modules.json,
+# /api/modules, and every later re-render all see the same number.
+
+def _allocate_ports(manifest: dict, registry: dict, job: dict) -> None:
+    """Assign TCP ports to the manifest's sockets that don't declare one."""
+    wanted = [
+        s for s in manifest.get("sockets", [])
+        if isinstance(s, dict) and s.get("type") == "tcp" and s.get("port") is None
+    ]
+    if not wanted:
+        return
+    try:
+        start_s, end_s = str(cfg.get("port_pool", "8100-8199")).split("-", 1)
+        pool = range(int(start_s), int(end_s) + 1)
+    except ValueError:
+        raise RuntimeError(
+            f"invalid --port-pool {cfg.get('port_pool')!r} (expected 'start-end')"
+        )
+
+    used: set[int] = set()
+    for entry in registry.get("modules", {}).values():
+        for s in entry.get("manifest", {}).get("sockets", []):
+            if isinstance(s, dict) and isinstance(s.get("port"), int):
+                used.add(s["port"])
+    for s in manifest.get("sockets", []):
+        if isinstance(s, dict) and isinstance(s.get("port"), int):
+            used.add(s["port"])
+
+    def _port_free(port: int) -> bool:
+        # A bind test catches anything the registry doesn't know about
+        # (base services, other software on the payload).
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("0.0.0.0", port))
+            except OSError:
+                return False
+        return True
+
+    for s in wanted:
+        for port in pool:
+            if port in used or not _port_free(port):
+                continue
+            s["port"] = port
+            used.add(port)
+            _job_log(job, f"allocated tcp port {port} to socket '{s.get('name')}'")
+            break
+        else:
+            raise RuntimeError(
+                f"no free port in pool {cfg.get('port_pool')} "
+                f"for socket '{s.get('name')}'"
+            )
+
+
 # ── Config rendering ──────────────────────────────────────────────────────────
 
 def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
@@ -668,10 +840,21 @@ def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
         if not isinstance(arg, dict) or "name" not in arg:
             continue  # tolerate malformed manifests during validation
         out = out.replace("{arg:%s}" % arg["name"], str(arg.get("default", "")))
+    for sock in manifest.get("sockets") or []:
+        if not isinstance(sock, dict) or "name" not in sock:
+            continue  # tolerate malformed manifests during validation
+        # tcp → the allocated/declared port, unix → the socket path.
+        value = sock.get("path") if sock.get("type") == "unix" else sock.get("port")
+        out = out.replace("{socket:%s}" % sock["name"], str(value or ""))
     out = out.replace("{install_dir}", MODULE_INSTALL_DIR)
     out = out.replace("{config_dir}", MODULE_CONFIG_DIR)
     out = out.replace("{module_dir}", str(Path(cfg["packages_dir"]) / module_name))
     out = out.replace("{recordings_dir}", cfg["recordings_dir"])
+    sub = manifest.get("recordings_subdir")
+    if isinstance(sub, str) and sub:
+        out = out.replace(
+            "{recordings_subdir}", str(Path(cfg["recordings_dir"]) / sub)
+        )
     out = out.replace("{venv_dir}", str(venv_dir))
     out = out.replace("{venv_python}", str(venv_dir / "bin" / "python3"))
     return out
@@ -953,9 +1136,12 @@ def _run_install_job(job: dict) -> None:
 
         name = manifest["name"]
         job["module"] = name
-        errors = conflict_errors(manifest, load_registry())
+        registry = load_registry()
+        errors = conflict_errors(manifest, registry)
         if errors:
             raise RuntimeError("; ".join(errors))
+        # Allocate TCP ports before anything renders the manifest.
+        _allocate_ports(manifest, registry, job)
 
         module_dir = Path(cfg["packages_dir"]) / name
         if module_dir.exists():
@@ -1032,6 +1218,11 @@ def _run_install_job(job: dict) -> None:
             rec_dir = Path(cfg["recordings_dir"]) / sub
             rec_dir.mkdir(parents=True, exist_ok=True)
             _job_log(job, f"created recordings dir {rec_dir}")
+        for s in manifest.get("sockets", []):
+            # Unix socket paths may point into a directory that doesn't exist
+            # yet (e.g. /run/eventide/<module>/...) — create the parent.
+            if s.get("type") == "unix" and isinstance(s.get("path"), str):
+                Path(s["path"]).parent.mkdir(parents=True, exist_ok=True)
 
         # ── Supervisor config ─────────────────────────────────────────────
         _job_status(job, "configuring")
@@ -1144,6 +1335,7 @@ def api_modules_list():
             "author": m.get("author"),
             "repo_url": entry.get("repo_url"),
             "installed_at": entry.get("installed_at"),
+            "recordings_subdir": m.get("recordings_subdir"),
             "arguments": m.get("arguments", []),
             "sockets": m.get("sockets", []),
             "programs": [
@@ -1473,7 +1665,7 @@ def main():
     parser.add_argument("--viewfinder-bin",        default="./target/release/viewfinder")
     parser.add_argument("--live-events-socket",    default="/tmp/evk4_events.sock")
     parser.add_argument("--live-port",             type=int, default=8081,
-                        help="Port the live viewfinder binds to (nginx proxies /stream/evk/)")
+                        help="Port the legacy built-in live viewfinder binds to")
     parser.add_argument("--supervisor-rpc-url",    default=_SUPERVISOR_RPC_URL,
                         help="URL of supervisord's XML-RPC endpoint "
                              "(default: http://127.0.0.1:9001/RPC2)")
@@ -1483,6 +1675,9 @@ def main():
                         help="Directory where module repositories are cloned")
     parser.add_argument("--supervisor-conf-d",     default="/etc/supervisor/conf.d",
                         help="Directory where per-module supervisor configs are written")
+    parser.add_argument("--port-pool",             default="8100-8199",
+                        help="Range of TCP ports allocated to module sockets that "
+                             "don't request an explicit port (start-end)")
     parser.add_argument("--host",                  default="0.0.0.0")
     parser.add_argument("--port",                  type=int, default=5000)
     parser.add_argument("--html-file",             default=str(Path(__file__).resolve().with_name("dashboard.html")),
@@ -1499,11 +1694,12 @@ def main():
 
     print(f"[backend]  Recordings dir:    {args.recordings_dir}")
     print(f"[backend]  Viewfinder binary: {args.viewfinder_bin}")
-    print(f"[backend]  Live VF port:      {args.live_port}  (nginx → /stream/evk/)")
+    print(f"[backend]  Live VF port:      {args.live_port}  (legacy built-in viewfinder)")
     print(f"[backend]  Supervisor RPC:    {_SUPERVISOR_RPC_URL}  (proxied at /supervisor/)")
     print(f"[backend]  Modules registry:  {args.modules_registry}")
     print(f"[backend]  Packages dir:      {args.packages_dir}")
     print(f"[backend]  Supervisor conf.d: {args.supervisor_conf_d}")
+    print(f"[backend]  Module port pool:  {args.port_pool}")
     print(f"[backend]  CORS origin:       {_ALLOWED_ORIGIN}")
     print(f"[backend]  Dashboard HTML:    {args.html_file}  (served at /)")
     print(f"[backend]  Tile proxy:        /tiles/<z>/<x>/<y>.png  →  {_OSM_BASE}")

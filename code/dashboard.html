@@ -653,27 +653,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 <div class="workspace" id="ws-playback">
 
   <div class="playback-left">
-    <div class="inner-tab-bar">
-      <button class="inner-tab cyan active" id="pb-tab-evk"       onclick="switchInnerTab('evk')">EVK4</button>
-      <button class="inner-tab green"       id="pb-tab-picam"     onclick="switchInnerTab('picam')">PICAM</button>
-      <button class="inner-tab"             id="pb-tab-ircam"     onclick="switchInnerTab('ircam')">IRCAM</button>
-      <button class="inner-tab"             id="pb-tab-telemetry" onclick="switchInnerTab('telemetry')">TELEMETRY</button>
-    </div>
-    <div class="inner-panel active" id="pb-panel-evk">
-      <div class="rec-header"><span class="rec-title">EVK4 RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('evk')">↻</button></div>
-      <div class="rec-scroll"><div id="rec-list-evk" class="rec-list"><div class="empty">Loading…</div></div></div>
-    </div>
-    <div class="inner-panel" id="pb-panel-picam">
-      <div class="rec-header"><span class="rec-title">PICAM RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('picam')">↻</button></div>
-      <div class="rec-scroll"><div id="rec-list-picam" class="rec-list"><div class="empty">Loading…</div></div></div>
-    </div>
-    <div class="inner-panel" id="pb-panel-ircam">
-      <div class="rec-header"><span class="rec-title">IRCAM RECORDINGS</span><button class="btn-sm" onclick="loadRecordings('ircam')">↻</button></div>
-      <div class="rec-scroll"><div id="rec-list-ircam" class="rec-list"><div class="empty">Loading…</div></div></div>
-    </div>
-    <div class="inner-panel" id="pb-panel-telemetry">
-      <div class="rec-header"><span class="rec-title">TELEMETRY FILES</span><button class="btn-sm" onclick="loadRecordings('telemetry')">↻</button></div>
-      <div class="rec-scroll"><div id="rec-list-telemetry" class="rec-list"><div class="empty">Loading…</div></div></div>
+    <!-- Tabs and panels are generated from the installed modules' recording
+         sources (GET /api/recordings) — nothing is hardcoded per camera. -->
+    <div class="inner-tab-bar" id="pb-tab-bar"></div>
+    <div id="pb-panels">
+      <div class="empty">Loading recording sources…</div>
     </div>
   </div>
 
@@ -828,19 +812,61 @@ function getBase() { return _backendBase; }
 
 // Resolved endpoint helpers — all API traffic uses these.
 function supervisorUrl()    { return getBase() + '/supervisor/'; }
-function streamUrl(cam)     { return getBase() + '/stream/' + cam + '/'; }
 function playbackUrl(path)  { return getBase() + '/playback' + (path || '/'); }
 function apiUrl(path)       { return getBase() + '/api' + path; }
-function settingsUrl(cam, pb) {
-  return getBase() + (pb ? `/settings/pb/${cam}/` : `/settings/${cam}/`);
+
+// ── Module socket resolution ──────────────────────────────────────────────
+// Module HTTP services (MJPEG streams, per-camera settings, the gimbal API)
+// are reached through the backend's generic proxy:
+//   /proxy/<module>/<socket>/<upstream path>  →  127.0.0.1:<allocated port>
+// There are no per-module nginx locations — the cam → (module, socket)
+// mapping comes from /api/modules: the module whose recordings_subdir (or
+// name) matches the cam key, preferring a tcp socket named 'mjpeg'.
+let _modInfo = null;   // last /api/modules snapshot
+
+async function refreshModuleInfo() {
+  try {
+    const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(4000) });
+    _modInfo = r.ok ? await r.json() : null;
+  } catch { _modInfo = null; }
+  return _modInfo;
 }
-function viewUrl(cam, pb) {
-  return getBase() + (pb ? `/view/pb/${cam}/` : `/view/${cam}/`);
+
+function _findCamSocket(cam) {
+  const mods = _modInfo?.modules || [];
+  const m = mods.find(m => m.recordings_subdir === cam || m.name === cam)
+         || mods.find(m => (m.name || '').startsWith(cam));
+  if (!m) return null;
+  const tcp  = (m.sockets || []).filter(s => s.type === 'tcp' && s.port);
+  const sock = tcp.find(s => s.name === 'mjpeg') || tcp[0];
+  return sock ? { module: m.name, socket: sock.name } : null;
 }
-function gimbalUrl(path)    { return getBase() + '/gimbal' + path; }
+
+function streamUrl(cam) {
+  const hit = _findCamSocket(cam);
+  return hit ? `${getBase()}/proxy/${hit.module}/${hit.socket}/stream` : '';
+}
+function settingsUrl(cam) {
+  const hit = _findCamSocket(cam);
+  return hit ? `${getBase()}/proxy/${hit.module}/${hit.socket}/api/settings` : '';
+}
+function viewUrl(cam) {
+  const hit = _findCamSocket(cam);
+  return hit ? `${getBase()}/proxy/${hit.module}/${hit.socket}/api/streaming` : '';
+}
+function gimbalUrl(path) {
+  // Convention: the gimbal module is named 'gimbal-controller'; fall back to
+  // any module still exposing the legacy port 5001.  If none is installed,
+  // point at the conventional name anyway — the proxy's 404 says what's missing.
+  const mods = _modInfo?.modules || [];
+  const m = mods.find(m => m.name === 'gimbal-controller')
+         || mods.find(m => (m.sockets || []).some(s => s.type === 'tcp' && s.port === 5001));
+  const sock = m && (m.sockets || []).find(s => s.type === 'tcp' && s.port);
+  return `${getBase()}/proxy/${m ? m.name : 'gimbal-controller'}/${sock ? sock.name : 'api'}${path}`;
+}
 
 // Called whenever the IP input changes.
-function onBackendIpChange(raw) {
+async function onBackendIpChange(raw) {
   _backendBase = buildBaseUrl(raw);
   if (raw.trim()) {
     localStorage.setItem(BACKEND_STORAGE_KEY, raw.trim());
@@ -850,10 +876,12 @@ function onBackendIpChange(raw) {
   setBackendConnState('pending');
   // Probe the backend with a lightweight call.
   probeBackend();
+  // Module/socket resolution must be fresh before building stream URLs.
+  await refreshModuleInfo();
   // Refresh live stream src so they point to the new host.
   refreshStreamSrcs();
   // Re-fetch camera settings for the new backend.
-  ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
+  ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam));
   fetchPlaybackSettings();
   fetchAdsbSettings();
   if (activeTab === 'modules') { loadModules(); loadSshKey(); }
@@ -868,7 +896,7 @@ function setBackendConnState(state) {
 async function probeBackend() {
   if (!getBase()) { setBackendConnState(''); return; }
   try {
-    const r = await fetch(apiUrl('/recordings/evk'), { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(3000) });
     setBackendConnState(r.ok ? 'ok' : 'err');
   } catch { setBackendConnState('err'); }
 }
@@ -904,6 +932,12 @@ function connectStream(cam) {
   clearTimeout(_streamRetryTimer[cam]);
 
   const url = streamUrl(cam);
+  if (!url) {
+    // No installed module provides this camera's stream socket.
+    document.getElementById('cell-' + cam)?.classList.replace('on', 'off');
+    document.getElementById('hdr-dot-' + cam)?.classList.remove('on');
+    return;
+  }
 
   img.onerror = () => {
     // Only retry if the toggle is still on
@@ -971,7 +1005,7 @@ function switchTab(tab) {
   document.getElementById('ws-' + tab).classList.add('active');
   document.getElementById('tab-' + tab).classList.add('active');
 
-  if (tab === 'playback') loadAllRecordings();
+  if (tab === 'playback') loadRecordingSources().then(loadAllRecordings);
   if (tab === 'modules') {
     loadModules();
     loadSshKey();
@@ -991,8 +1025,8 @@ function switchInnerTab(cam) {
   activeInnerTab = cam;
   document.querySelectorAll('.inner-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.inner-panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('pb-tab-' + cam).classList.add('active');
-  document.getElementById('pb-panel-' + cam).classList.add('active');
+  document.getElementById('pb-tab-' + cam)?.classList.add('active');
+  document.getElementById('pb-panel-' + cam)?.classList.add('active');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1042,6 +1076,7 @@ async function loadModules() {
     const r = await fetch(apiUrl('/modules'));
     if (!r.ok) throw new Error('HTTP ' + r.status);
     modules = (await r.json()).modules || [];
+    _modInfo = { modules };   // keep stream/gimbal URL resolution fresh
   } catch (e) {
     setModConn(false, 'Backend unreachable: ' + e.message);
     return;
@@ -1494,18 +1529,20 @@ function copySshKeyFallback() {
 
 // ═══════════════════════════════════════════════════════════
 //  MJPEG SERVER API HELPERS
-//  GET/PUT /settings/<cam>/       → live mjpeg_server /api/settings
-//  GET/PUT /view/<cam>/           → live mjpeg_server /api/streaming
-//  GET/PUT /settings/pb/<cam>/    → playback mjpeg_server /api/settings
-//  GET/PUT /view/pb/<cam>/        → playback mjpeg_server /api/streaming
+//  settingsUrl(cam) → module's mjpeg server /api/settings   (via /proxy/…)
+//  viewUrl(cam)     → module's mjpeg server /api/streaming  (via /proxy/…)
+//  Both resolve through the installed-modules registry — empty when no
+//  module provides that camera.
 // ═══════════════════════════════════════════════════════════
-async function mjpegGetSettings(cam, isPlayback = false) {
-  const url = settingsUrl(cam, isPlayback);
+async function mjpegGetSettings(cam) {
+  const url = settingsUrl(cam);
+  if (!url) return null;
   try { const r = await fetch(url); return r.ok ? r.json() : null; }
   catch { return null; }
 }
-async function mjpegPutSettings(cam, out_width, out_height, quality, isPlayback = false) {
-  const url = settingsUrl(cam, isPlayback);
+async function mjpegPutSettings(cam, out_width, out_height, quality) {
+  const url = settingsUrl(cam);
+  if (!url) throw new Error('no stream module installed for ' + cam);
   const r = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -1517,8 +1554,9 @@ async function mjpegPutSettings(cam, out_width, out_height, quality, isPlayback 
   }
   return r.json();
 }
-async function mjpegPutStreaming(cam, streaming, isPlayback = false) {
-  const url = viewUrl(cam, isPlayback);
+async function mjpegPutStreaming(cam, streaming) {
+  const url = viewUrl(cam);
+  if (!url) throw new Error('no stream module installed for ' + cam);
   const r = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -1527,14 +1565,13 @@ async function mjpegPutStreaming(cam, streaming, isPlayback = false) {
   if (!r.ok) throw new Error(r.statusText);
   return r.json();
 }
-async function fetchAndPopulateSettings(cam, isPlayback = false) {
-  const s = await mjpegGetSettings(cam, isPlayback);
+async function fetchAndPopulateSettings(cam) {
+  const s = await mjpegGetSettings(cam);
   if (!s) return;
-  const pfx = isPlayback ? 'pb' : cam;
-  const qEl = document.getElementById(pfx + '-quality');
-  const wEl = document.getElementById(pfx + '-width');
-  const hEl = document.getElementById(pfx + '-height');
-  const qv  = document.getElementById(pfx + '-q-val');
+  const qEl = document.getElementById(cam + '-quality');
+  const wEl = document.getElementById(cam + '-width');
+  const hEl = document.getElementById(cam + '-height');
+  const qv  = document.getElementById(cam + '-q-val');
   if (qEl) { qEl.value = s.quality; if (qv) qv.textContent = s.quality; }
   if (wEl) wEl.value = s.out_width;
   if (hEl) hEl.value = s.out_height;
@@ -1606,8 +1643,49 @@ function extBadge(ext) {
   const c = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
   return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;border:1px solid ${c};color:${c};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;
 }
+// Recording sources come from the backend: one per installed module that
+// declares recordings_subdir (GET /api/recordings → {sources: [...]}).
+let recSources = [];   // [{name, module}]
+
+async function loadRecordingSources() {
+  try {
+    const res  = await fetch(apiUrl('/recordings'));
+    const data = await res.json();
+    recSources = data.sources || [];
+  } catch { recSources = []; }
+  renderRecordingTabs();
+}
+
+function renderRecordingTabs() {
+  const bar    = document.getElementById('pb-tab-bar');
+  const panels = document.getElementById('pb-panels');
+  if (!bar || !panels) return;
+  if (!recSources.length) {
+    bar.innerHTML = '';
+    panels.innerHTML = '<div class="empty">No recording modules installed.<br>'
+                     + 'Install a module that declares a recordings_subdir.</div>';
+    return;
+  }
+  if (!recSources.some(s => s.name === activeInnerTab)) activeInnerTab = recSources[0].name;
+  const colors = ['cyan', 'green'];
+  bar.innerHTML = recSources.map((s, i) => `
+      <button class="inner-tab ${colors[i % colors.length]} ${s.name === activeInnerTab ? 'active' : ''}"
+              id="pb-tab-${s.name}" title="${escHtml(s.module)}"
+              onclick="switchInnerTab('${s.name}')">${s.name.toUpperCase()}</button>`).join('');
+  panels.innerHTML = recSources.map(s => `
+    <div class="inner-panel ${s.name === activeInnerTab ? 'active' : ''}" id="pb-panel-${s.name}">
+      <div class="rec-header"><span class="rec-title">${s.name.toUpperCase()} · ${escHtml(s.module)}</span><button class="btn-sm" onclick="loadRecordings('${s.name}')">↻</button></div>
+      <div class="rec-scroll"><div id="rec-list-${s.name}" class="rec-list"><div class="empty">Loading…</div></div></div>
+    </div>`).join('');
+}
+
+// Extensions the playback server can actually decode — other files (e.g.
+// telemetry .jsonl) are download-only.
+const PLAYABLE_EXTS = ['raw', 'mp4', 'h264', 'mkv', 'avi'];
+
 async function loadRecordings(cam) {
   const el = document.getElementById('rec-list-' + cam);
+  if (!el) return;
   try {
     const res  = await fetch(apiUrl('/recordings/' + cam));
     const data = await res.json();
@@ -1622,15 +1700,16 @@ async function loadRecordings(cam) {
           </div>
         </div>
         <div class="rec-btns">
+          ${PLAYABLE_EXTS.includes((f.ext || '').toLowerCase()) ? `
           <button class="icon-btn play-btn ${playingFile===f.name?'playing-btn':''}"
-                  onclick="startReplay('${cam}','${f.name}')">${playingFile===f.name?'■':'▶'}</button>
+                  onclick="startReplay('${cam}','${f.name}')">${playingFile===f.name?'■':'▶'}</button>` : ''}
           <button class="icon-btn" title="Download"
                   onclick="window.location.href=apiUrl('/recordings/${cam}/${encodeURIComponent(f.name)}/download')">↓</button>
         </div>
       </div>`).join('');
   } catch { el.innerHTML = '<div class="empty">Error loading recordings</div>'; }
 }
-function loadAllRecordings() { ['evk','picam','ircam','telemetry'].forEach(loadRecordings); }
+function loadAllRecordings() { recSources.forEach(s => loadRecordings(s.name)); }
 
 async function startReplay(cam, filename) {
   const speed = parseFloat(document.getElementById('pb-speed').value);
@@ -1645,8 +1724,8 @@ async function startReplay(cam, filename) {
 
   playingFile = filename; playbackCam = cam;
   const img = document.getElementById('pb-img');
-  // Point the img at the nginx-proxied MJPEG stream for this camera.
-  // The playback_server always streams at /playback/<cam>/ via nginx.
+  // Point the img at the playback server's MJPEG stream (base component,
+  // nginx-proxied at /playback/; the file was selected by source/cam above).
   img.src = playbackUrl('/');
   img.style.display = 'block';
   document.getElementById('pb-offline').style.display = 'none';
@@ -1924,23 +2003,26 @@ function toast(msg, type='') {
 updateHeaderDots();
 initMap();
 // Populate stream + playback settings once backend IP is available.
+// Module/socket resolution (/api/modules) must load first — stream,
+// settings and gimbal URLs are derived from it.
 if (getBase()) {
-  ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam, false));
-  fetchPlaybackSettings();
-  fetchAdsbSettings();
-  refreshStreamSrcs();
+  refreshModuleInfo().then(() => {
+    ['evk','picam','ircam'].forEach(cam => fetchAndPopulateSettings(cam));
+    fetchPlaybackSettings();
+    fetchAdsbSettings();
+    refreshStreamSrcs();
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
 //  GIMBAL API
-//  nginx: /gimbal/  →  http://127.0.0.1:5001/
-//  PUT  /gimbal/target    — set target {lat, lon, alt}
-//  GET  /gimbal/target    — read current target
-//  PUT  /gimbal/rc        — direct pan/tilt/frame control
-//  GET  /gimbal/telemetry — live telemetry from gimbal loop
+//  URLs resolve through the module registry via gimbalUrl()
+//  (/proxy/gimbal-controller/<socket>/…  →  the module's tcp socket).
+//  PUT  /target    — set target {lat, lon, alt}
+//  GET  /target    — read current target
+//  PUT  /rc        — direct pan/tilt/frame control
+//  GET  /telemetry — live telemetry from gimbal loop
 // ═══════════════════════════════════════════════════════════
-// All gimbal URLs are now built dynamically via gimbalUrl() using
-// the backend IP set in the header.
 
 let gimbalPollTimer = null;
 
@@ -1958,7 +2040,7 @@ function usePlatformAlt() {
   el.value = _lastPlatformAlt.toFixed(1);
 }
 
-// Submit target via PUT /gimbal/target
+// Submit target via the gimbal API (PUT /target, via gimbalUrl)
 async function submitGimbalTarget() {
   const lat = parseFloat(document.getElementById('gimbal-lat').value);
   const lon = parseFloat(document.getElementById('gimbal-lon').value);
@@ -2008,7 +2090,7 @@ function clampRcInputs() {
   if (!isNaN(tilt)) tiltEl.value = clampRcTilt(tilt).toFixed(1);
 }
 
-// Submit direct RC pan/tilt via PUT /gimbal/rc
+// Submit direct RC pan/tilt via the gimbal API (PUT /rc)
 async function submitRcControl() {
   let pan  = parseFloat(document.getElementById('rc-pan').value);
   let tilt = parseFloat(document.getElementById('rc-tilt').value);
@@ -2184,7 +2266,7 @@ function setFrameToggle(vehicleFrame) {
   if (tog) { tog.checked = vehicleFrame; onFrameToggleChange(vehicleFrame); }
 }
 
-// Poll GET /gimbal/telemetry and update the readout fields
+// Poll the gimbal API (GET /telemetry) and update the readout fields
 async function pollGimbalTelemetry() {
   try {
     const r = await fetch(gimbalUrl('/telemetry'));
@@ -2291,10 +2373,10 @@ function setGimbalConn(ok, msg) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  ADS-B API
-//  GET  /gimbal/adsb/tracks   — list of visible aircraft
-//  PUT  /gimbal/adsb/track    — lock onto aircraft by ICAO
-//  DELETE /gimbal/adsb/track  — stop ADS-B tracking
+//  ADS-B API  (gimbal module endpoints, via gimbalUrl)
+//  GET  /adsb/tracks   — list of visible aircraft
+//  PUT  /adsb/track    — lock onto aircraft by ICAO
+//  DELETE /adsb/track  — stop ADS-B tracking
 // ═══════════════════════════════════════════════════════════
 
 async function pollAdsbTracks() {

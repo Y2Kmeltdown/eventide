@@ -3,11 +3,17 @@
 #
 # This server lives on the DATA-CONSTRAINED link device.
 # It handles ONLY:
-#   - MJPEG camera streams
-#   - Playback streams
-#   - Flask API  (eventide.py  @ 127.0.0.1:5000)
-#   - Gimbal API (@ 127.0.0.1:5001)
-#   - Supervisord XML-RPC proxy
+#   - Playback streams          (/playback/ → 127.0.0.1:8084, base component)
+#   - Flask API + module proxy  (eventide.py @ 127.0.0.1:5000)
+#
+# Module network locations (MJPEG streams, per-module HTTP APIs, the gimbal
+# API) are NOT hardcoded here.  eventide.py allocates each module socket a
+# TCP port at install time and proxies any module HTTP service generically at
+#
+#   /proxy/<module>/<socket>/<upstream path>  →  127.0.0.1:<port>/<upstream path>
+#
+# resolved from the installed-modules registry (see docs/MODULES.md).  Modules
+# can be installed and removed without ever touching this file.
 #
 # The dashboard HTML and map tiles are normally served by the separate
 # frontend server (see eventide-frontend.nginx.conf) to keep that bandwidth
@@ -24,32 +30,7 @@ server {
     listen 80;
     server_name _;  # matches any hostname / IP
 
-    # --- MJPEG live streams ---
-    location /stream/evk/ {
-        proxy_pass http://127.0.0.1:8081/stream;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_set_header Connection '';
-        chunked_transfer_encoding on;
-    }
-
-    location /stream/picam/ {
-        proxy_pass http://127.0.0.1:8082/stream;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_set_header Connection '';
-        chunked_transfer_encoding on;
-    }
-
-    location /stream/ircam/ {
-        proxy_pass http://127.0.0.1:8083/stream;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_set_header Connection '';
-        chunked_transfer_encoding on;
-    }
-
-    # --- MJPEG playback ---
+    # --- MJPEG playback (base component, fixed port) ---
     location /playback/ {
         proxy_pass http://127.0.0.1:8084/;
         proxy_buffering off;
@@ -58,87 +39,27 @@ server {
         chunked_transfer_encoding on;
     }
 
-    # --- Per-camera settings / streaming toggle endpoints ---
-    location /settings/evk/ {
-        proxy_pass http://127.0.0.1:8081/api/settings;
-    }
-
-    location /view/evk/ {
-        proxy_pass http://127.0.0.1:8081/api/streaming;
-    }
-
-    location /settings/picam/ {
-        proxy_pass http://127.0.0.1:8082/api/settings;
-    }
-
-    location /view/picam/ {
-        proxy_pass http://127.0.0.1:8082/api/streaming;
-    }
-
-    location /settings/ircam/ {
-        proxy_pass http://127.0.0.1:8083/api/settings;
-    }
-
-    location /view/ircam/ {
-        proxy_pass http://127.0.0.1:8083/api/streaming;
-    }
-
-    # --- Playback settings endpoints ---
-    location /settings/pb/evk/ {
-        proxy_pass http://127.0.0.1:8084/api/settings;
-    }
-
-    location /view/pb/evk/ {
-        proxy_pass http://127.0.0.1:8084/api/streaming;
-    }
-
-    location /settings/pb/picam/ {
-        proxy_pass http://127.0.0.1:8085/api/settings;
-    }
-
-    location /view/pb/picam/ {
-        proxy_pass http://127.0.0.1:8085/api/streaming;
-    }
-
-    location /settings/pb/ircam/ {
-        proxy_pass http://127.0.0.1:8086/api/settings;
-    }
-
-    location /view/pb/ircam/ {
-        proxy_pass http://127.0.0.1:8086/api/streaming;
-    }
-
     # --- Supervisord XML-RPC ---
-    # NOTE: /supervisor/ is no longer proxied here directly.
-    # eventide.py now handles it in Flask (/supervisor/ → POST → supervisord
+    # NOTE: /supervisor/ is not proxied here directly.
+    # eventide.py handles it in Flask (/supervisor/ → POST → supervisord
     # at 127.0.0.1:9001/RPC2).  This is because the dashboard is cross-origin;
     # the browser sends a CORS preflight (OPTIONS) first, which supervisord's
     # own HTTP server rejects with 501.  Flask answers OPTIONS cleanly and
     # forwards only the POST server-side, so supervisord never sees the
     # cross-origin request.
-    #
-    # If you ever need to re-enable direct nginx proxying (same-origin only):
-    # location /supervisor/ {
-    #     proxy_pass http://127.0.0.1:9001/RPC2;
-    #     proxy_set_header Content-Type text/xml;
-    #     proxy_set_header Host $host;
-    # }
 
     # --- Flask API (eventide.py) ---
-    # Covers /api/recordings, /api/viewfinder, /api/stream, etc.
+    # Covers /api/*, /proxy/<module>/<socket>/* (module streams & APIs),
+    # /supervisor/, and the standalone dashboard/tiles fallthrough.
     location / {
         proxy_pass http://127.0.0.1:5000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    # --- Gimbal API ---
-    location /gimbal/ {
-        proxy_pass http://127.0.0.1:5001/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # MJPEG streams flow through /proxy/… — don't buffer them.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
     }
 
     # NOTE: /tiles/ is intentionally NOT a dedicated location here.

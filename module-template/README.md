@@ -57,15 +57,53 @@ Python libraries (e.g. `python3-picamera2`) remain visible; set
 
 ## Placeholders available in commands and artifact destinations
 
-| Placeholder        | Expands to                                    |
-| ------------------ | --------------------------------------------- |
-| `{install_dir}`    | `/usr/local/eventide/code`                    |
-| `{config_dir}`     | `/usr/local/eventide/config`                  |
-| `{module_dir}`     | `/usr/local/eventide/packages/<module name>`  |
-| `{recordings_dir}` | The payload recordings directory              |
-| `{venv_dir}`       | `/usr/local/eventide/packages/<module name>/.venv` |
-| `{venv_python}`    | `{venv_dir}/bin/python3`                      |
-| `{arg:<name>}`     | Default value of the declared argument        |
+| Placeholder          | Expands to                                    |
+| -------------------- | --------------------------------------------- |
+| `{install_dir}`      | `/usr/local/eventide/code`                    |
+| `{config_dir}`       | `/usr/local/eventide/config`                  |
+| `{module_dir}`       | `/usr/local/eventide/packages/<module name>`  |
+| `{recordings_dir}`   | The payload recordings directory              |
+| `{recordings_subdir}`| `{recordings_dir}/<recordings_subdir>` (needs the manifest field) |
+| `{venv_dir}`         | `/usr/local/eventide/packages/<module name>/.venv` |
+| `{venv_python}`      | `{venv_dir}/bin/python3`                      |
+| `{arg:<name>}`       | Default value of the declared argument        |
+| `{socket:<name>}`    | The socket's port (tcp) or path (unix)        |
+
+## Sockets, ports and recordings
+
+Declare every TCP/UNIX endpoint your programs bind in `sockets`, and point
+your commands at them with `{socket:<name>}` — never hardcode a port or
+socket path in a command. **Omit `port` for TCP sockets**: eventide
+allocates a free one at install time (from `--port-pool`, default
+`8100-8199`), stores it in the registry, and shows it in the MODULES tab.
+Any HTTP service behind a TCP socket is reachable through the backend at
+`/proxy/<module>/<socket>/<upstream path>` — no nginx changes are ever
+needed for a module.
+
+If your module writes recordings, set `recordings_subdir` and use
+`{recordings_subdir}` in commands; the installer creates the directory, the
+PLAYBACK tab gets an inner tab for it, and `/api/recordings/<subdir>` lists
+its files:
+
+```json
+"recordings_subdir": "mycam",
+"sockets": [
+  {"name": "mjpeg", "type": "tcp", "description": "MJPEG live stream"}
+],
+"programs": [
+  {
+    "name": "mycam_mjpeg_server",
+    "command": "{venv_python} {module_dir}/mjpeg.py --bind 0.0.0.0:{socket:mjpeg}"
+  },
+  {
+    "name": "mycam_datalogger",
+    "command": "{venv_python} {module_dir}/record.py --output-dir {recordings_subdir}"
+  }
+]
+```
+
+(The hello template itself binds no sockets and writes no recordings, so its
+manifest keeps `"sockets": []` and no `recordings_subdir`.)
 
 ## Local sanity check
 

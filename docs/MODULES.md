@@ -9,6 +9,7 @@ This document covers:
 
 - [Architecture](#architecture)
 - [The module manifest (`eventide-module.json`)](#the-module-manifest)
+- [Network locations (ports & proxying)](#network-locations-ports--proxying)
 - [Install lifecycle & error handling](#install-lifecycle--error-handling)
 - [How supervisor config is generated](#how-supervisor-config-is-generated)
 - [Backend API reference](#backend-api-reference)
@@ -115,7 +116,7 @@ Supervisor programs must run the venv interpreter explicitly — use the
 `{venv_python}` placeholder:
 
 ```json
-"command": "{venv_python} {module_dir}/camera_app.py --output-dir {recordings_dir}/picam/"
+"command": "{venv_python} {module_dir}/camera_app.py --output-dir {recordings_subdir}"
 ```
 
 Because the venv is per module, two modules can pin conflicting versions of
@@ -132,7 +133,11 @@ system's Python (no more `pip install --break-system-packages` for modules).
 #### `recordings_subdir` (optional)
 
 String. If present, `<recordings_dir>/<recordings_subdir>` is created at
-install time. Use it for modules that write recordings.
+install time and the module appears as a **recording source**: the dashboard's
+PLAYBACK tab gets an inner tab for it and `/api/recordings/<subdir>` lists its
+files. Must be unique across installed modules. Program commands should
+reference the directory through the `{recordings_subdir}` placeholder (below)
+rather than hardcoding the path.
 
 #### `arguments` (optional)
 
@@ -151,16 +156,26 @@ dashboard displays these; defaults are substituted into program commands via
 
 #### `sockets` (optional)
 
-Network/IPC endpoints the module exposes — advertised to the dashboard so it
-knows the module's capabilities (e.g. which port carries an MJPEG stream).
+Network/IPC endpoints the module exposes. The backend uses them to wire up
+network locations: any HTTP service behind a TCP socket is reachable through
+the backend's generic proxy at `/proxy/<module>/<socket>/<upstream path>`,
+and program commands reference them with the `{socket:<name>}` placeholder.
 
 | Field         | Type   | Required | Description |
 | ------------- | ------ | -------- | ----------- |
 | `name`        | string | yes      | Socket identifier, unique within the module. |
 | `type`        | string | yes      | `"tcp"` or `"unix"`. |
-| `port`        | int    | tcp only | TCP port (1–65535). Must not collide with a socket of another installed module. |
-| `path`        | string | unix only | Filesystem path of the UNIX socket. |
+| `port`        | int    | no       | TCP port (1–65535). **Normally omitted — eventide allocates a free port from its pool (`--port-pool`, default 8100–8199) at install time.** Only set this to request a specific port; it must not collide with a socket of another installed module. |
+| `path`        | string | unix only | Filesystem path of the UNIX socket. Its parent directory is created at install time. |
 | `description` | string | no       | What the socket is for (e.g. `"MJPEG live stream"`). |
+
+The allocated (or declared) port is stored in the registry and shown in the
+MODULES tab. Because programs get the value through `{socket:<name>}`, a
+module never needs to know the number in advance. The dashboard resolves
+camera streams by convention: the module whose `recordings_subdir` matches
+the camera key, preferring a TCP socket named `mjpeg`; the gimbal API is the
+first TCP socket of the `gimbal-controller` module (falling back to any
+module exposing the legacy port 5001).
 
 #### `programs` (required, ≥1)
 
@@ -184,15 +199,49 @@ Placeholders are expanded at install time — in program commands and
 `directory` fields (when the module's supervisor config is generated) and in
 `install.artifacts` destinations (when artifacts are copied):
 
-| Placeholder        | Expands to                                   |
-| ------------------ | -------------------------------------------- |
-| `{install_dir}`    | `/usr/local/eventide/code`                   |
-| `{config_dir}`     | `/usr/local/eventide/config`                 |
-| `{module_dir}`     | `/usr/local/eventide/packages/<name>`        |
-| `{recordings_dir}` | The payload's recordings directory           |
-| `{venv_dir}`       | `/usr/local/eventide/packages/<name>/.venv`  |
-| `{venv_python}`    | `{venv_dir}/bin/python3`                     |
-| `{arg:<name>}`     | The argument's default value (string form)   |
+| Placeholder          | Expands to                                   |
+| -------------------- | -------------------------------------------- |
+| `{install_dir}`      | `/usr/local/eventide/code`                   |
+| `{config_dir}`       | `/usr/local/eventide/config`                 |
+| `{module_dir}`       | `/usr/local/eventide/packages/<name>`        |
+| `{recordings_dir}`   | The payload's recordings directory           |
+| `{recordings_subdir}`| `{recordings_dir}/<recordings_subdir>` — requires the `recordings_subdir` field |
+| `{venv_dir}`         | `/usr/local/eventide/packages/<name>/.venv`  |
+| `{venv_python}`      | `{venv_dir}/bin/python3`                     |
+| `{arg:<name>}`       | The argument's default value (string form)   |
+| `{socket:<name>}`    | The socket's port (tcp) or path (unix)       |
+
+---
+
+## Network locations (ports & proxying)
+
+Nothing about a module's network presence is hardcoded outside its manifest:
+
+- **Ports are allocated by eventide.** A TCP socket without an explicit
+  `port` gets one from the backend's pool (`--port-pool`, default
+  `8100-8199`) at install time — the lowest port not used by another
+  installed module and not already bound on the device. The chosen port is
+  persisted in the registry entry's manifest and shown in the MODULES tab.
+  An explicit `port` is still honoured when free (checked against other
+  installed modules), so older manifests keep working.
+- **nginx has no per-module locations.** `config/vehicle.nginx` only fronts
+  `eventide.py` (`location /`) and the base playback server (`/playback/`).
+  Every HTTP service a module exposes is proxied by the backend itself:
+
+  ```
+  /proxy/<module>/<socket>/<upstream path>  →  http://127.0.0.1:<port>/<upstream path>
+  ```
+
+  Responses are streamed, so MJPEG works through it. Examples: a camera
+  module's live stream is `/proxy/evk-datalogger/mjpeg/stream`, its settings
+  API `/proxy/evk-datalogger/mjpeg/api/settings`, the gimbal API
+  `/proxy/gimbal-controller/api/target`.
+- **The dashboard resolves URLs from `/api/modules`.** Camera cells map the
+  cam key (`evk`, `picam`, `ircam`) to the module whose `recordings_subdir`
+  (or name) matches, preferring a TCP socket named `mjpeg`; the gimbal panel
+  looks for the `gimbal-controller` module (falling back to any module
+  exposing the legacy port 5001) and uses its first TCP socket. Follow those
+  naming conventions and new modules light up the UI automatically.
 
 ---
 
@@ -284,6 +333,7 @@ List installed modules, merged with live supervisor status.
       "author": "…",
       "repo_url": "https://github.com/you/hello-module",
       "installed_at": "2026-07-24T12:00:00+00:00",
+      "recordings_subdir": null,
       "arguments": [ … ],
       "sockets":   [ … ],
       "programs": [
@@ -344,6 +394,30 @@ Stops the module's programs (best-effort), removes its conf file, re-applies
 supervisor, deletes copied artifacts and the cloned repo, and drops the
 registry entry. `404` if not installed.
 
+### `GET /api/recordings`
+
+Lists the **recording sources** — one per installed module that declares
+`recordings_subdir`:
+
+```json
+{"sources": [{"name": "evk", "module": "evk-datalogger"},
+             {"name": "picam", "module": "picam-datalogger"}]}
+```
+
+`GET /api/recordings/<source>` lists that source's files;
+`GET /api/recordings/<source>/<file>/download` downloads one. Sources no
+installed module declares return `404` — the dashboard's PLAYBACK tab builds
+its inner tabs from exactly this list.
+
+### `/proxy/<module>/<socket>/…`
+
+Generic proxy to the HTTP service behind a module's TCP socket:
+`/proxy/<module>/<socket>/<upstream path>` is forwarded (streamed) to
+`http://127.0.0.1:<allocated port>/<upstream path>`. `404` when the module or
+socket isn't installed, `502` when the module's server is down. This is how
+the dashboard reaches camera streams, per-camera settings, and the gimbal
+API — nginx carries no per-module locations.
+
 ---
 
 ## Authoring a module
@@ -357,8 +431,9 @@ registry entry. `404` if not installed.
 4. Put everything the program needs at runtime either in `install.artifacts`
    (copied to a stable location) or reference it inside `{module_dir}` — the
    clone is not removed after install.
-5. Declare every TCP port you bind in `sockets` so the installer can catch
-   port conflicts between modules.
+5. Declare every TCP/UNIX socket you bind in `sockets` — reference them from
+   program commands with `{socket:<name>}` and let eventide allocate the TCP
+   ports (omit `port` unless you genuinely need a fixed one).
 6. Push to GitHub and install from the dashboard's MODULES tab — either by
    repo URL, or by uploading/dragging a zip of the repository (GitHub's
    "Download ZIP" layout works as-is).
@@ -386,9 +461,9 @@ The repo ships `eventide-module.json` — a two-service module:
   `target/release/viewfinder` → `/usr/local/eventide/code/`
 - `recordings_subdir`: `evk`
 - `programs`: `event_based_camera` (priority 1) and `evk_mjpeg_server`
-  (priority 2, viewfinder on port 8081)
+  (priority 2, viewfinder bound via `--bind 0.0.0.0:{socket:mjpeg}`)
 - `sockets`: unix `/tmp/evk4_events.sock` + `/tmp/evk4_triggers.sock` and
-  tcp `8081` (MJPEG live stream)
+  tcp `mjpeg` (MJPEG live stream — no `port`; eventide allocates one)
 
 ### `Y2Kmeltdown/picam_datalogger` → `picam-datalogger` ✅ converted
 
@@ -403,8 +478,8 @@ The repo ships `eventide-module.json` — a two-service module:
 - `programs`: `pi_camera_datalogger` (priority 1) and `pi_mjpeg_server`
   (priority 2), both run straight from `{module_dir}` with `{venv_python}` —
   no `install.artifacts` needed for pure-Python modules
-- `sockets`: unix `/tmp/picam_frames.sock` (inter-service frame socket) +
-  tcp `8082` (MJPEG)
+- `sockets`: unix `/tmp/picam_frames.sock` (inter-service frame socket —
+  referenced as `{socket:frames}`) + tcp `mjpeg` (MJPEG; port allocated)
 
 ### `ericltb15/aravis-ir` → `ircam-datalogger` ✅ converted
 
@@ -422,11 +497,10 @@ The repo ships `eventide-module.json` — a two-service module:
   `{install_dir}`
 - `recordings_subdir`: `ircam`
 - `programs`: `infrared_camera` (priority 1 — records segmented MP4 to
-  `{recordings_dir}/ircam/`, serves raw 16-bit frames on
-  `/tmp/irstream.sock`) and `ir_mjpeg_server` (priority 2 —
-  `{venv_python} {install_dir}/ir_mjpeg.py`)
+  `{recordings_subdir}`, serves raw 16-bit frames on `{socket:frames}`) and
+  `ir_mjpeg_server` (priority 2 — `{venv_python} {install_dir}/ir_mjpeg.py`)
 - `sockets`: unix `/tmp/irstream.sock` (inter-service frame socket) + tcp
-  `8083` (MJPEG)
+  `mjpeg` (MJPEG; port allocated)
 
 ### `j-vanarsdale/tripwire-gimbal-point` → `gimbal-controller`
 
@@ -434,9 +508,11 @@ The repo ships `eventide-module.json` — a two-service module:
 - `install.artifacts`: `GIMBAL_POINT_API.py`, `adsb.py` → `{install_dir}`
 - `recordings_subdir`: `telemetry`
 - `programs`: `gimbal_controller` — port the full command line from the old
-  `config/supervisor.conf` git history, with `{recordings_dir}` in place of
+  `config/supervisor.conf` git history, with `{recordings_subdir}` in place of
   the old `SEDPLACEHOLDER`
-- `sockets`: tcp `5001` (gimbal API)
+- `sockets`: tcp `api` at explicit `port: 5001` (gimbal API — kept fixed for
+  external clients; the dashboard also finds it as the first tcp socket of
+  `gimbal-controller`)
 
 The old pinned versions in `config/requirements.txt` (`opencv-python-headless`,
 `smbus2`, `spidev`, `gpiozero`, …) belonged to these components — move them
@@ -469,8 +545,12 @@ itself.
 - **Install `done` but a program is not RUNNING** — check the job `warnings`
   and the SUPERVISOR tab; hardware-dependent programs legitimately fail on
   bench installs without their devices attached.
-- **"socket port 8081 already used by module X"** — two modules declare the
-  same TCP port; change one module's manifest.
+- **"socket port 8081 already used by module X"** — two modules explicitly
+  request the same TCP port; drop the `port` field from one manifest and let
+  eventide allocate a free one from its pool.
+- **"no free port in pool 8100-8199 for socket …"** — the allocation pool is
+  exhausted (or everything in it is bound); widen it with the backend's
+  `--port-pool start-end` flag.
 - **Supervisor didn't pick up a change** — `sudo supervisorctl reread &&
   sudo supervisorctl update`, then check `/etc/supervisor/conf.d/` for the
   generated `module-<name>.conf`.

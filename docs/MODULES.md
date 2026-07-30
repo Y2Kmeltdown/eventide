@@ -224,7 +224,7 @@ Nothing about a module's network presence is hardcoded outside its manifest:
   persisted in the registry entry's manifest and shown in the MODULES tab.
   An explicit `port` is still honoured when free (checked against other
   installed modules), so older manifests keep working.
-- **nginx has no per-module locations.** `config/vehicle.nginx` only fronts
+- **nginx has no per-module locations.** `config/eventide.nginx` only fronts
   `eventide.py` (`location /`) and the base playback server (`/playback/`).
   Every HTTP service a module exposes is proxied by the backend itself:
 

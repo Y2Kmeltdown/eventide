@@ -239,8 +239,8 @@ cd - > /dev/null
 
 ## NGINX
 step "nginx configuration"
-sudo cp /usr/local/eventide/config/vehicle.nginx /etc/nginx/sites-available/vehicle.nginx
-sudo ln -sf /etc/nginx/sites-available/vehicle.nginx /etc/nginx/sites-enabled/
+sudo cp /usr/local/eventide/config/eventide.nginx /etc/nginx/sites-available/eventide.nginx
+sudo ln -sf /etc/nginx/sites-available/eventide.nginx /etc/nginx/sites-enabled/
 sudo cp /usr/local/eventide/config/nginx.conf /etc/nginx/nginx.conf
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t

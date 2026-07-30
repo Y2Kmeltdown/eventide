@@ -9,7 +9,7 @@ This process CAN serve the full frontend itself (HTML at / plus an OSM
 tile proxy at /tiles/), which is handy when talking to the device
 directly (field laptop, local network).  For data-constrained links the
 decoupled frontend server (frontend.py) is still preferred: it keeps
-HTML/tile bandwidth off the link — see vehicle.nginx.
+HTML/tile bandwidth off the link — see eventide.nginx.
 
 Module network locations are NOT hardcoded in nginx.  TCP ports for module
 sockets are allocated by this server at install time (see --port-pool), and

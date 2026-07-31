@@ -98,17 +98,32 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* gridstack integration — drag/resize between the three region grids is
    handled by gridstack; these rules just theme the items to match. */
 .grid-stack-item-content{display:flex;flex-direction:column;overflow:hidden;background:var(--surface)}
+/* flow-root keeps child margins from collapsing out of the wrap, so the
+   content-fit measurement sees the full height. */
+.ui-widget-wrap{display:flow-root}
 .ui-region-scroll .grid-stack-item-content{border-bottom:1px solid var(--border)}
 .ui-center-panels .grid-stack-item-content{background:#020810;border:1px solid var(--border)}
 .ui-center-panels .ui-widget-head{padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border);margin-bottom:0}
 .ui-tile-body{flex:1;min-height:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
 .grid-stack > .grid-stack-placeholder > .placeholder-content{border:1px dashed var(--accent);background:var(--accent-dim)}
+/* Resize handle: keep above Leaflet panes (z-index up to 1000) and make the
+   corner wedge clearly visible instead of the default faint icon. */
+.grid-stack-item > .ui-resizable-handle{z-index:1100 !important}
+.grid-stack-item > .ui-resizable-se{background:none !important;transform:none !important;
+  width:12px;height:12px;right:3px !important;bottom:3px !important;cursor:nwse-resize;
+  border-right:2px solid var(--accent);border-bottom:2px solid var(--accent);opacity:.85}
+.grid-stack-item > .ui-resizable-se:hover{border-color:var(--green)}
+/* While dragging/resizing, widget contents (Leaflet maps especially) must not
+   swallow pointer events — that was the jitter / stuck-resize cause. */
+body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !important}
+/* Dark-mode map tiles */
+.ui-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.85) saturate(.65)}
 
 /* Center workspace */
 .ui-center{display:flex;flex-direction:column;overflow:hidden;background:#020810;min-width:0}
 .ui-center-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
 .ui-center-spacer{flex:1}
-.ui-center-panels{flex:1;overflow-y:auto;min-height:0}
+.ui-center-panels{flex:1;overflow:hidden;min-height:0}
 .ui-center-empty{min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-dim);font-size:10px;line-height:1.8;text-align:center}
 .ui-center-empty .icon{font-size:26px;opacity:.5}
 
@@ -761,34 +776,81 @@ const EMPTY_CENTER_HTML = `<div class="ui-center-empty"><div class="icon">◉</d
 
 function initGrids() {
   if (!window.GridStack) return;   // CDN unavailable — plain stacked fallback
+  // While dragging/resizing, shield widget contents from pointer events
+  // (Leaflet maps otherwise swallow mousemove → jitter / stuck resize).
+  const shieldOn  = () => document.body.classList.add('gs-busy');
+  const shieldOff = () => document.body.classList.remove('gs-busy');
   ['left', 'right'].forEach(region => {
     gsGrids[region] = GridStack.init({
       column: 1,
-      cellHeight: 'auto',      // rows follow widget content height
+      cellHeight: 8,           // small unit — resizeToContent sizes to fit
       margin: 0,
       float: false,
       handle: '.ui-widget-head',
-      draggable: { cancel: '.ui-widget-remove' },
+      // note: default draggable.cancel already covers inputs & buttons
+      draggable: { start: shieldOn, stop: shieldOff },
+      resizable: { start: shieldOn, stop: shieldOff },
       acceptWidgets: el => el.dataset.gsRegion !== 'center',
     }, GS_REGION_EL[region]);
   });
   gsGrids.center = GridStack.init({
     column: 12,
-    cellHeight: 110,
+    cellHeight: 110,           // immediately replaced by fitCenterGrid()
     margin: 4,
     float: false,
     handle: '.ui-widget-head',
-    draggable: { cancel: '.ui-widget-remove' },
+    draggable: { start: shieldOn, stop: shieldOff, scroll: false },
+    resizable: { start: shieldOn, stop: shieldOff },
     acceptWidgets: el => el.dataset.gsRegion === 'center',
   }, GS_REGION_EL.center);
 
   Object.values(gsGrids).forEach(grid => grid.on('change added removed', saveFromGrids));
-  // Leaflet maps need a resize nudge after a tile resize.
+  // Leaflet maps track tile resizes.
   gsGrids.center.on('resizecontent', (ev, el) => {
     const key = (el.getAttribute('gs-id') || '').split('|').join('/');
     const w = uiLive.get(key);
     if (w && w.map) w.map.invalidateSize();
   });
+}
+
+// Size a sidebar item to its content. The built-in resizeToContent measures
+// the child's border box, which misses margins and under-rounds on fractional
+// pixels (leaving scrollbars) — this measures scrollHeight with margin
+// containment (.ui-widget-wrap is display:flow-root) plus chrome and a
+// safety pixel.
+function fitItemToContent(grid, el) {
+  const wrap = el.querySelector('.ui-widget-wrap');
+  if (!wrap || !el.clientHeight) return;   // hidden tab — nothing to measure
+  const cell = grid.getCellHeight(true);
+  if (!cell) return;
+  const contentEl = el.querySelector('.grid-stack-item-content');
+  const cs = getComputedStyle(contentEl);
+  const chrome = (el.clientHeight - contentEl.clientHeight)
+               + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const h = Math.max(1, Math.ceil((wrap.scrollHeight + chrome + 1) / cell));
+  if (el.gridstackNode && el.gridstackNode.h !== h) grid.update(el, { h });
+}
+
+// Size every sidebar item to its content (no dead space, no inner scroll).
+function fitSidebarContent() {
+  ['left', 'right'].forEach(region => {
+    const grid = gsGrids[region];
+    if (!grid) return;
+    grid.getGridItems().forEach(el => fitItemToContent(grid, el));
+  });
+}
+
+// The centre workspace is never scrollable: shrink the cell height so all
+// rows fit the available height (floor of 40 px keeps tiles usable).
+function fitCenterGrid() {
+  const grid = gsGrids.center;
+  const container = document.querySelector(GS_REGION_EL.center);
+  if (!grid || !container) return;
+  const H = container.clientHeight;
+  if (!H) return;   // hidden tab — keep previous cell height
+  const rows = Math.max(grid.getRow(), 1);
+  const cell = Math.max(Math.floor((H - 4 * (rows - 1)) / rows), 40);
+  grid.cellHeight(cell);
 }
 
 // Serialize the live grids back into uiLayout (called on any gridstack change).
@@ -830,18 +892,26 @@ function renderWorkspace() {
   } finally {
     _gsRendering = false;
   }
-  // Leaflet maps need a nudge after being (re)mounted.
-  setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+  // Content-fit needs the layout settled; maps likewise.
+  setTimeout(() => {
+    fitSidebarContent();
+    fitCenterGrid();
+    uiLive.forEach(w => w.map?.invalidateSize());
+  }, 50);
 }
 
 function renderSidebarRegion(region) {
   const container = document.querySelector(GS_REGION_EL[region]);
   if (!container) return;
+  // removeAll() only removes grid items — stale empty-state hints must go too,
+  // otherwise they accumulate on every render.
+  container.querySelectorAll('.ui-region-empty').forEach(n => n.remove());
   const grid    = gsGrids[region];
   const entries = visibleEntries(region);
   if (!grid) {   // gridstack unavailable — plain stacked fallback
-    container.innerHTML = entries.length ? '' : EMPTY_REGION_HTML;
+    container.innerHTML = '';
     entries.forEach(e => container.appendChild(buildSidebarWidget(e)));
+    if (!entries.length) container.insertAdjacentHTML('beforeend', EMPTY_REGION_HTML);
     return;
   }
   grid.batchUpdate();
@@ -852,17 +922,21 @@ function renderSidebarRegion(region) {
     });
   });
   grid.batchUpdate(false);
+  // Size each item to its content (needs layout — skips cleanly when hidden).
+  grid.getGridItems().forEach(el => fitItemToContent(grid, el));
   if (!entries.length) container.insertAdjacentHTML('beforeend', EMPTY_REGION_HTML);
 }
 
 function renderCenterRegion() {
   const container = document.querySelector(GS_REGION_EL.center);
   if (!container) return;
+  container.querySelectorAll('.ui-center-empty').forEach(n => n.remove());
   const grid    = gsGrids.center;
   const entries = visibleEntries('center');
   if (!grid) {
-    container.innerHTML = entries.length ? '' : EMPTY_CENTER_HTML;
+    container.innerHTML = '';
     entries.forEach(e => container.appendChild(buildCenterTile(e)));
+    if (!entries.length) container.insertAdjacentHTML('beforeend', EMPTY_CENTER_HTML);
     return;
   }
   grid.batchUpdate();
@@ -873,6 +947,7 @@ function renderCenterRegion() {
   });
   grid.batchUpdate(false);
   if (!entries.length) container.insertAdjacentHTML('beforeend', EMPTY_CENTER_HTML);
+  fitCenterGrid();
 }
 
 function buildSidebarWidget(entry) {
@@ -880,14 +955,18 @@ function buildSidebarWidget(entry) {
   const el = document.createElement('div');
   el.className = 'grid-stack-item';
   el.dataset.gsRegion = 'sidebar';
+  // resizeToContent() assumes a single child under .grid-stack-item-content —
+  // hence the wrap div.
   el.innerHTML = `
     <div class="grid-stack-item-content ui-widget">
-      <div class="ui-widget-head" title="Drag to move">
-        <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
-        <span class="ui-widget-mod">${escHtml(entry.m)}</span>
-        <button class="ui-widget-remove" title="Remove">×</button>
+      <div class="ui-widget-wrap">
+        <div class="ui-widget-head" title="Drag to move">
+          <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
+          <span class="ui-widget-mod">${escHtml(entry.m)}</span>
+          <button class="ui-widget-remove" title="Remove">×</button>
+        </div>
+        <div class="ui-widget-body"></div>
       </div>
-      <div class="ui-widget-body"></div>
     </div>`;
   el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
   const body = el.querySelector('.ui-widget-body');
@@ -1582,6 +1661,9 @@ function switchTab(tab) {
     // If the initial /api/modules fetch failed, retry so the workspace
     // doesn't stay empty until the next backend-IP change.
     if (!_modInfo) refreshModuleInfo().then(reconcileLayout);
+    // Content-fit passes are no-ops while the tab is hidden, so re-run them.
+    fitSidebarContent();
+    fitCenterGrid();
     setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
   }
 }
@@ -2389,8 +2471,11 @@ refreshModuleInfo().then(() => {
   fetchPlaybackSettings();
 });
 
-// Refresh Leaflet maps on window resize (gridstack handles tile geometry).
+// Re-fit content-sized widgets and refresh Leaflet maps on window resize
+// (gridstack handles horizontal geometry; heights need a nudge).
 window.addEventListener('resize', () => {
+  fitSidebarContent();
+  fitCenterGrid();
   setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
 });
 

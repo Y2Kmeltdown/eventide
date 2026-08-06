@@ -92,8 +92,12 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .ui-widget-head:active{cursor:grabbing}
 .ui-widget-title{font-family:var(--display);font-size:8px;letter-spacing:.15em;color:var(--text-mid);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ui-widget-mod{font-size:6px;letter-spacing:.1em;color:var(--text-dim);border:1px solid var(--border);padding:1px 4px;border-radius:2px;flex-shrink:0}
-.ui-widget-remove{background:none;border:1px solid var(--border2);color:var(--text-dim);width:16px;height:16px;font-size:9px;line-height:1;cursor:pointer;border-radius:2px;flex-shrink:0;transition:all .15s}
+.ui-widget-remove,.ui-widget-fs{background:none;border:1px solid var(--border2);color:var(--text-dim);width:16px;height:16px;font-size:9px;line-height:1;cursor:pointer;border-radius:2px;flex-shrink:0;transition:all .15s}
 .ui-widget-remove:hover{border-color:var(--warn);color:var(--warn)}
+.ui-widget-fs:hover,.grid-stack-item:fullscreen .ui-widget-fs{border-color:var(--accent);color:var(--accent)}
+/* Fullscreen centre tiles (browser Fullscreen API — YouTube-style) */
+.grid-stack-item:fullscreen{background:#020810}
+.grid-stack-item:fullscreen .ui-resizable-handle{display:none}
 
 /* gridstack integration — drag/resize between the three region grids is
    handled by gridstack; these rules just theme the items to match. */
@@ -989,11 +993,17 @@ function buildCenterTile(entry) {
       <div class="ui-widget-head" title="Drag to move · resize from the corner">
         <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
         <span class="ui-widget-mod">${escHtml(entry.m)}</span>
+        <button class="ui-widget-fs" title="Fullscreen (Esc to exit)">⛶</button>
         <button class="ui-widget-remove" title="Remove">×</button>
       </div>
       <div class="ui-tile-body"></div>
     </div>`;
   el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
+  // Fullscreen via the browser Fullscreen API (like a YouTube player).
+  el.querySelector('.ui-widget-fs').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (el.requestFullscreen) el.requestFullscreen();
+  });
   const body = el.querySelector('.ui-tile-body');
   if (comp) {
     const instance = mountWidget(comp, body);
@@ -2476,6 +2486,11 @@ refreshModuleInfo().then(() => {
 window.addEventListener('resize', () => {
   fitSidebarContent();
   fitCenterGrid();
+  setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+});
+
+// Maps must re-measure when their tile enters/exits fullscreen.
+document.addEventListener('fullscreenchange', () => {
   setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
 });
 

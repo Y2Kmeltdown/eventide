@@ -779,10 +779,17 @@ function reconcileLayout() {
   saveSeenSet(seen);
   const sig = JSON.stringify(uiComponents) + JSON.stringify(next);
   if (sig === _lastUiSig) return;
-  _lastUiSig = sig;
   uiLayout = next;
   saveLayoutState();
-  renderWorkspace();
+  // If the render throws, reset the change detector so the next reconcile
+  // (poll, tab switch, retry) re-attempts it instead of skipping forever.
+  try {
+    renderWorkspace();
+    _lastUiSig = sig;
+  } catch (e) {
+    _lastUiSig = '';
+    console.error('workspace render failed:', e);
+  }
 }
 
 // ── Rendering (gridstack) ───────────────────────────────────────────────────
@@ -829,11 +836,16 @@ function initGrids() {
   }, GS_REGION_EL.center);
 
   Object.values(gsGrids).forEach(grid => grid.on('change added removed', saveFromGrids));
-  // Leaflet maps track tile resizes.
-  gsGrids.center.on('resizecontent', (ev, el) => {
-    const key = (el.getAttribute('gs-id') || '').split('|').join('/');
-    const w = uiLive.get(key);
-    if (w && w.map) w.map.invalidateSize();
+  // Leaflet maps track tile resizes.  NOTE: gridstack passes (event, nodes)
+  // — an ARRAY of gridstack nodes, not a DOM element.
+  gsGrids.center.on('resizecontent', (ev, nodes) => {
+    (Array.isArray(nodes) ? nodes : [nodes]).forEach(n => {
+      const el = n && n.el;
+      if (!el) return;
+      const key = (el.getAttribute('gs-id') || '').split('|').join('/');
+      const w = uiLive.get(key);
+      if (w && w.map) w.map.invalidateSize();
+    });
   });
 }
 

@@ -662,6 +662,15 @@ let _backendBase = buildBaseUrl(localStorage.getItem(BACKEND_STORAGE_KEY) || '')
 
 function getBase() { return _backendBase; }
 
+// AbortSignal.timeout() doesn't exist in pre-2022 browsers — fall back to an
+// AbortController so older field laptops can still load the workspace.
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) return AbortSignal.timeout(ms);
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), ms);
+  return ctrl.signal;
+}
+
 // Resolved endpoint helpers — all API traffic uses these.
 function supervisorUrl()    { return getBase() + '/supervisor/'; }
 function playbackUrl(path)  { return getBase() + '/playback' + (path || '/'); }
@@ -678,7 +687,7 @@ let _modInfo = null;   // last /api/modules snapshot
 async function refreshModuleInfo() {
   try {
     // Generous timeout — /api/modules crosses the constrained link.
-    const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(10000) });
+    const r = await fetch(apiUrl('/modules'), { signal: timeoutSignal(10000) });
     _modInfo = r.ok ? await r.json() : null;
   } catch { _modInfo = null; }
   return _modInfo;
@@ -1255,7 +1264,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get), { signal: AbortSignal.timeout(5000) });
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get), { signal: timeoutSignal(5000) });
         if (!r.ok) return;
         const data = await r.json();
         renderRows(Array.isArray(data) ? data : (data.items || []));
@@ -1502,7 +1511,7 @@ const WIDGET_RENDERERS = {
       const a = comp.adsb;
       const pollAdsb = async () => {
         try {
-          const r = await fetch(proxyUrl(comp.mod, a.socket, a.get), { signal: AbortSignal.timeout(5000) });
+          const r = await fetch(proxyUrl(comp.mod, a.socket, a.get), { signal: timeoutSignal(5000) });
           if (!r.ok) return;
           const tracks = await r.json();
           const seen = new Set();
@@ -1621,7 +1630,7 @@ async function probeBackend() {
   const seq = ++_probeSeq;
   if (!getBase()) { setBackendConnState(''); return; }
   try {
-    const r = await fetch(apiUrl('/modules'), { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(apiUrl('/modules'), { signal: timeoutSignal(3000) });
     if (seq === _probeSeq) setBackendConnState(r.ok ? 'ok' : 'err');
   } catch { if (seq === _probeSeq) setBackendConnState('err'); }
 }

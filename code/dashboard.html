@@ -1075,7 +1075,9 @@ function renderPalette() {
   const list = document.getElementById('ui-palette-list');
   if (!list) return;
   if (!uiComponents.length) {
-    list.innerHTML = '<div class="empty">No components advertised.<br>Install a module that declares a "ui" section.</div>';
+    list.innerHTML = _modInfo
+      ? '<div class="empty">No components advertised.<br>Install a module that declares a "ui" section.</div>'
+      : '<div class="empty">Connecting to backend…</div>';
     return;
   }
   const byMod = {};
@@ -2524,6 +2526,18 @@ refreshModuleInfo().then(() => {
   reconcileLayout();
   fetchPlaybackSettings();
 });
+
+// If the backend wasn't reachable at page load (payload still booting, slow
+// link), keep retrying every few seconds until the module list arrives —
+// otherwise the workspace and palette stay empty until a tab switch.
+(function retryModuleInfo() {
+  if (_modInfo) return;
+  setTimeout(async () => {
+    await refreshModuleInfo();
+    if (_modInfo) reconcileLayout();
+    retryModuleInfo();
+  }, 3000);
+})();
 
 // Re-fit content-sized widgets and refresh Leaflet maps on window resize
 // (gridstack handles horizontal geometry; heights need a nudge).

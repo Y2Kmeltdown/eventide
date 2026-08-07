@@ -1370,6 +1370,12 @@ def _run_install_job(job: dict) -> None:
         venv_referenced = any(
             "{venv_" in p.get("command", "") or "{venv_" in p.get("directory", "")
             for p in manifest.get("programs", [])
+        ) or any(
+            "{venv_" in cmd
+            for cmd in (
+                deps.get("commands", [])
+                + manifest.get("install", {}).get("commands", [])
+            )
         )
         if req_path is not None or pip_pkgs or venv_referenced:
             _create_venv(job, venv_dir, deps.get("system_site_packages", True))
@@ -1396,7 +1402,10 @@ def _run_install_job(job: dict) -> None:
         for cmd in inst.get("commands", []):
             # Compilations (cargo build --release & co.) legitimately take a
             # long time on-device — allow 30 min per build command.
-            _run_logged_shell(job, cmd, cwd=module_dir, timeout=1800)
+            _run_logged_shell(
+                job, render_placeholders(cmd, manifest, name),
+                cwd=module_dir, timeout=1800,
+            )
 
         # ── Artifacts & recordings dir ────────────────────────────────────
         _job_status(job, "artifacts")

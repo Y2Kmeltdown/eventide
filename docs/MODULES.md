@@ -128,7 +128,7 @@ system's Python (no more `pip install --break-system-packages` for modules).
 
 | Field       | Type   | Description |
 | ----------- | ------ | ----------- |
-| `commands`  | string[] | Build commands run in the repo root (e.g. `"cargo build --release"`). Each has a 30-minute timeout. |
+| `commands`  | string[] | Build commands run in the repo root (e.g. `"cargo build --release"`), with the same placeholder expansion as program commands (`{venv_dir}`, `{venv_python}`, …). Each has a 30-minute timeout. |
 | `artifacts` | object | Map of `source path (relative to repo root)` → `destination path`. Destinations must be absolute after expansion and support the same placeholders as program commands (e.g. `{install_dir}/my_binary`). Every source is verified to exist after the build; the copy preserves the file mode (`cp -p`). Parent directories of destinations are created automatically. |
 
 #### `recordings_subdir` (optional)
@@ -196,8 +196,9 @@ example, typically declares two: a datalogger and an MJPEG server.
 
 ### Command placeholders
 
-Placeholders are expanded at install time — in program commands and
-`directory` fields (when the module's supervisor config is generated) and in
+Placeholders are expanded at install time — in `dependencies.commands` and
+`install.commands` (when they run), in program commands and `directory` fields
+(when the module's supervisor config is generated), and in
 `install.artifacts` destinations (when artifacts are copied):
 
 | Placeholder          | Expands to                                   |

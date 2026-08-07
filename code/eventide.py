@@ -1518,6 +1518,11 @@ def api_modules_list():
                     "name": p["name"],
                     "status": statuses.get(p["name"], {}).get("status", "UNKNOWN"),
                     "status_detail": statuses.get(p["name"], {}).get("description", ""),
+                    # Supervisor settings (editable via the args form)
+                    "autostart": p.get("autostart", True),
+                    "autorestart": p.get("autorestart", True),
+                    "startretries": int(p.get("startretries", 10000)),
+                    "priority": int(p.get("priority", 10)),
                 }
                 for p in m.get("programs", [])
             ],
@@ -1649,7 +1654,8 @@ def api_modules_args(name):
     The new values become the stored defaults in the registry manifest, the
     module's conf.d file is re-rendered from them, and supervisor is told to
     reread/update — which restarts any running programs whose command line
-    changed.
+    changed.  An optional "programs" object updates supervisor settings
+    (autostart, autorestart, startretries, priority) per program the same way.
     """
     registry = load_registry()
     entry = registry.get("modules", {}).get(name)
@@ -1660,6 +1666,11 @@ def api_modules_args(name):
     if not isinstance(new_args, dict):
         return jsonify({
             "error": "args must be an object mapping argument name → value"
+        }), 400
+    new_progs = data.get("programs", {})
+    if not isinstance(new_progs, dict):
+        return jsonify({
+            "error": "programs must be an object mapping program name → settings"
         }), 400
 
     manifest = entry["manifest"]
@@ -1692,8 +1703,44 @@ def api_modules_args(name):
             errors.append(f"argument '{key}' must be a single line")
             continue
         updates[key] = value
+
+    prog_by_name = {p["name"]: p for p in manifest.get("programs", [])}
+    prog_updates: dict[str, dict] = {}
+    for pname, params in new_progs.items():
+        prog = prog_by_name.get(pname)
+        if prog is None:
+            errors.append(f"unknown program: '{pname}'")
+            continue
+        if not isinstance(params, dict):
+            errors.append(f"program '{pname}' settings must be an object")
+            continue
+        clean: dict = {}
+        for key, value in params.items():
+            if key in ("autostart", "autorestart"):
+                if not isinstance(value, bool):
+                    errors.append(f"program '{pname}' {key} must be a boolean")
+                    continue
+                clean[key] = value
+            elif key in ("startretries", "priority"):
+                try:
+                    if isinstance(value, bool):
+                        raise ValueError
+                    iv = int(str(value).strip())
+                    if iv < 0:
+                        raise ValueError
+                    clean[key] = iv
+                except (TypeError, ValueError):
+                    errors.append(
+                        f"program '{pname}' {key} must be a non-negative integer"
+                    )
+            else:
+                errors.append(f"program '{pname}' unknown setting '{key}'")
+        prog_updates[pname] = clean
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
+
+    for pname, clean in prog_updates.items():
+        prog_by_name[pname].update(clean)
 
     for arg in manifest.get("arguments", []):
         if arg["name"] in updates:

@@ -460,6 +460,25 @@ Stops the module's programs (best-effort), removes its conf file, re-applies
 supervisor, deletes copied artifacts and the cloned repo, and drops the
 registry entry. `404` if not installed.
 
+### `POST /api/modules/<name>/args`
+
+Updates the module's argument values **and per-program supervisor settings**,
+then re-renders the conf.d file and reloads supervisord (running programs
+restart with the new settings). This is what the MODULES tab's EDIT form posts.
+
+```json
+{
+  "args":     {"interval": 30},
+  "programs": {"pi_camera_datalogger": {"autostart": true, "autorestart": true,
+                                        "startretries": 10000, "priority": 1}}
+}
+```
+
+`args` maps declared argument names to values (type-checked); `programs` maps
+program names to any subset of `autostart`/`autorestart` (booleans) and
+`startretries`/`priority` (non-negative ints). Unknown names or wrong types
+return `400` with every problem listed.
+
 ### `GET /api/recordings`
 
 Lists the **recording sources** — one per installed module that declares

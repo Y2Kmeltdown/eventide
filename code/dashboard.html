@@ -1186,10 +1186,12 @@ const WIDGET_RENDERERS = {
     return { destroy() { dead = true; clearTimeout(timer); img.onerror = null; img.src = 'about:blank'; } };
   },
 
-  // Settings form (sidebar): GET populates, PUT applies. Fields may override
-  // the form-level get/put endpoint so one form can span several endpoints.
+  // Settings form (sidebar): GET populates, PUT applies (method overridable
+  // with "method", e.g. for POST-only APIs). Fields may override the
+  // form-level get/put endpoint so one form can span several endpoints.
   form(bodyEl, comp) {
     const fields = comp.fields || [];
+    const method = comp.method || 'PUT';
     const getEps = [...new Set(fields.map(f => f.get || comp.get).filter(Boolean))];
     const putEps = [...new Set(fields.map(f => f.put || comp.put).filter(Boolean))];
 
@@ -1233,7 +1235,7 @@ const WIDGET_RENDERERS = {
             body[f.key] = getFieldValue(f, inputs[i]);
           });
           const r = await fetch(proxyUrl(comp.mod, comp.socket, ep), {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            method, headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
           if (!r.ok) {
@@ -1265,17 +1267,28 @@ const WIDGET_RENDERERS = {
   // {recording: bool} to `put` when the button is clicked. When the source
   // reports control is locked (recording_control false — e.g. the recorder
   // runs without --record-toggle) the button is disabled and the state is
-  // shown read-only.
+  // shown read-only. With `duration` configured, a clip-length input is shown
+  // and the start PUT carries {"<duration.key>": seconds} — sources that
+  // don't know that key simply ignore it (record until stopped).
   recording(bodyEl, comp) {
     const key  = comp.key         || 'recording';
     const ckey = comp.control_key || 'recording_control';
     const fkey = comp.file_key    || 'current_file';
+    const dur  = comp.duration || null;
+    const dkey = dur?.key || 'duration_seconds';
     bodyEl.innerHTML = `
+      ${dur ? `<div class="form-row"><div class="form-col">
+        <label class="form-label">${escHtml(dur.label || 'Clip length (s)')}</label>
+        <input class="form-input" type="number" step="any" data-r="dur"
+          ${dur.default != null ? `value="${dur.default}"` : ''}
+          ${dur.min != null ? `min="${dur.min}"` : ''} ${dur.max != null ? `max="${dur.max}"` : ''}>
+      </div></div>` : ''}
       <button class="rec-btn" disabled>CONNECTING…</button>
       <div class="telem-row"><span class="telem-key">STATUS</span><span class="telem-val" data-r="status">—</span></div>
       <div class="telem-row"><span class="telem-key">FILE</span><span class="telem-val" data-r="file">—</span></div>
       <div class="ui-form-err"></div>`;
     const btn      = bodyEl.querySelector('.rec-btn');
+    const durEl    = bodyEl.querySelector('[data-r="dur"]');
     const statusEl = bodyEl.querySelector('[data-r="status"]');
     const fileEl   = bodyEl.querySelector('[data-r="file"]');
     const errEl    = bodyEl.querySelector('.ui-form-err');
@@ -1284,6 +1297,7 @@ const WIDGET_RENDERERS = {
     function render() {
       btn.classList.toggle('on', recording);
       btn.disabled = busy || !control;
+      if (durEl) durEl.disabled = recording || !control;   // clip length is fixed at start
       btn.textContent = !control ? 'CONTROL DISABLED'
         : recording ? '■ STOP RECORDING' : '● START RECORDING';
       statusEl.textContent = recording ? 'RECORDING' : 'IDLE';
@@ -1313,10 +1327,16 @@ const WIDGET_RENDERERS = {
       busy = true;
       render();
       errEl.style.display = 'none';
+      const payload = { [key]: !recording };
+      if (!recording && dur && durEl) {
+        let secs = parseFloat(durEl.value);
+        if (!Number.isFinite(secs) && dur.default != null) secs = dur.default;
+        if (Number.isFinite(secs) && secs > 0) payload[dkey] = secs;
+      }
       try {
         const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.put), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [key]: !recording }),
+          body: JSON.stringify(payload),
         });
         const b = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(b.error || r.statusText);

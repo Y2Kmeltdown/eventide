@@ -839,6 +839,8 @@ def validate_manifest(m) -> list[str]:
                     errors.append(f"ui '{cid}' needs a 'path' like '/stream'")
             elif ctype == "form":
                 _check_sock(cid, comp.get("socket"), "socket")
+                if "method" in comp and comp["method"] not in ("PUT", "POST"):
+                    errors.append(f"ui '{cid}' method must be PUT or POST")
                 fields = comp.get("fields")
                 if not isinstance(fields, list) or not fields:
                     errors.append(f"ui '{cid}' needs a non-empty 'fields' list")
@@ -878,6 +880,20 @@ def validate_manifest(m) -> list[str]:
                     errors.append(f"ui '{cid}' needs a 'get' path")
                 if not _is_path(comp.get("put")):
                     errors.append(f"ui '{cid}' needs a 'put' path")
+                dur = comp.get("duration")
+                if dur is not None:
+                    if not isinstance(dur, dict):
+                        errors.append(f"ui '{cid}' duration must be an object")
+                    else:
+                        for dk in ("default", "min", "max"):
+                            if dk in dur and not isinstance(dur[dk], (int, float)):
+                                errors.append(
+                                    f"ui '{cid}' duration.{dk} must be a number"
+                                )
+                        if "key" in dur and not isinstance(dur["key"], str):
+                            errors.append(f"ui '{cid}' duration.key must be a string")
+                        if "label" in dur and not isinstance(dur["label"], str):
+                            errors.append(f"ui '{cid}' duration.label must be a string")
             elif ctype == "joystick":
                 _check_sock(cid, comp.get("socket"), "socket")
                 if not _is_path(comp.get("put")):

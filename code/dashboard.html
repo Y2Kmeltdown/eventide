@@ -98,6 +98,12 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* Fullscreen centre tiles (browser Fullscreen API — YouTube-style) */
 .grid-stack-item:fullscreen{background:#020810}
 .grid-stack-item:fullscreen .ui-resizable-handle{display:none}
+.grid-stack-item:fullscreen .ui-widget-head{display:none}
+/* Floating exit control — the only way out on a touchscreen (no Esc key).
+   Subtle until touched; large enough for a finger. */
+.ui-fs-exit{display:none;position:absolute;top:10px;right:10px;width:34px;height:34px;align-items:center;justify-content:center;background:rgba(8,15,22,.6);border:1px solid var(--border2);color:var(--text-mid);border-radius:50%;font-size:14px;cursor:pointer;z-index:1200;opacity:.35;transition:opacity .2s;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.grid-stack-item:fullscreen .ui-fs-exit{display:flex}
+.ui-fs-exit:hover,.ui-fs-exit:active{opacity:1;border-color:var(--accent);color:var(--accent)}
 
 /* gridstack integration — drag/resize between the three region grids is
    handled by gridstack; these rules just theme the items to match. */
@@ -1011,12 +1017,17 @@ function buildCenterTile(entry) {
         <button class="ui-widget-remove" title="Remove">×</button>
       </div>
       <div class="ui-tile-body"></div>
+      <button class="ui-fs-exit" title="Exit fullscreen">✕</button>
     </div>`;
   el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
   // Fullscreen via the browser Fullscreen API (like a YouTube player).
   el.querySelector('.ui-widget-fs').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (el.requestFullscreen) el.requestFullscreen();
+  });
+  // Floating exit button — needed on touchscreens, which have no Esc key.
+  el.querySelector('.ui-fs-exit').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
   });
   const body = el.querySelector('.ui-tile-body');
   if (comp) {

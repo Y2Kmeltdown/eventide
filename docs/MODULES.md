@@ -276,6 +276,7 @@ Every component's traffic goes through the backend proxy —
 | `mjpeg`    | center  | `path` — MJPEG stream path, e.g. `"/stream"`. Renders with offline/retry handling. |
 | `form`     | sidebar | `get`, `put`, `submit_label?`, `fields[]`. GET populates, PUT applies. Field: `{key, label?, kind: number\|slider\|toggle\|text\|select, min?, max?, step?, get?, put?, options?}` — per-field `get`/`put` overrides let one form span several endpoints. |
 | `telemetry`| sidebar | `get`, `interval?` (ms), `rows[]` — polled readout. Row: `{label, path, fmt?}`; `path` is a dot-path into the JSON (`buffer.bytes`). |
+| `recording`| sidebar | `get`, `put`, `interval?` (ms), `key?`, `control_key?`, `file_key?` — recording start/stop control with live status. Polls `get` (expects `{"recording": bool, "recording_control": bool, "current_file": string|null}`; the keys are the defaults of `key`/`control_key`/`file_key`) and the button PUTs `{"recording": bool}` to `put`. When the source reports `recording_control: false` (e.g. the recorder runs without its toggle flag) the button locks and the state is shown read-only. |
 | `joystick` | sidebar | `put`, `telemetry_get?`, `paths?: {x, y}`, `fields?: {x, y, frame}` — two-axis RC pad seeded from a telemetry poll. |
 | `table`    | sidebar | `get`, `interval?`, `columns[]` (`{label, path, fmt?}`), `row_action?: {label, method, path, key}`, `stop_action?: {label, method, path}` — polled table with a per-row action button (e.g. ADS-B track/stop). |
 | `map`      | center  | `track?: {socket, get, interval?, lat, lon, heading?, gimbal?, frame?}`, `adsb?: {socket, get, interval?, lat, lon, label?, key?}` — Leaflet map with optional device/track markers. Without bindings it's a plain map. |
@@ -305,7 +306,10 @@ Every component's traffic goes through the backend proxy —
     "fields": [
       {"key": "diff_on", "kind": "number", "min": 0, "max": 255},
       {"key": "diff_off", "kind": "number", "min": 0, "max": 255}
-    ] }
+    ] },
+  { "id": "record-control", "type": "recording", "title": "EVK4 RECORD",
+    "region": "sidebar", "default": true, "socket": "http_api",
+    "get": "/api/recording", "put": "/api/recording" }
 ]
 ```
 

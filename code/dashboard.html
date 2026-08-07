@@ -197,6 +197,10 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .apply-btn:hover{background:rgba(0,207,255,.12)}
 .apply-btn.amber{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
 .apply-btn.green{border-color:var(--green);color:var(--green);background:var(--green-dim)}
+.rec-btn{width:100%;padding:7px 0;margin-bottom:6px;font-family:var(--mono);font-size:9px;letter-spacing:.14em;border-radius:var(--r);cursor:pointer;border:1px solid var(--warn);color:var(--warn);background:var(--warn-dim);transition:all .15s}
+.rec-btn:hover:not(:disabled){background:rgba(255,91,107,.15)}
+.rec-btn.on{background:var(--warn);color:#040a0f;font-weight:700;box-shadow:0 0 10px var(--warn)}
+.rec-btn:disabled{opacity:.4;cursor:default}
 
 /* Streams column */
 .stream-main{display:grid;grid-template-rows:1fr 1fr 1fr;background:#020810;overflow:hidden;gap:1px}
@@ -1255,6 +1259,80 @@ const WIDGET_RENDERERS = {
     }
     window.addEventListener('eventide:target', onTarget);
     return { destroy() { window.removeEventListener('eventide:target', onTarget); } };
+  },
+
+  // Recording control (sidebar): polls `get` for the current state and PUTs
+  // {recording: bool} to `put` when the button is clicked. When the source
+  // reports control is locked (recording_control false — e.g. the recorder
+  // runs without --record-toggle) the button is disabled and the state is
+  // shown read-only.
+  recording(bodyEl, comp) {
+    const key  = comp.key         || 'recording';
+    const ckey = comp.control_key || 'recording_control';
+    const fkey = comp.file_key    || 'current_file';
+    bodyEl.innerHTML = `
+      <button class="rec-btn" disabled>CONNECTING…</button>
+      <div class="telem-row"><span class="telem-key">STATUS</span><span class="telem-val" data-r="status">—</span></div>
+      <div class="telem-row"><span class="telem-key">FILE</span><span class="telem-val" data-r="file">—</span></div>
+      <div class="ui-form-err"></div>`;
+    const btn      = bodyEl.querySelector('.rec-btn');
+    const statusEl = bodyEl.querySelector('[data-r="status"]');
+    const fileEl   = bodyEl.querySelector('[data-r="file"]');
+    const errEl    = bodyEl.querySelector('.ui-form-err');
+    let recording = false, control = true, busy = false, dead = false;
+
+    function render() {
+      btn.classList.toggle('on', recording);
+      btn.disabled = busy || !control;
+      btn.textContent = !control ? 'CONTROL DISABLED'
+        : recording ? '■ STOP RECORDING' : '● START RECORDING';
+      statusEl.textContent = recording ? 'RECORDING' : 'IDLE';
+      statusEl.classList.toggle('warn', recording);
+    }
+
+    async function poll() {
+      if (dead) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        if (!r.ok) return;
+        const d = await r.json();
+        const v = dotPath(d, key);
+        if (typeof v === 'boolean') recording = v;
+        const c = dotPath(d, ckey);
+        control = (typeof c === 'boolean') ? c : true;   // absent = controllable
+        const f = dotPath(d, fkey);
+        const name = (typeof f === 'string' && f) ? f.split('/').pop() : null;
+        fileEl.textContent = name || '—';
+        fileEl.title = name ? f : '';
+        render();
+      } catch { /* module offline */ }
+    }
+
+    btn.addEventListener('click', async () => {
+      if (busy || !control) return;
+      busy = true;
+      render();
+      errEl.style.display = 'none';
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.put), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: !recording }),
+        });
+        const b = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(b.error || r.statusText);
+        toast((comp.title || 'Recording') + (recording ? ' stopped' : ' started'), 'ok');
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = 'block';
+      } finally {
+        busy = false;
+        poll();   // re-sync with the source of truth + re-render
+      }
+    });
+
+    poll();
+    const timer = setInterval(poll, comp.interval || 3000);
+    return { destroy() { dead = true; clearInterval(timer); } };
   },
 
   // Polled read-only telemetry rows (sidebar)

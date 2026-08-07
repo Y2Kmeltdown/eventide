@@ -542,7 +542,7 @@ _PROGRAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 _ARG_TYPES = ("str", "int", "float")
 _UI_COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map")
+_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording")
 _UI_REGIONS = ("sidebar", "center")
 _UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select")
 _KNOWN_PLACEHOLDERS = (
@@ -872,6 +872,12 @@ def validate_manifest(m) -> list[str]:
                     for r in rows
                 ):
                     errors.append(f"ui '{cid}' rows must all have {{label, path}}")
+            elif ctype == "recording":
+                _check_sock(cid, comp.get("socket"), "socket")
+                if not _is_path(comp.get("get")):
+                    errors.append(f"ui '{cid}' needs a 'get' path")
+                if not _is_path(comp.get("put")):
+                    errors.append(f"ui '{cid}' needs a 'put' path")
             elif ctype == "joystick":
                 _check_sock(cid, comp.get("socket"), "socket")
                 if not _is_path(comp.get("put")):

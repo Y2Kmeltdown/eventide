@@ -496,7 +496,7 @@ def list_recordings_source(source):
     return _list_recordings_for(source)
 
 
-RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264", "*.jsonl")
+RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264", "*.jsonl", "*.basler")
 
 def _list_recordings_for(source: str):
     recordings_dir = _recordings_dir(source)

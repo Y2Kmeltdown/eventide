@@ -280,7 +280,7 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .rc-arrow.left{grid-column:1;grid-row:2}
 .rc-arrow.right{grid-column:3;grid-row:2}
 
-/* 3D pan/tilt/yaw attitude indicator (centre) */
+/* 3D pan/tilt/roll attitude indicator (centre) */
 .ori3d-stage-wrap{flex:1;min-height:0;position:relative;perspective:640px;display:flex;align-items:center;justify-content:center}
 .ori3d-camera{position:relative;width:190px;height:190px;transform-style:preserve-3d;cursor:grab}
 .ori3d-camera.grabbing{cursor:grabbing}
@@ -290,7 +290,7 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .ori3d-ring.rz{transform:rotateX(90deg)}
 .ori3d-axis-line{position:absolute;left:50%;top:50%;width:1px;height:95px;margin:-95px 0 0 0;transform-origin:50% 100%;background:linear-gradient(to top,transparent,var(--accent));opacity:.6;pointer-events:none}
 .ori3d-axis-line.tilt{transform:rotateZ(90deg)}
-.ori3d-axis-line.yaw{transform:rotateX(90deg)}
+.ori3d-axis-line.roll{transform:rotateX(90deg)}
 .ori3d-axis-tip{position:absolute;top:-2px;left:-2px;width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 5px var(--accent)}
 .ori3d-axis-label{position:absolute;top:-15px;left:-14px;width:28px;text-align:center;font-size:6px;letter-spacing:.1em;color:var(--accent);opacity:.85}
 .ori3d-origin-dot{position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--surface2);border:1px solid var(--text-dim);z-index:2;pointer-events:none}
@@ -1520,7 +1520,7 @@ const WIDGET_RENDERERS = {
     bodyEl.innerHTML = `
       <div class="form-row" style="margin-bottom:2px">
         <div class="form-col"><label class="form-label">Pan (°)</label>
-          <input class="form-input" type="number" data-j="x" step="0.1" min="-360" max="360"></div>
+          <input class="form-input" type="number" data-j="x" step="0.1" min="-180" max="180"></div>
         <div class="form-col"><label class="form-label">Tilt (°)</label>
           <input class="form-input" type="number" data-j="y" step="0.1" min="-90" max="90"></div>
       </div>
@@ -1577,7 +1577,7 @@ const WIDGET_RENDERERS = {
       } catch { /* module offline */ }
     }
     function nudge(dX, dY) {
-      const nx = Math.min(360, Math.max(-360, +(lastX + dX).toFixed(1)));
+      const nx = Math.min(180, Math.max(-180, +(lastX + dX).toFixed(1)));
       const ny = Math.min(90,  Math.max(-90,  +(lastY + dY).toFixed(1)));
       xEl.value = nx; yEl.value = ny;
       send(nx, ny);
@@ -1772,8 +1772,8 @@ const WIDGET_RENDERERS = {
     return { map, destroy() { timers.forEach(clearInterval); map.remove(); } };
   },
 
-  // 3D pan/tilt/yaw attitude indicator (centre). Polls a JSON telemetry
-  // endpoint for pan/tilt/yaw in degrees and renders them as a rotating
+  // 3D pan/tilt/roll attitude indicator (centre). Polls a JSON telemetry
+  // endpoint for pan/tilt/roll in degrees and renders them as a rotating
   // pointer in a CSS 3D scene. A dashed cyan "ghost" pointer stays fixed at
   // 0,0,0 (home orientation) the whole time, so the live amber pointer's
   // deviation from it is always visible at a glance, alongside the origin
@@ -1782,7 +1782,7 @@ const WIDGET_RENDERERS = {
   orientation3d(bodyEl, comp) {
     const pp = comp.paths?.pan  || 'pan';
     const pt = comp.paths?.tilt || 'tilt';
-    const py = comp.paths?.yaw  || 'yaw';
+    const pr = comp.paths?.roll || 'roll';
     bodyEl.classList.add('ui-orientation3d');
     bodyEl.innerHTML = `
       <div class="ori3d-stage-wrap">
@@ -1794,7 +1794,7 @@ const WIDGET_RENDERERS = {
           </div>
           <div class="ori3d-axis-line pan"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">PAN</div></div>
           <div class="ori3d-axis-line tilt"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">TILT</div></div>
-          <div class="ori3d-axis-line yaw"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">YAW</div></div>
+          <div class="ori3d-axis-line roll"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">ROLL</div></div>
           <div class="ori3d-shape ori3d-ghost">
             <div class="ori3d-shape-reorient">
               <div class="ori3d-fin f1"></div>
@@ -1815,7 +1815,7 @@ const WIDGET_RENDERERS = {
       <div class="ori3d-readout">
         <div class="ori3d-val"><span>PAN</span><b data-role="val-pan">—</b></div>
         <div class="ori3d-val"><span>TILT</span><b data-role="val-tilt">—</b></div>
-        <div class="ori3d-val"><span>YAW</span><b data-role="val-yaw">—</b></div>
+        <div class="ori3d-val"><span>ROLL</span><b data-role="val-roll">—</b></div>
         <div class="ori3d-val delta"><span>Δ ORIGIN</span><b data-role="val-delta">—</b></div>
       </div>`;
 
@@ -1824,7 +1824,7 @@ const WIDGET_RENDERERS = {
     const live      = bodyEl.querySelector('[data-role="live"]');
     const vPan      = bodyEl.querySelector('[data-role="val-pan"]');
     const vTilt     = bodyEl.querySelector('[data-role="val-tilt"]');
-    const vYaw      = bodyEl.querySelector('[data-role="val-yaw"]');
+    const vRoll     = bodyEl.querySelector('[data-role="val-roll"]');
     const vDelta    = bodyEl.querySelector('[data-role="val-delta"]');
     const deltaBox  = bodyEl.querySelector('.ori3d-val.delta');
 
@@ -1857,16 +1857,19 @@ const WIDGET_RENDERERS = {
         const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get));
         if (!r.ok) return;
         const d = await r.json();
-        const pan = dotPath(d, pp), tilt = dotPath(d, pt), yaw = dotPath(d, py);
-        if (typeof pan !== 'number' || typeof tilt !== 'number' || typeof yaw !== 'number') return;
+        const pan = dotPath(d, pp), tilt = dotPath(d, pt), roll = dotPath(d, pr);
+        if (typeof pan !== 'number' || typeof tilt !== 'number' || typeof roll !== 'number') return;
         live.style.opacity = 1;
-        // Extrinsic roll → pitch → yaw composition, chosen for a stable,
+        // Extrinsic roll → pitch → yaw(pan) composition, chosen for a stable,
         // legible indicator rather than exact intrinsic gimbal kinematics.
-        live.style.transform = `rotateY(${pan}deg) rotateX(${tilt}deg) rotateZ(${yaw}deg)`;
+        // ("Yaw" here means rotation about the world vertical axis — i.e.
+        // pan — and is distinct from roll, which spins about the pointer's
+        // own forward axis.)
+        live.style.transform = `rotateY(${pan}deg) rotateX(${tilt}deg) rotateZ(${roll}deg)`;
         vPan.textContent  = pan.toFixed(1)  + '°';
         vTilt.textContent = tilt.toFixed(1) + '°';
-        vYaw.textContent  = yaw.toFixed(1)  + '°';
-        const delta = Math.sqrt(pan * pan + tilt * tilt + yaw * yaw);
+        vRoll.textContent = roll.toFixed(1) + '°';
+        const delta = Math.sqrt(pan * pan + tilt * tilt + roll * roll);
         vDelta.textContent = delta.toFixed(1) + '°';
         deltaBox.classList.toggle('high', delta > (comp.warn_delta || 45));
       } catch { /* module offline */ }

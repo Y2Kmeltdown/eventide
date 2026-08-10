@@ -1520,7 +1520,7 @@ const WIDGET_RENDERERS = {
     bodyEl.innerHTML = `
       <div class="form-row" style="margin-bottom:2px">
         <div class="form-col"><label class="form-label">Pan (°)</label>
-          <input class="form-input" type="number" data-j="x" step="0.1" min="-180" max="180"></div>
+          <input class="form-input" type="number" data-j="x" step="0.1" min="-360" max="360"></div>
         <div class="form-col"><label class="form-label">Tilt (°)</label>
           <input class="form-input" type="number" data-j="y" step="0.1" min="-90" max="90"></div>
       </div>
@@ -1577,7 +1577,7 @@ const WIDGET_RENDERERS = {
       } catch { /* module offline */ }
     }
     function nudge(dX, dY) {
-      const nx = Math.min(180, Math.max(-180, +(lastX + dX).toFixed(1)));
+      const nx = Math.min(360, Math.max(-360, +(lastX + dX).toFixed(1)));
       const ny = Math.min(90,  Math.max(-90,  +(lastY + dY).toFixed(1)));
       xEl.value = nx; yEl.value = ny;
       send(nx, ny);

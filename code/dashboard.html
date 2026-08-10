@@ -263,17 +263,51 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .rc-joystick-wrap{display:flex;flex-direction:column;align-items:center;margin:2px 0 10px}
 .rc-joystick{position:relative;width:110px;height:110px;border:1px solid var(--border2);border-radius:50%;background:radial-gradient(circle at 50% 50%,var(--surface2) 0%,var(--bg) 100%);touch-action:none;user-select:none;cursor:grab}
 .rc-joystick.active{cursor:grabbing;border-color:var(--amber);box-shadow:0 0 10px rgba(255,184,48,.25)}
+.rc-joystick.axis-lock::before,.rc-joystick.axis-lock::after{content:'';position:absolute;background:var(--border2);pointer-events:none}
+.rc-joystick.axis-lock::before{left:50%;top:8px;bottom:8px;width:1px;margin-left:-.5px}
+.rc-joystick.axis-lock::after{top:50%;left:8px;right:8px;height:1px;margin-top:-.5px}
 .rc-joystick-knob{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;background:radial-gradient(circle at 35% 35%,var(--surface3) 0%,var(--surface2) 70%);border:1px solid var(--amber);box-shadow:0 0 8px rgba(255,184,48,.35);pointer-events:none}
 .rc-joystick-hint{margin-top:5px;font-size:7px;letter-spacing:.12em;color:var(--text-dim)}
 .rc-joystick-grid{display:grid;grid-template-columns:26px 110px 26px;grid-template-rows:26px 110px 26px;gap:4px;align-items:center;justify-items:center}
 .rc-joystick-grid .rc-joystick{grid-column:2;grid-row:2}
 .rc-arrow{width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
+.rc-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.rc-toggle-item{display:flex;align-items:center;gap:6px}
 .rc-arrow:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
 .rc-arrow:active{background:var(--amber);color:var(--bg)}
 .rc-arrow.up{grid-column:2;grid-row:1}
 .rc-arrow.down{grid-column:2;grid-row:3}
 .rc-arrow.left{grid-column:1;grid-row:2}
 .rc-arrow.right{grid-column:3;grid-row:2}
+
+/* 3D pan/tilt/yaw attitude indicator (centre) */
+.ori3d-stage-wrap{flex:1;min-height:0;position:relative;perspective:640px;display:flex;align-items:center;justify-content:center}
+.ori3d-camera{position:relative;width:190px;height:190px;transform-style:preserve-3d;cursor:grab}
+.ori3d-camera.grabbing{cursor:grabbing}
+.ori3d-sphere{position:absolute;inset:0;transform-style:preserve-3d;pointer-events:none}
+.ori3d-ring{position:absolute;inset:0;border:1px solid var(--border2);border-radius:50%;opacity:.45}
+.ori3d-ring.ry{transform:rotateY(90deg)}
+.ori3d-ring.rz{transform:rotateX(90deg)}
+.ori3d-axis-line{position:absolute;left:50%;top:50%;width:1px;height:95px;margin:-95px 0 0 0;transform-origin:50% 100%;background:linear-gradient(to top,transparent,var(--accent));opacity:.6;pointer-events:none}
+.ori3d-axis-line.tilt{transform:rotateZ(90deg)}
+.ori3d-axis-line.yaw{transform:rotateX(90deg)}
+.ori3d-axis-tip{position:absolute;top:-2px;left:-2px;width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 5px var(--accent)}
+.ori3d-axis-label{position:absolute;top:-15px;left:-14px;width:28px;text-align:center;font-size:6px;letter-spacing:.1em;color:var(--accent);opacity:.85}
+.ori3d-origin-dot{position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--surface2);border:1px solid var(--text-dim);z-index:2;pointer-events:none}
+.ori3d-shape{position:absolute;left:50%;top:50%;width:0;height:0;transform-style:preserve-3d;pointer-events:none;transition:opacity .2s}
+.ori3d-shape-reorient{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;transform:rotateX(90deg)}
+.ori3d-fin{position:absolute;left:0;top:0;width:14px;height:78px;margin:-78px 0 0 -7px;transform-origin:50% 100%;clip-path:polygon(50% 0%,100% 78%,50% 100%,0% 78%)}
+.ori3d-fin.f2{transform:rotateY(90deg)}
+.ori3d-ghost .ori3d-fin{background:rgba(0,207,255,.06);border:1px dashed rgba(0,207,255,.45)}
+.ori3d-live .ori3d-fin{background:linear-gradient(to top,rgba(255,184,48,.15),var(--amber));box-shadow:0 0 8px rgba(255,184,48,.4)}
+.ori3d-roll-mark{position:absolute;left:-3px;top:-58px;width:6px;height:6px;border-radius:50%;background:var(--bg);border:2px solid var(--amber);box-shadow:0 0 5px var(--amber)}
+.ori3d-orbit-hint{margin-top:2px;font-size:7px;letter-spacing:.1em;color:var(--text-dim);text-align:center}
+.ori3d-readout{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 2px 2px;border-top:1px solid var(--border2)}
+.ori3d-val{display:flex;flex-direction:column;align-items:center;gap:2px}
+.ori3d-val span{font-size:7px;letter-spacing:.1em;color:var(--text-dim)}
+.ori3d-val b{font-size:12px;font-weight:normal;font-family:var(--mono);color:var(--amber)}
+.ori3d-val.delta b{color:var(--accent)}
+.ori3d-val.delta.high b{color:var(--warn)}
 
 /* Nav panel */
 .nav-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
@@ -1498,20 +1532,40 @@ const WIDGET_RENDERERS = {
           <button class="rc-arrow right" data-n="5,0">▶</button>
           <div class="rc-joystick"><div class="rc-joystick-knob"></div></div>
         </div>
-        <div class="rc-joystick-hint">↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°</div>
+        <div class="rc-joystick-hint" data-role="joystick-hint">↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°</div>
       </div>
-      <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
-        <span class="form-label" style="flex:1;margin:0">VEHICLE FRAME</span>
-        <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
+      <div class="rc-toggle-row">
+        <div class="rc-toggle-item">
+          <span class="form-label" style="margin:0">AXIS LOCK</span>
+          <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="axislock"><div class="toggle-track"></div></label>
+        </div>
+        <div class="rc-toggle-item">
+          <span class="form-label" style="margin:0">FRAME</span>
+          <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
+        </div>
       </div>
       <button class="apply-btn amber">⊕ SEND</button>`;
 
     const xEl = bodyEl.querySelector('[data-j="x"]');
     const yEl = bodyEl.querySelector('[data-j="y"]');
     const frameEl = bodyEl.querySelector('[data-j="frame"]');
+    const axisLockEl = bodyEl.querySelector('[data-j="axislock"]');
+    const hintEl = bodyEl.querySelector('[data-role="joystick-hint"]');
     const pad  = bodyEl.querySelector('.rc-joystick');
     const knob = bodyEl.querySelector('.rc-joystick-knob');
     let lastX = 0, lastY = 0, dead = false, dragging = false, maxR = 0, dx = 0, dy = 0, tickTimer = null;
+    let axisLock = false, lockedAxis = null; // lockedAxis: 'x' | 'y' | null — set once per drag
+
+    function updateHint() {
+      hintEl.textContent = axisLock
+        ? '⊕ AXIS LOCK · ONE AXIS PER DRAG ±5°'
+        : '↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°';
+    }
+    axisLockEl.addEventListener('change', () => {
+      axisLock = axisLockEl.checked;
+      pad.classList.toggle('axis-lock', axisLock);
+      updateHint();
+    });
 
     async function send(x, y) {
       try {
@@ -1545,16 +1599,29 @@ const WIDGET_RENDERERS = {
     function onMove(e) {
       if (!dragging) return;
       const r = pad.getBoundingClientRect();
-      dx = e.clientX - (r.left + r.width / 2);
-      dy = e.clientY - (r.top + r.height / 2);
-      const dist = Math.hypot(dx, dy);
-      if (dist > maxR) { dx = dx / dist * maxR; dy = dy / dist * maxR; }
+      let ndx = e.clientX - (r.left + r.width / 2);
+      let ndy = e.clientY - (r.top + r.height / 2);
+      if (axisLock) {
+        // Decide the drag's axis once, from the first meaningful movement,
+        // then hold to it for the rest of the drag so motion can't bleed
+        // between pan and tilt.
+        if (lockedAxis === null && Math.hypot(ndx, ndy) > 4) {
+          lockedAxis = Math.abs(ndx) >= Math.abs(ndy) ? 'x' : 'y';
+        }
+        if (lockedAxis === 'x') ndy = 0;
+        else if (lockedAxis === 'y') ndx = 0;
+        else { ndx = 0; ndy = 0; } // below threshold: no axis chosen yet
+      }
+      const dist = Math.hypot(ndx, ndy);
+      if (dist > maxR) { ndx = ndx / dist * maxR; ndy = ndy / dist * maxR; }
+      dx = ndx; dy = ndy;
       knob.style.transform = `translate(${dx}px, ${dy}px)`;
     }
     function onUp() {
       if (!dragging) return;
       dragging = false;
       dx = dy = 0;
+      lockedAxis = null;
       knob.style.transform = 'translate(0px, 0px)';
       clearInterval(tickTimer); tickTimer = null;
     }
@@ -1562,6 +1629,7 @@ const WIDGET_RENDERERS = {
       maxR = (pad.clientWidth - knob.clientWidth) / 2;
       if (!(maxR > 0)) return;
       dragging = true;
+      lockedAxis = null;
       if (pad.setPointerCapture) pad.setPointerCapture(e.pointerId);
       onMove(e); tick();
       tickTimer = setInterval(tick, 100);
@@ -1702,6 +1770,118 @@ const WIDGET_RENDERERS = {
       timers.push(setInterval(pollAdsb, a.interval || 5000));
     }
     return { map, destroy() { timers.forEach(clearInterval); map.remove(); } };
+  },
+
+  // 3D pan/tilt/yaw attitude indicator (centre). Polls a JSON telemetry
+  // endpoint for pan/tilt/yaw in degrees and renders them as a rotating
+  // pointer in a CSS 3D scene. A dashed cyan "ghost" pointer stays fixed at
+  // 0,0,0 (home orientation) the whole time, so the live amber pointer's
+  // deviation from it is always visible at a glance, alongside the origin
+  // dot at the pivot and the numeric readout underneath. Dragging the scene
+  // orbits the camera only — it never touches the telemetry values.
+  orientation3d(bodyEl, comp) {
+    const pp = comp.paths?.pan  || 'pan';
+    const pt = comp.paths?.tilt || 'tilt';
+    const py = comp.paths?.yaw  || 'yaw';
+    bodyEl.classList.add('ui-orientation3d');
+    bodyEl.innerHTML = `
+      <div class="ori3d-stage-wrap">
+        <div class="ori3d-camera">
+          <div class="ori3d-sphere">
+            <div class="ori3d-ring rx"></div>
+            <div class="ori3d-ring ry"></div>
+            <div class="ori3d-ring rz"></div>
+          </div>
+          <div class="ori3d-axis-line pan"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">PAN</div></div>
+          <div class="ori3d-axis-line tilt"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">TILT</div></div>
+          <div class="ori3d-axis-line yaw"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">YAW</div></div>
+          <div class="ori3d-shape ori3d-ghost">
+            <div class="ori3d-shape-reorient">
+              <div class="ori3d-fin f1"></div>
+              <div class="ori3d-fin f2"></div>
+            </div>
+          </div>
+          <div class="ori3d-shape ori3d-live" data-role="live" style="opacity:0">
+            <div class="ori3d-shape-reorient">
+              <div class="ori3d-fin f1"></div>
+              <div class="ori3d-fin f2"></div>
+              <div class="ori3d-roll-mark"></div>
+            </div>
+          </div>
+          <div class="ori3d-origin-dot" title="0, 0, 0 — home orientation"></div>
+        </div>
+      </div>
+      <div class="ori3d-orbit-hint">DRAG TO ORBIT VIEW · DASHED = 0,0,0 ORIGIN</div>
+      <div class="ori3d-readout">
+        <div class="ori3d-val"><span>PAN</span><b data-role="val-pan">—</b></div>
+        <div class="ori3d-val"><span>TILT</span><b data-role="val-tilt">—</b></div>
+        <div class="ori3d-val"><span>YAW</span><b data-role="val-yaw">—</b></div>
+        <div class="ori3d-val delta"><span>Δ ORIGIN</span><b data-role="val-delta">—</b></div>
+      </div>`;
+
+    const stageWrap = bodyEl.querySelector('.ori3d-stage-wrap');
+    const camera    = bodyEl.querySelector('.ori3d-camera');
+    const live      = bodyEl.querySelector('[data-role="live"]');
+    const vPan      = bodyEl.querySelector('[data-role="val-pan"]');
+    const vTilt     = bodyEl.querySelector('[data-role="val-tilt"]');
+    const vYaw      = bodyEl.querySelector('[data-role="val-yaw"]');
+    const vDelta    = bodyEl.querySelector('[data-role="val-delta"]');
+    const deltaBox  = bodyEl.querySelector('.ori3d-val.delta');
+
+    // Orbit camera (view angle only — independent of the telemetry below).
+    let camAz = 32, camEl = -16, dragging = false, lastX = 0, lastY = 0;
+    function applyCamera() { camera.style.transform = `rotateX(${camEl}deg) rotateY(${camAz}deg)`; }
+    applyCamera();
+    function onCamDown(e) {
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      camera.classList.add('grabbing');
+      if (stageWrap.setPointerCapture) stageWrap.setPointerCapture(e.pointerId);
+    }
+    function onCamMove(e) {
+      if (!dragging) return;
+      camAz += (e.clientX - lastX) * 0.4;
+      camEl = Math.min(70, Math.max(-70, camEl - (e.clientY - lastY) * 0.4));
+      lastX = e.clientX; lastY = e.clientY;
+      applyCamera();
+    }
+    function onCamUp() { dragging = false; camera.classList.remove('grabbing'); }
+    stageWrap.addEventListener('pointerdown', onCamDown);
+    window.addEventListener('pointermove', onCamMove);
+    window.addEventListener('pointerup', onCamUp);
+    window.addEventListener('pointercancel', onCamUp);
+
+    let dead = false;
+    async function poll() {
+      if (dead) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get));
+        if (!r.ok) return;
+        const d = await r.json();
+        const pan = dotPath(d, pp), tilt = dotPath(d, pt), yaw = dotPath(d, py);
+        if (typeof pan !== 'number' || typeof tilt !== 'number' || typeof yaw !== 'number') return;
+        live.style.opacity = 1;
+        // Extrinsic roll → pitch → yaw composition, chosen for a stable,
+        // legible indicator rather than exact intrinsic gimbal kinematics.
+        live.style.transform = `rotateY(${pan}deg) rotateX(${tilt}deg) rotateZ(${yaw}deg)`;
+        vPan.textContent  = pan.toFixed(1)  + '°';
+        vTilt.textContent = tilt.toFixed(1) + '°';
+        vYaw.textContent  = yaw.toFixed(1)  + '°';
+        const delta = Math.sqrt(pan * pan + tilt * tilt + yaw * yaw);
+        vDelta.textContent = delta.toFixed(1) + '°';
+        deltaBox.classList.toggle('high', delta > (comp.warn_delta || 45));
+      } catch { /* module offline */ }
+    }
+    poll();
+    const timer = setInterval(poll, comp.interval || 1000);
+    return {
+      destroy() {
+        dead = true;
+        clearInterval(timer);
+        window.removeEventListener('pointermove', onCamMove);
+        window.removeEventListener('pointerup', onCamUp);
+        window.removeEventListener('pointercancel', onCamUp);
+      },
+    };
   },
   // Master record (sidebar): a synthetic "dashboard" component, not backed
   // by any installed module. Aggregates every OTHER component of type

@@ -1865,7 +1865,7 @@ const WIDGET_RENDERERS = {
         // ("Yaw" here means rotation about the world vertical axis — i.e.
         // pan — and is distinct from roll, which spins about the pointer's
         // own forward axis.)
-        live.style.transform = `rotateY(${pan}deg) rotateX(${tilt}deg) rotateZ(${roll}deg)`;
+        live.style.transform = `rotateY(${pan}deg) rotateX(${-tilt}deg) rotateZ(${roll}deg)`;
         vPan.textContent  = pan.toFixed(1)  + '°';
         vTilt.textContent = tilt.toFixed(1) + '°';
         vRoll.textContent = roll.toFixed(1) + '°';

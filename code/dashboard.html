@@ -1681,8 +1681,11 @@ const WIDGET_RENDERERS = {
     window.addEventListener('pointercancel', onUp);
 
     // Seed the baseline from telemetry so nudges are relative to reality.
+    // Polled, but skipped while either pan/tilt box has focus so a manual
+    // edit is never clobbered mid-typing.
     async function seed() {
       if (dead || dragging || !comp.telemetry_get) return;
+      if (document.activeElement === xEl || document.activeElement === yEl) return;
       try {
         const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.telemetry_get));
         if (!r.ok) return;

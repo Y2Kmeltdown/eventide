@@ -2116,7 +2116,10 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
 // Nudge increment for a "nudge" field — the manifest's `step` (default 1).
 // Shared by formFieldHtml (button labels) and the click handlers (increment)
 // so the two can never disagree.
-const nudgeStep = f => (typeof f.step === 'number' && f.step > 0) ? f.step : 1;
+const nudgeStep = f => {
+  const s = parseFloat(f.step);   // manifests often write step as a string ("0.1")
+  return (Number.isFinite(s) && s > 0) ? s : 1;
+};
 
 function formFieldHtml(f, i) {
   const label = escHtml(f.label || f.key);
@@ -2148,8 +2151,8 @@ function formFieldHtml(f, i) {
       <input class="form-input" type="number" data-fi="${i}"
         ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${step}">
       <div class="nudge-row">
-        <button type="button" class="nudge-btn" data-nb="${i}" data-dir="1">+${step}</button>
         <button type="button" class="nudge-btn" data-nb="${i}" data-dir="-1">-${step}</button>
+        <button type="button" class="nudge-btn" data-nb="${i}" data-dir="1">+${step}</button>
       </div></div></div>`;
   }
   return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>

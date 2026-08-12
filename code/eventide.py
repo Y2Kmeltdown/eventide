@@ -544,7 +544,7 @@ _ARG_TYPES = ("str", "int", "float")
 _UI_COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording", "orientation3d")
 _UI_REGIONS = ("sidebar", "center")
-_UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select")
+_UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select", "nudge")
 _KNOWN_PLACEHOLDERS = (
     "install_dir", "config_dir", "module_dir", "recordings_dir",
     "recordings_subdir", "venv_dir", "venv_python",

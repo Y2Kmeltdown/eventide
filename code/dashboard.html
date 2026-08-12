@@ -246,6 +246,10 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .map-crosshair::before,.map-crosshair::after{content:'';position:absolute;background:var(--green)}
 .map-crosshair::before{width:1px;height:14px;top:-7px;left:0}
 .map-crosshair::after{width:14px;height:1px;left:-7px;top:0}
+/* Re-center control — sits over the map, clear of Leaflet's zoom (top-left)
+   and attribution (bottom-right) controls. */
+.map-recenter{position:absolute;top:10px;right:10px;z-index:1000;width:26px;height:26px;padding:0;background:rgba(8,15,22,.85);border:1px solid var(--border2);color:var(--text-mid);border-radius:var(--r);font-size:14px;line-height:1;cursor:pointer;transition:all .15s}
+.map-recenter:hover{border-color:var(--accent);color:var(--accent)}
 .dev-marker{position:relative;width:18px;height:18px}
 .dev-dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:var(--green,#00e89d);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 12px var(--green,#00e89d);z-index:3}
 /* Vehicle heading — long clock-hand, green */
@@ -279,6 +283,8 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .rc-arrow.down{grid-column:2;grid-row:3}
 .rc-arrow.left{grid-column:1;grid-row:2}
 .rc-arrow.right{grid-column:3;grid-row:2}
+.rc-btn-row{display:flex;gap:5px}
+.rc-btn-row .apply-btn{flex:1}
 
 /* 3D pan/tilt/roll attitude indicator (centre) */
 .ori3d-stage-wrap{flex:1;min-height:0;position:relative;perspective:640px;display:flex;align-items:center;justify-content:center}
@@ -752,12 +758,22 @@ function apiUrl(path)       { return getBase() + '/api' + path; }
 // "ui" section); the proxy resolves the allocated port from the registry.
 let _modInfo = null;   // last /api/modules snapshot
 
+// Only the latest request may write _modInfo — while a new host is being
+// typed, refreshes for intermediate addresses ("192.168.30." …) are still in
+// flight, and a slow failure from one of those must not clobber the good
+// snapshot the final host's refresh already delivered (that race blanked the
+// workspace; probeBackend guards the same way with _probeSeq).
+let _modInfoSeq = 0;
 async function refreshModuleInfo() {
+  const seq = ++_modInfoSeq;
   try {
     // Generous timeout — /api/modules crosses the constrained link.
     const r = await fetch(apiUrl('/modules'), { signal: timeoutSignal(10000) });
+    if (seq !== _modInfoSeq) return _modInfo;
     _modInfo = r.ok ? await r.json() : null;
-  } catch { _modInfo = null; }
+  } catch {
+    if (seq === _modInfoSeq) _modInfo = null;
+  }
   return _modInfo;
 }
 
@@ -1272,9 +1288,23 @@ const WIDGET_RENDERERS = {
       + `<div class="ui-form-err"></div>`;
     const inputs = fields.map((f, i) => bodyEl.querySelector(`[data-fi="${i}"]`));
     fields.forEach((f, i) => {
-      if ((f.kind || 'number') === 'slider') {
+      const kind = f.kind || 'number';
+      if (kind === 'slider') {
         const span = bodyEl.querySelector(`[data-fv="${i}"]`);
         inputs[i].addEventListener('input', () => { span.textContent = inputs[i].value; });
+      }
+      if (kind === 'nudge') {
+        const step = nudgeStep(f);
+        // Round to the step's own precision so float steps (0.1) don't drift.
+        const dec = (String(step).split('.')[1] || '').length;
+        bodyEl.querySelectorAll(`[data-nb="${i}"]`).forEach(btn =>
+          btn.addEventListener('click', () => {
+            let v = getFieldValue(f, inputs[i]) + Number(btn.dataset.dir) * step;
+            if (f.min != null) v = Math.max(f.min, v);
+            if (f.max != null) v = Math.min(f.max, v);
+            setFieldValue(f, inputs[i], +v.toFixed(dec));
+            submit();   // a nudge applies immediately — no separate APPLY click
+          }));
       }
     });
 
@@ -1295,10 +1325,13 @@ const WIDGET_RENDERERS = {
     populate();
 
     const applyBtn = bodyEl.querySelector('.apply-btn');
-    if (applyBtn) applyBtn.addEventListener('click', async () => {
+    // Shared by the APPLY button and by nudge fields (which submit instantly
+    // on every button click).
+    async function submit() {
+      if (!putEps.length) return;
       const errEl = bodyEl.querySelector('.ui-form-err');
       errEl.style.display = 'none';
-      applyBtn.disabled = true;
+      if (applyBtn) applyBtn.disabled = true;
       try {
         for (const ep of putEps) {
           const body = {};
@@ -1320,9 +1353,10 @@ const WIDGET_RENDERERS = {
         errEl.textContent = e.message;
         errEl.style.display = 'block';
       } finally {
-        applyBtn.disabled = false;
+        if (applyBtn) applyBtn.disabled = false;
       }
-    });
+    }
+    if (applyBtn) applyBtn.addEventListener('click', submit);
 
     // A map widget's click dispatches 'eventide:target' — fill lat/lon fields.
     function onTarget(ev) {
@@ -1544,7 +1578,10 @@ const WIDGET_RENDERERS = {
           <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
         </div>
       </div>
-      <button class="apply-btn amber">⊕ SEND</button>`;
+      <div class="rc-btn-row">
+        <button class="apply-btn amber" data-j="send">⊕ SEND</button>
+        <button class="apply-btn" data-j="home">⌂ HOME</button>
+      </div>`;
 
     const xEl = bodyEl.querySelector('[data-j="x"]');
     const yEl = bodyEl.querySelector('[data-j="y"]');
@@ -1584,9 +1621,14 @@ const WIDGET_RENDERERS = {
     }
     bodyEl.querySelectorAll('.rc-arrow').forEach(b =>
       b.addEventListener('click', () => { const [ax, ay] = b.dataset.n.split(',').map(Number); nudge(ax, ay); }));
-    bodyEl.querySelector('.apply-btn').addEventListener('click', () => {
+    bodyEl.querySelector('[data-j="send"]').addEventListener('click', () => {
       const x = parseFloat(xEl.value), y = parseFloat(yEl.value);
       if (Number.isFinite(x) && Number.isFinite(y)) send(x, y);
+    });
+    // Home: return pan/tilt to 0,0 and send immediately.
+    bodyEl.querySelector('[data-j="home"]').addEventListener('click', () => {
+      xEl.value = 0; yEl.value = 0;
+      send(0, 0);
     });
 
     function tick() {
@@ -1664,7 +1706,8 @@ const WIDGET_RENDERERS = {
   // Leaflet map with optional device tracking + ADS-B markers (centre)
   map(bodyEl, comp) {
     bodyEl.classList.add('ui-map');
-    bodyEl.innerHTML = `<div class="map-host"></div><div class="map-crosshair"></div>`;
+    bodyEl.innerHTML = `<div class="map-host"></div><div class="map-crosshair"></div>
+      <button class="map-recenter" title="Re-center on the platform">◎</button>`;
     const lat0 = -33.8688, lon0 = 151.2093;
     const map = L.map(bodyEl.querySelector('.map-host'), { center: [lat0, lon0], zoom: 15, zoomControl: true });
     L.tileLayer('/tiles/{z}/{x}/{y}.png', {
@@ -1685,6 +1728,14 @@ const WIDGET_RENDERERS = {
     target.bindTooltip('TARGET', { direction: 'top', opacity: 0.9 });
     const adsbMarkers = {};
     let hasFix = false;
+
+    // Re-center button: pan the view back onto the platform dot. Separately,
+    // the first track fix after any (re)mount auto-centres the map (see
+    // pollTrack below), so a reloaded map always starts on the platform.
+    bodyEl.querySelector('.map-recenter').addEventListener('click', () => {
+      if (!hasFix) { toast('No platform position yet', 'err'); return; }
+      map.panTo(device.getLatLng());
+    });
 
     map.on('click', e => {
       target.setLatLng(e.latlng); target.setOpacity(1);
@@ -2059,6 +2110,11 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
 
 // ── Form field helpers ──────────────────────────────────────────────────────
 
+// Nudge increment for a "nudge" field — the manifest's `step` (default 1).
+// Shared by formFieldHtml (button labels) and the click handlers (increment)
+// so the two can never disagree.
+const nudgeStep = f => (typeof f.step === 'number' && f.step > 0) ? f.step : 1;
+
 function formFieldHtml(f, i) {
   const label = escHtml(f.label || f.key);
   const kind  = f.kind || 'number';
@@ -2082,6 +2138,16 @@ function formFieldHtml(f, i) {
     const opts = (f.options || []).map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('');
     return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
       <select class="form-input" data-fi="${i}">${opts}</select></div></div>`;
+  }
+  if (kind === 'nudge') {
+    const step = nudgeStep(f);
+    return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
+      <input class="form-input" type="number" data-fi="${i}"
+        ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${step}">
+      <div class="nudge-row">
+        <button type="button" class="nudge-btn" data-nb="${i}" data-dir="1">+${step}</button>
+        <button type="button" class="nudge-btn" data-nb="${i}" data-dir="-1">-${step}</button>
+      </div></div></div>`;
   }
   return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
     <input class="form-input" type="number" data-fi="${i}"
@@ -2109,10 +2175,18 @@ function setFieldValue(f, el, v) {
 // intermediate host ("1", "12.7", …) would otherwise fire its own
 // probe/refresh storm while the operator is still typing.
 let _ipChangeTimer = null;
+// The value the current backend base was built from. The input's change
+// event re-fires on blur with the value the debounced input events already
+// applied — re-probing then would be pointless link traffic, and a failed
+// re-probe used to blank the workspace.
+let _lastBackendRaw = localStorage.getItem(BACKEND_STORAGE_KEY) || '';
 function onBackendIpChange(raw) {
-  _backendBase = buildBaseUrl(raw);
-  if (raw.trim()) {
-    localStorage.setItem(BACKEND_STORAGE_KEY, raw.trim());
+  const val = raw.trim();
+  if (val === _lastBackendRaw) return;
+  _lastBackendRaw = val;
+  _backendBase = buildBaseUrl(val);
+  if (val) {
+    localStorage.setItem(BACKEND_STORAGE_KEY, val);
   } else {
     localStorage.removeItem(BACKEND_STORAGE_KEY);
   }
@@ -2127,6 +2201,9 @@ function onBackendIpChange(raw) {
     reconcileLayout();
     fetchPlaybackSettings();
     if (activeTab === 'modules') { loadModules(); loadSshKey(); }
+    // New host not answering yet (payload still booting) — keep probing so
+    // the workspace populates on its own once it comes up.
+    if (!_modInfo) retryModuleInfo();
   }, 350);
 }
 
@@ -3027,17 +3104,22 @@ refreshModuleInfo().then(() => {
   fetchPlaybackSettings();
 });
 
-// If the backend wasn't reachable at page load (payload still booting, slow
-// link), keep retrying every few seconds until the module list arrives —
-// otherwise the workspace and palette stay empty until a tab switch.
-(function retryModuleInfo() {
-  if (_modInfo) return;
-  setTimeout(async () => {
+// If the backend wasn't reachable (payload still booting, slow link, a new
+// host that isn't up yet), keep retrying every few seconds until the module
+// list arrives — otherwise the workspace and palette stay empty until a tab
+// switch. Self-terminates once a snapshot lands; onBackendIpChange re-arms
+// it when a host change fails to reach the new backend.
+let _retryModInfoTimer = null;
+function retryModuleInfo() {
+  if (_modInfo || _retryModInfoTimer) return;
+  _retryModInfoTimer = setTimeout(async () => {
+    _retryModInfoTimer = null;
     await refreshModuleInfo();
     if (_modInfo) reconcileLayout();
     retryModuleInfo();
   }, 3000);
-})();
+}
+retryModuleInfo();
 
 // Re-fit content-sized widgets and refresh Leaflet maps on window resize
 // (gridstack handles horizontal geometry; heights need a nudge).

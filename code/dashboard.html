@@ -226,6 +226,30 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .mr-toggle.on{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
 .mr-toggle:disabled{opacity:.4;cursor:default}
 
+/* Master record widget — a synthetic "dashboard" component (not backed by
+   any installed module) that aggregates every module's "recording"-type
+   ui component into one control. Placed/removed via the palette like any
+   other component; default:true auto-places it on first load. */
+.mr-toolbar{margin-bottom:6px;display:flex;flex-direction:column;gap:6px}
+.mr-timeout-row .form-label{margin-bottom:2px}
+.mr-timeout-row .form-input{width:100%}
+.mr-all-btn{width:100%;padding:6px 0;font-family:var(--mono);font-size:8px;letter-spacing:.12em;border-radius:var(--r);cursor:pointer;border:1px solid var(--warn);color:var(--warn);background:var(--warn-dim);transition:all .15s}
+.mr-all-btn:hover:not(:disabled){background:rgba(255,91,107,.15)}
+.mr-all-btn.on{background:var(--warn);color:#040a0f;font-weight:700;box-shadow:0 0 8px var(--warn)}
+.mr-all-btn:disabled{opacity:.35;cursor:default}
+.mr-empty{font-size:8px;color:var(--text-dim);letter-spacing:.05em;line-height:1.6;padding:2px 0 4px}
+.mr-row{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #0a1520}
+.mr-row:last-child{border-bottom:none}
+.mr-dot{width:6px;height:6px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
+.mr-dot.on{background:var(--warn);box-shadow:0 0 6px var(--warn);animation:pulse 2s infinite}
+.mr-dot.offline{background:var(--border2)}
+.mr-name{flex:1;min-width:0;font-size:8px;letter-spacing:.05em;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mr-file{font-size:7px;color:var(--text-dim);max-width:58px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+.mr-toggle{padding:2px 7px;font-family:var(--mono);font-size:7px;letter-spacing:.08em;border-radius:var(--r);cursor:pointer;border:1px solid var(--border2);color:var(--text-dim);background:none;transition:all .12s;flex-shrink:0}
+.mr-toggle:hover:not(:disabled){border-color:var(--warn);color:var(--warn)}
+.mr-toggle.on{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
+.mr-toggle:disabled{opacity:.4;cursor:default}
+
 /* Streams column */
 .stream-main{display:grid;grid-template-rows:1fr 1fr 1fr;background:#020810;overflow:hidden;gap:1px}
 .stream-cell{position:relative;background:#020810;overflow:hidden;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border)}
@@ -246,6 +270,10 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .map-crosshair::before,.map-crosshair::after{content:'';position:absolute;background:var(--green)}
 .map-crosshair::before{width:1px;height:14px;top:-7px;left:0}
 .map-crosshair::after{width:14px;height:1px;left:-7px;top:0}
+/* Re-center control — sits over the map, clear of Leaflet's zoom (top-left)
+   and attribution (bottom-right) controls. */
+.map-recenter{position:absolute;top:10px;right:10px;z-index:1000;width:26px;height:26px;padding:0;background:rgba(8,15,22,.85);border:1px solid var(--border2);color:var(--text-mid);border-radius:var(--r);font-size:14px;line-height:1;cursor:pointer;transition:all .15s}
+.map-recenter:hover{border-color:var(--accent);color:var(--accent)}
 .dev-marker{position:relative;width:18px;height:18px}
 .dev-dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:var(--green,#00e89d);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 12px var(--green,#00e89d);z-index:3}
 /* Vehicle heading — long clock-hand, green */
@@ -263,17 +291,54 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .rc-joystick-wrap{display:flex;flex-direction:column;align-items:center;margin:2px 0 10px}
 .rc-joystick{position:relative;width:110px;height:110px;border:1px solid var(--border2);border-radius:50%;background:radial-gradient(circle at 50% 50%,var(--surface2) 0%,var(--bg) 100%);touch-action:none;user-select:none;cursor:grab}
 .rc-joystick.active{cursor:grabbing;border-color:var(--amber);box-shadow:0 0 10px rgba(255,184,48,.25)}
+.rc-joystick.axis-lock::before,.rc-joystick.axis-lock::after{content:'';position:absolute;background:var(--border2);pointer-events:none}
+.rc-joystick.axis-lock::before{left:50%;top:8px;bottom:8px;width:1px;margin-left:-.5px}
+.rc-joystick.axis-lock::after{top:50%;left:8px;right:8px;height:1px;margin-top:-.5px}
 .rc-joystick-knob{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;background:radial-gradient(circle at 35% 35%,var(--surface3) 0%,var(--surface2) 70%);border:1px solid var(--amber);box-shadow:0 0 8px rgba(255,184,48,.35);pointer-events:none}
 .rc-joystick-hint{margin-top:5px;font-size:7px;letter-spacing:.12em;color:var(--text-dim)}
 .rc-joystick-grid{display:grid;grid-template-columns:26px 110px 26px;grid-template-rows:26px 110px 26px;gap:4px;align-items:center;justify-items:center}
 .rc-joystick-grid .rc-joystick{grid-column:2;grid-row:2}
 .rc-arrow{width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
+.rc-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.rc-toggle-item{display:flex;align-items:center;gap:6px}
 .rc-arrow:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
 .rc-arrow:active{background:var(--amber);color:var(--bg)}
 .rc-arrow.up{grid-column:2;grid-row:1}
 .rc-arrow.down{grid-column:2;grid-row:3}
 .rc-arrow.left{grid-column:1;grid-row:2}
 .rc-arrow.right{grid-column:3;grid-row:2}
+.rc-btn-row{display:flex;gap:5px}
+.rc-btn-row .apply-btn{flex:1}
+
+/* 3D pan/tilt/roll attitude indicator (centre) */
+.ori3d-stage-wrap{flex:1;min-height:0;position:relative;perspective:640px;display:flex;align-items:center;justify-content:center}
+.ori3d-camera{position:relative;width:190px;height:190px;transform-style:preserve-3d;cursor:grab}
+.ori3d-camera.grabbing{cursor:grabbing}
+.ori3d-sphere{position:absolute;inset:0;transform-style:preserve-3d;pointer-events:none}
+.ori3d-ring{position:absolute;inset:0;border:1px solid var(--border2);border-radius:50%;opacity:.45}
+.ori3d-ring.ry{transform:rotateY(90deg)}
+.ori3d-ring.rz{transform:rotateX(90deg)}
+.ori3d-axis-line{position:absolute;left:50%;top:50%;width:1px;height:95px;margin:-95px 0 0 0;transform-origin:50% 100%;background:linear-gradient(to top,transparent,var(--accent));opacity:.6;pointer-events:none}
+.ori3d-axis-line.tilt{transform:rotateZ(90deg)}
+.ori3d-axis-line.roll{transform:rotateX(90deg)}
+.ori3d-axis-tip{position:absolute;top:-2px;left:-2px;width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 5px var(--accent)}
+.ori3d-axis-label{position:absolute;top:-15px;left:-14px;width:28px;text-align:center;font-size:6px;letter-spacing:.1em;color:var(--accent);opacity:.85}
+.ori3d-origin-dot{position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--surface2);border:1px solid var(--text-dim);z-index:2;pointer-events:none}
+.ori3d-shape{position:absolute;left:50%;top:50%;width:0;height:0;transform-style:preserve-3d;pointer-events:none;transition:opacity .2s}
+.ori3d-shape-reorient{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;transform:rotateX(90deg)}
+.ori3d-fin{position:absolute;left:0;top:0;width:14px;height:78px;margin:-78px 0 0 -7px;transform-origin:50% 100%;clip-path:polygon(50% 0%,100% 78%,50% 100%,0% 78%)}
+.ori3d-fin.f2{transform:rotateY(90deg)}
+.ori3d-ghost .ori3d-fin{background:rgba(0,207,255,.06);border:1px dashed rgba(0,207,255,.45)}
+.ori3d-live .ori3d-fin{background:linear-gradient(to top,rgba(255,184,48,.15),var(--amber));box-shadow:0 0 8px rgba(255,184,48,.4)}
+.ori3d-roll-mark{position:absolute;left:-3px;top:-58px;width:6px;height:6px;border-radius:50%;background:var(--bg);border:2px solid var(--amber);box-shadow:0 0 5px var(--amber)}
+.ori3d-model{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.ori3d-orbit-hint{margin-top:2px;font-size:7px;letter-spacing:.1em;color:var(--text-dim);text-align:center}
+.ori3d-readout{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 2px 2px;border-top:1px solid var(--border2)}
+.ori3d-val{display:flex;flex-direction:column;align-items:center;gap:2px}
+.ori3d-val span{font-size:7px;letter-spacing:.1em;color:var(--text-dim)}
+.ori3d-val b{font-size:12px;font-weight:normal;font-family:var(--mono);color:var(--amber)}
+.ori3d-val.delta b{color:var(--accent)}
+.ori3d-val.delta.high b{color:var(--warn)}
 
 /* Nav panel */
 .nav-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
@@ -305,6 +370,9 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .inner-tab.active.cyan{color:var(--accent);border-bottom-color:var(--accent)}
 .inner-panel{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
 .inner-panel.active{display:flex}
+/* Wrapper must continue the flex chain down from .playback-left, otherwise
+   .inner-panel's flex:1 is ignored and .rec-scroll never gets a bounded height. */
+#pb-panels{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .rec-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1}
 .rec-title{font-family:var(--display);font-size:7px;letter-spacing:.15em;color:var(--text-dim)}
 .btn-sm{background:none;border:1px solid var(--border2);color:var(--text-dim);padding:2px 7px;font-family:var(--mono);font-size:8px;letter-spacing:.1em;cursor:pointer;border-radius:var(--r);transition:all .15s}
@@ -718,12 +786,22 @@ function apiUrl(path)       { return getBase() + '/api' + path; }
 // "ui" section); the proxy resolves the allocated port from the registry.
 let _modInfo = null;   // last /api/modules snapshot
 
+// Only the latest request may write _modInfo — while a new host is being
+// typed, refreshes for intermediate addresses ("192.168.30." …) are still in
+// flight, and a slow failure from one of those must not clobber the good
+// snapshot the final host's refresh already delivered (that race blanked the
+// workspace; probeBackend guards the same way with _probeSeq).
+let _modInfoSeq = 0;
 async function refreshModuleInfo() {
+  const seq = ++_modInfoSeq;
   try {
     // Generous timeout — /api/modules crosses the constrained link.
     const r = await fetch(apiUrl('/modules'), { signal: timeoutSignal(10000) });
+    if (seq !== _modInfoSeq) return _modInfo;
     _modInfo = r.ok ? await r.json() : null;
-  } catch { _modInfo = null; }
+  } catch {
+    if (seq === _modInfoSeq) _modInfo = null;
+  }
   return _modInfo;
 }
 
@@ -1175,6 +1253,70 @@ function fmtVal(v, fmt) {
   return f ? f(v) : String(v);
 }
 
+// ── STL helpers (orientation3d "model" manifest key) ────────────────────────
+// The widget stays CSS-only — the model is drawn on a flat 2D canvas whose
+// transforms mirror the CSS camera/orientation stacks, so there is no WebGL
+// dependency.  Matrix convention matches CSS: +x right, +y DOWN, +z TOWARD
+// the viewer, with the standard right-handed rotation matrices.
+const rotX = a => { const c = Math.cos(a), s = Math.sin(a); return [1,0,0, 0,c,-s, 0,s,c]; };
+const rotY = a => { const c = Math.cos(a), s = Math.sin(a); return [c,0,s, 0,1,0, -s,0,c]; };
+const rotZ = a => { const c = Math.cos(a), s = Math.sin(a); return [c,-s,0, s,c,0, 0,0,1]; };
+function matMul3(A, B) {   // row-major 3×3
+  const R = new Array(9);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++)
+    R[i*3+j] = A[i*3]*B[j] + A[i*3+1]*B[3+j] + A[i*3+2]*B[6+j];
+  return R;
+}
+
+// Parses ASCII or binary STL into centred, unit-scaled vertices and per-face
+// normals.  Model convention (documented in MODULES.md): +X right, +Y up,
+// +Z forward (the pointer direction).  Verts are remapped into render space
+// (x right, y down, z toward viewer) with a 180° rotation about X, so the
+// pointer at identity points into the screen — same as the CSS fin shape.
+function parseStl(buf) {
+  const bytes = new Uint8Array(buf);
+  const head  = new TextDecoder().decode(bytes.subarray(0, 512));
+  const verts = [];   // flat x,y,z — 9 floats per triangle
+  if (head.startsWith('solid') && head.includes('facet')) {
+    const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;
+    const text = new TextDecoder().decode(bytes);
+    let m;
+    while ((m = re.exec(text))) verts.push(+m[1], +m[2], +m[3]);
+  } else {
+    const dv = new DataView(buf);
+    let count = dv.getUint32(80, true);
+    count = Math.min(count, Math.floor((buf.byteLength - 84) / 50));  // tolerate bad headers
+    for (let i = 0; i < count; i++) {
+      const off = 84 + i * 50 + 12;   // skip the stored normal — recomputed below
+      for (let v = 0; v < 9; v++) verts.push(dv.getFloat32(off + v * 4, true));
+    }
+  }
+  if (verts.length < 9) throw new Error('no triangles in STL');
+  const v = new Float32Array(verts);
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < v.length; i += 3)
+    for (let c = 0; c < 3; c++) { min[c] = Math.min(min[c], v[i+c]); max[c] = Math.max(max[c], v[i+c]); }
+  const ctr = min.map((mn, c) => (mn + max[c]) / 2);
+  const inv = 1 / Math.max(max[0]-min[0], max[1]-min[1], max[2]-min[2], 1e-9);
+  for (let i = 0; i < v.length; i += 3)
+    for (let c = 0; c < 3; c++) v[i+c] = (v[i+c] - ctr[c]) * inv;
+  // Per-face normals from the winding (stored normals are often garbage).
+  const normals = new Float32Array(v.length / 3);   // 3 floats per triangle
+  for (let t = 0; t < v.length; t += 9) {
+    const ax = v[t+3]-v[t],   ay = v[t+4]-v[t+1], az = v[t+5]-v[t+2];
+    const bx = v[t+6]-v[t],   by = v[t+7]-v[t+1], bz = v[t+8]-v[t+2];
+    let nx = ay*bz - az*by, ny = az*bx - ax*bz, nz = ax*by - ay*bx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    normals[t/3] = nx/len; normals[t/3+1] = ny/len; normals[t/3+2] = nz/len;
+    // Remap model space → render space: Rx(180°) — y and z flip sign.
+    v[t+1] = -v[t+1]; v[t+2] = -v[t+2];
+    v[t+4] = -v[t+4]; v[t+5] = -v[t+5];
+    v[t+7] = -v[t+7]; v[t+8] = -v[t+8];
+  }
+  for (let i = 0; i < normals.length; i += 3) { normals[i+1] = -normals[i+1]; normals[i+2] = -normals[i+2]; }
+  return { verts: v, normals };
+}
+
 function mountWidget(comp, bodyEl) {
   const renderer = WIDGET_RENDERERS[comp.type];
   if (!renderer) {
@@ -1238,9 +1380,23 @@ const WIDGET_RENDERERS = {
       + `<div class="ui-form-err"></div>`;
     const inputs = fields.map((f, i) => bodyEl.querySelector(`[data-fi="${i}"]`));
     fields.forEach((f, i) => {
-      if ((f.kind || 'number') === 'slider') {
+      const kind = f.kind || 'number';
+      if (kind === 'slider') {
         const span = bodyEl.querySelector(`[data-fv="${i}"]`);
         inputs[i].addEventListener('input', () => { span.textContent = inputs[i].value; });
+      }
+      if (kind === 'nudge') {
+        const step = nudgeStep(f);
+        // Round to the step's own precision so float steps (0.1) don't drift.
+        const dec = (String(step).split('.')[1] || '').length;
+        bodyEl.querySelectorAll(`[data-nb="${i}"]`).forEach(btn =>
+          btn.addEventListener('click', () => {
+            let v = getFieldValue(f, inputs[i]) + Number(btn.dataset.dir) * step;
+            if (f.min != null) v = Math.max(f.min, v);
+            if (f.max != null) v = Math.min(f.max, v);
+            setFieldValue(f, inputs[i], +v.toFixed(dec));
+            submit();   // a nudge applies immediately — no separate APPLY click
+          }));
       }
     });
 
@@ -1261,10 +1417,13 @@ const WIDGET_RENDERERS = {
     populate();
 
     const applyBtn = bodyEl.querySelector('.apply-btn');
-    if (applyBtn) applyBtn.addEventListener('click', async () => {
+    // Shared by the APPLY button and by nudge fields (which submit instantly
+    // on every button click).
+    async function submit() {
+      if (!putEps.length) return;
       const errEl = bodyEl.querySelector('.ui-form-err');
       errEl.style.display = 'none';
-      applyBtn.disabled = true;
+      if (applyBtn) applyBtn.disabled = true;
       try {
         for (const ep of putEps) {
           const body = {};
@@ -1286,9 +1445,10 @@ const WIDGET_RENDERERS = {
         errEl.textContent = e.message;
         errEl.style.display = 'block';
       } finally {
-        applyBtn.disabled = false;
+        if (applyBtn) applyBtn.disabled = false;
       }
-    });
+    }
+    if (applyBtn) applyBtn.addEventListener('click', submit);
 
     // A map widget's click dispatches 'eventide:target' — fill lat/lon fields.
     function onTarget(ev) {
@@ -1498,20 +1658,43 @@ const WIDGET_RENDERERS = {
           <button class="rc-arrow right" data-n="5,0">▶</button>
           <div class="rc-joystick"><div class="rc-joystick-knob"></div></div>
         </div>
-        <div class="rc-joystick-hint">↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°</div>
+        <div class="rc-joystick-hint" data-role="joystick-hint">↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°</div>
       </div>
-      <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
-        <span class="form-label" style="flex:1;margin:0">VEHICLE FRAME</span>
-        <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
+      <div class="rc-toggle-row">
+        <div class="rc-toggle-item">
+          <span class="form-label" style="margin:0">AXIS LOCK</span>
+          <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="axislock"><div class="toggle-track"></div></label>
+        </div>
+        <div class="rc-toggle-item">
+          <span class="form-label" style="margin:0">FRAME</span>
+          <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
+        </div>
       </div>
-      <button class="apply-btn amber">⊕ SEND</button>`;
+      <div class="rc-btn-row">
+        <button class="apply-btn amber" data-j="send">⊕ SEND</button>
+        <button class="apply-btn" data-j="home">⌂ HOME</button>
+      </div>`;
 
     const xEl = bodyEl.querySelector('[data-j="x"]');
     const yEl = bodyEl.querySelector('[data-j="y"]');
     const frameEl = bodyEl.querySelector('[data-j="frame"]');
+    const axisLockEl = bodyEl.querySelector('[data-j="axislock"]');
+    const hintEl = bodyEl.querySelector('[data-role="joystick-hint"]');
     const pad  = bodyEl.querySelector('.rc-joystick');
     const knob = bodyEl.querySelector('.rc-joystick-knob');
     let lastX = 0, lastY = 0, dead = false, dragging = false, maxR = 0, dx = 0, dy = 0, tickTimer = null;
+    let axisLock = false, lockedAxis = null; // lockedAxis: 'x' | 'y' | null — set once per drag
+
+    function updateHint() {
+      hintEl.textContent = axisLock
+        ? '⊕ AXIS LOCK · ONE AXIS PER DRAG ±5°'
+        : '↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°';
+    }
+    axisLockEl.addEventListener('change', () => {
+      axisLock = axisLockEl.checked;
+      pad.classList.toggle('axis-lock', axisLock);
+      updateHint();
+    });
 
     async function send(x, y) {
       try {
@@ -1530,9 +1713,14 @@ const WIDGET_RENDERERS = {
     }
     bodyEl.querySelectorAll('.rc-arrow').forEach(b =>
       b.addEventListener('click', () => { const [ax, ay] = b.dataset.n.split(',').map(Number); nudge(ax, ay); }));
-    bodyEl.querySelector('.apply-btn').addEventListener('click', () => {
+    bodyEl.querySelector('[data-j="send"]').addEventListener('click', () => {
       const x = parseFloat(xEl.value), y = parseFloat(yEl.value);
       if (Number.isFinite(x) && Number.isFinite(y)) send(x, y);
+    });
+    // Home: return pan/tilt to 0,0 and send immediately.
+    bodyEl.querySelector('[data-j="home"]').addEventListener('click', () => {
+      xEl.value = 0; yEl.value = 0;
+      send(0, 0);
     });
 
     function tick() {
@@ -1545,16 +1733,29 @@ const WIDGET_RENDERERS = {
     function onMove(e) {
       if (!dragging) return;
       const r = pad.getBoundingClientRect();
-      dx = e.clientX - (r.left + r.width / 2);
-      dy = e.clientY - (r.top + r.height / 2);
-      const dist = Math.hypot(dx, dy);
-      if (dist > maxR) { dx = dx / dist * maxR; dy = dy / dist * maxR; }
+      let ndx = e.clientX - (r.left + r.width / 2);
+      let ndy = e.clientY - (r.top + r.height / 2);
+      if (axisLock) {
+        // Decide the drag's axis once, from the first meaningful movement,
+        // then hold to it for the rest of the drag so motion can't bleed
+        // between pan and tilt.
+        if (lockedAxis === null && Math.hypot(ndx, ndy) > 4) {
+          lockedAxis = Math.abs(ndx) >= Math.abs(ndy) ? 'x' : 'y';
+        }
+        if (lockedAxis === 'x') ndy = 0;
+        else if (lockedAxis === 'y') ndx = 0;
+        else { ndx = 0; ndy = 0; } // below threshold: no axis chosen yet
+      }
+      const dist = Math.hypot(ndx, ndy);
+      if (dist > maxR) { ndx = ndx / dist * maxR; ndy = ndy / dist * maxR; }
+      dx = ndx; dy = ndy;
       knob.style.transform = `translate(${dx}px, ${dy}px)`;
     }
     function onUp() {
       if (!dragging) return;
       dragging = false;
       dx = dy = 0;
+      lockedAxis = null;
       knob.style.transform = 'translate(0px, 0px)';
       clearInterval(tickTimer); tickTimer = null;
     }
@@ -1562,6 +1763,7 @@ const WIDGET_RENDERERS = {
       maxR = (pad.clientWidth - knob.clientWidth) / 2;
       if (!(maxR > 0)) return;
       dragging = true;
+      lockedAxis = null;
       if (pad.setPointerCapture) pad.setPointerCapture(e.pointerId);
       onMove(e); tick();
       tickTimer = setInterval(tick, 100);
@@ -1571,8 +1773,11 @@ const WIDGET_RENDERERS = {
     window.addEventListener('pointercancel', onUp);
 
     // Seed the baseline from telemetry so nudges are relative to reality.
+    // Polled, but skipped while either pan/tilt box has focus so a manual
+    // edit is never clobbered mid-typing.
     async function seed() {
       if (dead || dragging || !comp.telemetry_get) return;
+      if (document.activeElement === xEl || document.activeElement === yEl) return;
       try {
         const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.telemetry_get));
         if (!r.ok) return;
@@ -1596,7 +1801,8 @@ const WIDGET_RENDERERS = {
   // Leaflet map with optional device tracking + ADS-B markers (centre)
   map(bodyEl, comp) {
     bodyEl.classList.add('ui-map');
-    bodyEl.innerHTML = `<div class="map-host"></div><div class="map-crosshair"></div>`;
+    bodyEl.innerHTML = `<div class="map-host"></div><div class="map-crosshair"></div>
+      <button class="map-recenter" title="Re-center on the platform">◎</button>`;
     const lat0 = -33.8688, lon0 = 151.2093;
     const map = L.map(bodyEl.querySelector('.map-host'), { center: [lat0, lon0], zoom: 15, zoomControl: true });
     L.tileLayer('/tiles/{z}/{x}/{y}.png', {
@@ -1617,6 +1823,14 @@ const WIDGET_RENDERERS = {
     target.bindTooltip('TARGET', { direction: 'top', opacity: 0.9 });
     const adsbMarkers = {};
     let hasFix = false;
+
+    // Re-center button: pan the view back onto the platform dot. Separately,
+    // the first track fix after any (re)mount auto-centres the map (see
+    // pollTrack below), so a reloaded map always starts on the platform.
+    bodyEl.querySelector('.map-recenter').addEventListener('click', () => {
+      if (!hasFix) { toast('No platform position yet', 'err'); return; }
+      map.panTo(device.getLatLng());
+    });
 
     map.on('click', e => {
       target.setLatLng(e.latlng); target.setOpacity(1);
@@ -1702,6 +1916,207 @@ const WIDGET_RENDERERS = {
       timers.push(setInterval(pollAdsb, a.interval || 5000));
     }
     return { map, destroy() { timers.forEach(clearInterval); map.remove(); } };
+  },
+
+  // 3D pan/tilt/roll attitude indicator (centre). Polls a JSON telemetry
+  // endpoint for pan/tilt/roll in degrees and renders them as a rotating
+  // pointer in a CSS 3D scene. A dashed cyan "ghost" pointer stays fixed at
+  // 0,0,0 (home orientation) the whole time, so the live amber pointer's
+  // deviation from it is always visible at a glance, alongside the origin
+  // dot at the pivot and the numeric readout underneath. Dragging the scene
+  // orbits the camera only — it never touches the telemetry values.
+  orientation3d(bodyEl, comp) {
+    const pp = comp.paths?.pan  || 'pan';
+    const pt = comp.paths?.tilt || 'tilt';
+    const pr = comp.paths?.roll || 'roll';
+    bodyEl.classList.add('ui-orientation3d');
+    bodyEl.innerHTML = `
+      <div class="ori3d-stage-wrap">
+        <div class="ori3d-camera">
+          <div class="ori3d-sphere">
+            <div class="ori3d-ring rx"></div>
+            <div class="ori3d-ring ry"></div>
+            <div class="ori3d-ring rz"></div>
+          </div>
+          <div class="ori3d-axis-line pan"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">PAN</div></div>
+          <div class="ori3d-axis-line tilt"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">TILT</div></div>
+          <div class="ori3d-axis-line roll"><div class="ori3d-axis-tip"></div><div class="ori3d-axis-label">ROLL</div></div>
+          <div class="ori3d-shape ori3d-ghost">
+            <div class="ori3d-shape-reorient">
+              <div class="ori3d-fin f1"></div>
+              <div class="ori3d-fin f2"></div>
+            </div>
+          </div>
+          <div class="ori3d-shape ori3d-live" data-role="live" style="opacity:0">
+            <div class="ori3d-shape-reorient">
+              <div class="ori3d-fin f1"></div>
+              <div class="ori3d-fin f2"></div>
+              <div class="ori3d-roll-mark"></div>
+            </div>
+          </div>
+          <div class="ori3d-origin-dot" title="0, 0, 0 — home orientation"></div>
+        </div>
+      </div>
+      <div class="ori3d-orbit-hint">DRAG TO ORBIT VIEW · DASHED = 0,0,0 ORIGIN</div>
+      <div class="ori3d-readout">
+        <div class="ori3d-val"><span>PAN</span><b data-role="val-pan">—</b></div>
+        <div class="ori3d-val"><span>TILT</span><b data-role="val-tilt">—</b></div>
+        <div class="ori3d-val"><span>ROLL</span><b data-role="val-roll">—</b></div>
+        <div class="ori3d-val delta"><span>Δ ORIGIN</span><b data-role="val-delta">—</b></div>
+      </div>`;
+
+    const stageWrap = bodyEl.querySelector('.ori3d-stage-wrap');
+    const camera    = bodyEl.querySelector('.ori3d-camera');
+    const live      = bodyEl.querySelector('[data-role="live"]');
+    const vPan      = bodyEl.querySelector('[data-role="val-pan"]');
+    const vTilt     = bodyEl.querySelector('[data-role="val-tilt"]');
+    const vRoll     = bodyEl.querySelector('[data-role="val-roll"]');
+    const vDelta    = bodyEl.querySelector('[data-role="val-delta"]');
+    const deltaBox  = bodyEl.querySelector('.ori3d-val.delta');
+
+    // Orbit camera (view angle only — independent of the telemetry below).
+    let camAz = 32, camEl = -16, dragging = false, lastX = 0, lastY = 0;
+    function applyCamera() { camera.style.transform = `rotateX(${camEl}deg) rotateY(${camAz}deg)`; }
+    applyCamera();
+    function onCamDown(e) {
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      camera.classList.add('grabbing');
+      if (stageWrap.setPointerCapture) stageWrap.setPointerCapture(e.pointerId);
+    }
+    function onCamMove(e) {
+      if (!dragging) return;
+      camAz += (e.clientX - lastX) * 0.4;
+      camEl = Math.min(70, Math.max(-70, camEl - (e.clientY - lastY) * 0.4));
+      lastX = e.clientX; lastY = e.clientY;
+      applyCamera();
+      renderModel();
+    }
+    function onCamUp() { dragging = false; camera.classList.remove('grabbing'); }
+    stageWrap.addEventListener('pointerdown', onCamDown);
+    window.addEventListener('pointermove', onCamMove);
+    window.addEventListener('pointerup', onCamUp);
+    window.addEventListener('pointercancel', onCamUp);
+
+    let dead = false;
+
+    // ── Optional STL model (manifest ui key "model") ────────────────────────
+    // A flat canvas mirroring the CSS camera + orientation transforms; the
+    // model replaces the CSS fin shape once loaded.  Any failure (missing
+    // file, bad STL) leaves the fin shape in place.
+    let curPan = 0, curTilt = 0, curRoll = 0;   // last telemetry applied (deg)
+    let model = null, mCtx = null, mScale = 0, modelRO = null;
+    let scrArr = null, nRot = null, zArr = null, order = null;  // per-frame scratch
+
+    function renderModel() {
+      if (!model || !mCtx) return;
+      const d2r = Math.PI / 180;
+      // Same stacks as the CSS: camera rotateX(camEl)·rotateY(camAz),
+      // orientation rotateY(-pan)·rotateX(-tilt)·rotateZ(roll).
+      const R = matMul3(matMul3(rotX(camEl * d2r), rotY(camAz * d2r)),
+                        matMul3(rotY(-curPan * d2r), matMul3(rotX(-curTilt * d2r), rotZ(curRoll * d2r))));
+      const v = model.verts, n = model.normals;
+      const w = mCtx.canvas.clientWidth, h = mCtx.canvas.clientHeight;
+      mCtx.clearRect(0, 0, w, h);
+      const cx = w / 2, cy = h / 2;
+      for (let i = 0; i < v.length; i += 3) {
+        const x = v[i], y = v[i+1], z = v[i+2];
+        scrArr[i]   = cx + (R[0]*x + R[1]*y + R[2]*z) * mScale;
+        scrArr[i+1] = cy + (R[3]*x + R[4]*y + R[5]*z) * mScale;
+        scrArr[i+2] =      R[6]*x + R[7]*y + R[8]*z;
+      }
+      const tris = v.length / 9;
+      for (let t = 0; t < tris; t++) {
+        zArr[t] = scrArr[t*9+2] + scrArr[t*9+5] + scrArr[t*9+8];
+        order[t] = t;
+        const nx = n[t*3], ny = n[t*3+1], nz = n[t*3+2];
+        nRot[t*3]   = R[0]*nx + R[1]*ny + R[2]*nz;
+        nRot[t*3+1] = R[3]*nx + R[4]*ny + R[5]*nz;
+        nRot[t*3+2] = R[6]*nx + R[7]*ny + R[8]*nz;
+      }
+      order.sort((a, b) => zArr[a] - zArr[b]);   // painter: far → near (+z = toward viewer)
+      const LX = -0.35, LY = -0.65, LZ = 0.67;   // fixed light, upper-left-front
+      for (let k = 0; k < tris; k++) {
+        const t = order[k], o = t * 9;
+        const dot = nRot[t*3]*LX + nRot[t*3+1]*LY + nRot[t*3+2]*LZ;
+        const s = 0.3 + 0.7 * Math.abs(dot);     // abs: backfaces shade like front
+        mCtx.beginPath();
+        mCtx.moveTo(scrArr[o],   scrArr[o+1]);
+        mCtx.lineTo(scrArr[o+3], scrArr[o+4]);
+        mCtx.lineTo(scrArr[o+6], scrArr[o+7]);
+        mCtx.closePath();
+        mCtx.fillStyle = `rgb(${Math.round(255*s)},${Math.round(184*s)},${Math.round(48*s)})`;
+        mCtx.fill();
+      }
+    }
+
+    if (comp.model) {
+      const mCanvas = document.createElement('canvas');
+      mCanvas.className = 'ori3d-model';
+      stageWrap.appendChild(mCanvas);
+      mCtx = mCanvas.getContext('2d');
+      modelRO = new ResizeObserver(() => {
+        const dpr = window.devicePixelRatio || 1;
+        const w = stageWrap.clientWidth, h = stageWrap.clientHeight;
+        mCanvas.width  = Math.max(1, Math.round(w * dpr));
+        mCanvas.height = Math.max(1, Math.round(h * dpr));
+        mCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        mScale = 0.62 * Math.min(w, h);   // unit-scaled model spans ~62% of the stage
+        renderModel();
+      });
+      modelRO.observe(stageWrap);
+      fetch(apiUrl('/modules/' + encodeURIComponent(comp.mod) + '/files/'
+                   + String(comp.model).split('/').map(encodeURIComponent).join('/')))
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+        .then(buf => {
+          if (dead) return;
+          model = parseStl(buf);
+          scrArr = new Float32Array(model.verts.length);
+          nRot   = new Float32Array(model.normals.length);
+          zArr   = new Float32Array(model.verts.length / 9);
+          order  = new Uint32Array(model.verts.length / 9);
+          live.style.display = 'none';   // the model takes over from the fins
+          renderModel();
+        })
+        .catch(e => console.warn('orientation3d: model unavailable, using fin shape —', e.message));
+    }
+
+    async function poll() {
+      if (dead) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get));
+        if (!r.ok) return;
+        const d = await r.json();
+        const pan = dotPath(d, pp), tilt = dotPath(d, pt), roll = dotPath(d, pr);
+        if (typeof pan !== 'number' || typeof tilt !== 'number' || typeof roll !== 'number') return;
+        live.style.opacity = 1;
+        // Extrinsic roll → pitch → yaw(pan) composition, chosen for a stable,
+        // legible indicator rather than exact intrinsic gimbal kinematics.
+        // ("Yaw" here means rotation about the world vertical axis — i.e.
+        // pan — and is distinct from roll, which spins about the pointer's
+        // own forward axis.)
+        live.style.transform = `rotateY(${-pan}deg) rotateX(${-tilt}deg) rotateZ(${roll}deg)`;
+        curPan = pan; curTilt = tilt; curRoll = roll;
+        renderModel();
+        vPan.textContent  = pan.toFixed(1)  + '°';
+        vTilt.textContent = tilt.toFixed(1) + '°';
+        vRoll.textContent = roll.toFixed(1) + '°';
+        const delta = Math.sqrt(pan * pan + tilt * tilt + roll * roll);
+        vDelta.textContent = delta.toFixed(1) + '°';
+        deltaBox.classList.toggle('high', delta > (comp.warn_delta || 45));
+      } catch { /* module offline */ }
+    }
+    poll();
+    const timer = setInterval(poll, comp.interval || 1000);
+    return {
+      destroy() {
+        dead = true;
+        clearInterval(timer);
+        if (modelRO) modelRO.disconnect();
+        window.removeEventListener('pointermove', onCamMove);
+        window.removeEventListener('pointerup', onCamUp);
+        window.removeEventListener('pointercancel', onCamUp);
+      },
+    };
   },
   // Master record (sidebar): a synthetic "dashboard" component, not backed
   // by any installed module. Aggregates every OTHER component of type
@@ -1876,6 +2291,14 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
 
 // ── Form field helpers ──────────────────────────────────────────────────────
 
+// Nudge increment for a "nudge" field — the manifest's `step` (default 1).
+// Shared by formFieldHtml (button labels) and the click handlers (increment)
+// so the two can never disagree.
+const nudgeStep = f => {
+  const s = parseFloat(f.step);   // manifests often write step as a string ("0.1")
+  return (Number.isFinite(s) && s > 0) ? s : 1;
+};
+
 function formFieldHtml(f, i) {
   const label = escHtml(f.label || f.key);
   const kind  = f.kind || 'number';
@@ -1899,6 +2322,16 @@ function formFieldHtml(f, i) {
     const opts = (f.options || []).map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('');
     return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
       <select class="form-input" data-fi="${i}">${opts}</select></div></div>`;
+  }
+  if (kind === 'nudge') {
+    const step = nudgeStep(f);
+    return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
+      <input class="form-input" type="number" data-fi="${i}"
+        ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${step}">
+      <div class="nudge-row">
+        <button type="button" class="nudge-btn" data-nb="${i}" data-dir="-1">-${step}</button>
+        <button type="button" class="nudge-btn" data-nb="${i}" data-dir="1">+${step}</button>
+      </div></div></div>`;
   }
   return `<div class="form-row"><div class="form-col"><label class="form-label">${label}</label>
     <input class="form-input" type="number" data-fi="${i}"
@@ -1926,10 +2359,18 @@ function setFieldValue(f, el, v) {
 // intermediate host ("1", "12.7", …) would otherwise fire its own
 // probe/refresh storm while the operator is still typing.
 let _ipChangeTimer = null;
+// The value the current backend base was built from. The input's change
+// event re-fires on blur with the value the debounced input events already
+// applied — re-probing then would be pointless link traffic, and a failed
+// re-probe used to blank the workspace.
+let _lastBackendRaw = localStorage.getItem(BACKEND_STORAGE_KEY) || '';
 function onBackendIpChange(raw) {
-  _backendBase = buildBaseUrl(raw);
-  if (raw.trim()) {
-    localStorage.setItem(BACKEND_STORAGE_KEY, raw.trim());
+  const val = raw.trim();
+  if (val === _lastBackendRaw) return;
+  _lastBackendRaw = val;
+  _backendBase = buildBaseUrl(val);
+  if (val) {
+    localStorage.setItem(BACKEND_STORAGE_KEY, val);
   } else {
     localStorage.removeItem(BACKEND_STORAGE_KEY);
   }
@@ -1944,6 +2385,9 @@ function onBackendIpChange(raw) {
     reconcileLayout();
     fetchPlaybackSettings();
     if (activeTab === 'modules') { loadModules(); loadSshKey(); }
+    // New host not answering yet (payload still booting) — keep probing so
+    // the workspace populates on its own once it comes up.
+    if (!_modInfo) retryModuleInfo();
   }, 350);
 }
 
@@ -2844,17 +3288,22 @@ refreshModuleInfo().then(() => {
   fetchPlaybackSettings();
 });
 
-// If the backend wasn't reachable at page load (payload still booting, slow
-// link), keep retrying every few seconds until the module list arrives —
-// otherwise the workspace and palette stay empty until a tab switch.
-(function retryModuleInfo() {
-  if (_modInfo) return;
-  setTimeout(async () => {
+// If the backend wasn't reachable (payload still booting, slow link, a new
+// host that isn't up yet), keep retrying every few seconds until the module
+// list arrives — otherwise the workspace and palette stay empty until a tab
+// switch. Self-terminates once a snapshot lands; onBackendIpChange re-arms
+// it when a host change fails to reach the new backend.
+let _retryModInfoTimer = null;
+function retryModuleInfo() {
+  if (_modInfo || _retryModInfoTimer) return;
+  _retryModInfoTimer = setTimeout(async () => {
+    _retryModInfoTimer = null;
     await refreshModuleInfo();
     if (_modInfo) reconcileLayout();
     retryModuleInfo();
   }, 3000);
-})();
+}
+retryModuleInfo();
 
 // Re-fit content-sized widgets and refresh Leaflet maps on window resize
 // (gridstack handles horizontal geometry; heights need a nudge).

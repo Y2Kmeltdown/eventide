@@ -525,6 +525,24 @@ def download_recording(source, filename):
         abort(404)
     return send_file(filepath, as_attachment=True, download_name=filename)
 
+
+# ── Module asset files ────────────────────────────────────────────────────────
+# Read-only access to files inside an installed module's directory.  Used by
+# dashboard widgets that need a module-supplied asset — e.g. the orientation3d
+# widget's STL model (manifest ui key "model", a path relative to the module
+# root): /api/modules/<name>/files/gimbal.stl
+@app.route("/api/modules/<name>/files/<path:relpath>")
+def module_file(name, relpath):
+    if name not in load_registry().get("modules", {}):
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    root = (Path(cfg["packages_dir"]) / name).resolve()
+    filepath = (root / relpath).resolve()
+    if not filepath.is_relative_to(root):
+        abort(400)
+    if not filepath.is_file():
+        abort(404)
+    return send_file(filepath)
+
 # ── Module manager ────────────────────────────────────────────────────────────
 # Modules are GitHub repositories containing an eventide-module.json manifest
 # (see docs/MODULES.md).  Installing a module is a background job:
@@ -542,9 +560,9 @@ _PROGRAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 _ARG_TYPES = ("str", "int", "float")
 _UI_COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording")
+_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording", "orientation3d")
 _UI_REGIONS = ("sidebar", "center")
-_UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select")
+_UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select", "nudge")
 _KNOWN_PLACEHOLDERS = (
     "install_dir", "config_dir", "module_dir", "recordings_dir",
     "recordings_subdir", "venv_dir", "venv_python",

@@ -493,9 +493,12 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* ADS-B */
-#adsb-table-wrap{max-height:220px;overflow-y:auto}
-#adsb-table-wrap::-webkit-scrollbar{width:3px}
-#adsb-table-wrap::-webkit-scrollbar-thumb{background:var(--border2)}
+/* Table widgets grow with their rows but within a band: never smaller than a
+   useful empty state, never taller than the cap — beyond that the wrap
+   scrolls (fitItemToContent clamps its measurement to the same max-height). */
+.ui-table-wrap{min-height:120px;max-height:260px;overflow-y:auto}
+.ui-table-wrap::-webkit-scrollbar{width:3px}
+.ui-table-wrap::-webkit-scrollbar-thumb{background:var(--border2)}
 .adsb-table{width:100%;border-collapse:collapse;font-size:9px}
 .adsb-table th{padding:4px 2px;text-align:left;font-size:7px;letter-spacing:.1em;color:var(--text-dim);border-bottom:1px solid var(--border);font-weight:normal}
 .adsb-table td{padding:4px 2px;border-bottom:1px solid #0a1520;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px}
@@ -959,7 +962,12 @@ function fitItemToContent(grid, el) {
   const cs = getComputedStyle(contentEl);
   const chrome = (el.clientHeight - contentEl.clientHeight)
                + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-  const h = Math.max(1, Math.ceil((wrap.scrollHeight + chrome + 1) / cell));
+  // Respect a wrap max-height (e.g. .ui-table-wrap): size the tile to the
+  // cap, not to the overflowing content — the wrap scrolls the rest.
+  let contentH = wrap.scrollHeight;
+  const maxH = parseFloat(getComputedStyle(wrap).maxHeight);   // NaN when 'none'
+  if (!isNaN(maxH)) contentH = Math.min(contentH, maxH);
+  const h = Math.max(1, Math.ceil((contentH + chrome + 1) / cell));
   if (el.gridstackNode && el.gridstackNode.h !== h) grid.update(el, { h });
 }
 
@@ -970,6 +978,14 @@ function fitSidebarContent() {
     if (!grid) return;
     grid.getGridItems().forEach(el => fitItemToContent(grid, el));
   });
+}
+
+// Re-fit the single tile containing bodyEl — for widgets whose content height
+// changes asynchronously after mount (e.g. a table rendering polled rows).
+function refitWidget(bodyEl) {
+  const el = bodyEl.closest('.grid-stack-item');
+  const grid = el && el.gridstackNode && el.gridstackNode.grid;
+  if (el && grid) fitItemToContent(grid, el);
 }
 
 // The centre workspace is never scrollable: shrink the cell height so all
@@ -1571,6 +1587,7 @@ const WIDGET_RENDERERS = {
     function renderRows(items) {
       if (!items.length) {
         wrap.innerHTML = `<div class="empty" style="padding:8px 0">${escHtml(comp.empty_text || 'No data')}</div>`;
+        refitWidget(bodyEl);
         return;
       }
       wrap.innerHTML = `<table class="adsb-table"><thead><tr>
@@ -1589,6 +1606,7 @@ const WIDGET_RENDERERS = {
           }).join('')}</tbody></table>`;
       wrap.querySelectorAll('[data-ri]').forEach(btn =>
         btn.addEventListener('click', () => onAction(items[+btn.dataset.ri])));
+      refitWidget(bodyEl);
     }
 
     async function onAction(item) {

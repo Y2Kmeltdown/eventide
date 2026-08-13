@@ -307,6 +307,7 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .ori3d-ghost .ori3d-fin{background:rgba(0,207,255,.06);border:1px dashed rgba(0,207,255,.45)}
 .ori3d-live .ori3d-fin{background:linear-gradient(to top,rgba(255,184,48,.15),var(--amber));box-shadow:0 0 8px rgba(255,184,48,.4)}
 .ori3d-roll-mark{position:absolute;left:-3px;top:-58px;width:6px;height:6px;border-radius:50%;background:var(--bg);border:2px solid var(--amber);box-shadow:0 0 5px var(--amber)}
+.ori3d-model{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
 .ori3d-orbit-hint{margin-top:2px;font-size:7px;letter-spacing:.1em;color:var(--text-dim);text-align:center}
 .ori3d-readout{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 2px 2px;border-top:1px solid var(--border2)}
 .ori3d-val{display:flex;flex-direction:column;align-items:center;gap:2px}
@@ -1228,6 +1229,70 @@ function fmtVal(v, fmt) {
   return f ? f(v) : String(v);
 }
 
+// ── STL helpers (orientation3d "model" manifest key) ────────────────────────
+// The widget stays CSS-only — the model is drawn on a flat 2D canvas whose
+// transforms mirror the CSS camera/orientation stacks, so there is no WebGL
+// dependency.  Matrix convention matches CSS: +x right, +y DOWN, +z TOWARD
+// the viewer, with the standard right-handed rotation matrices.
+const rotX = a => { const c = Math.cos(a), s = Math.sin(a); return [1,0,0, 0,c,-s, 0,s,c]; };
+const rotY = a => { const c = Math.cos(a), s = Math.sin(a); return [c,0,s, 0,1,0, -s,0,c]; };
+const rotZ = a => { const c = Math.cos(a), s = Math.sin(a); return [c,-s,0, s,c,0, 0,0,1]; };
+function matMul3(A, B) {   // row-major 3×3
+  const R = new Array(9);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++)
+    R[i*3+j] = A[i*3]*B[j] + A[i*3+1]*B[3+j] + A[i*3+2]*B[6+j];
+  return R;
+}
+
+// Parses ASCII or binary STL into centred, unit-scaled vertices and per-face
+// normals.  Model convention (documented in MODULES.md): +X right, +Y up,
+// +Z forward (the pointer direction).  Verts are remapped into render space
+// (x right, y down, z toward viewer) with a 180° rotation about X, so the
+// pointer at identity points into the screen — same as the CSS fin shape.
+function parseStl(buf) {
+  const bytes = new Uint8Array(buf);
+  const head  = new TextDecoder().decode(bytes.subarray(0, 512));
+  const verts = [];   // flat x,y,z — 9 floats per triangle
+  if (head.startsWith('solid') && head.includes('facet')) {
+    const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;
+    const text = new TextDecoder().decode(bytes);
+    let m;
+    while ((m = re.exec(text))) verts.push(+m[1], +m[2], +m[3]);
+  } else {
+    const dv = new DataView(buf);
+    let count = dv.getUint32(80, true);
+    count = Math.min(count, Math.floor((buf.byteLength - 84) / 50));  // tolerate bad headers
+    for (let i = 0; i < count; i++) {
+      const off = 84 + i * 50 + 12;   // skip the stored normal — recomputed below
+      for (let v = 0; v < 9; v++) verts.push(dv.getFloat32(off + v * 4, true));
+    }
+  }
+  if (verts.length < 9) throw new Error('no triangles in STL');
+  const v = new Float32Array(verts);
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < v.length; i += 3)
+    for (let c = 0; c < 3; c++) { min[c] = Math.min(min[c], v[i+c]); max[c] = Math.max(max[c], v[i+c]); }
+  const ctr = min.map((mn, c) => (mn + max[c]) / 2);
+  const inv = 1 / Math.max(max[0]-min[0], max[1]-min[1], max[2]-min[2], 1e-9);
+  for (let i = 0; i < v.length; i += 3)
+    for (let c = 0; c < 3; c++) v[i+c] = (v[i+c] - ctr[c]) * inv;
+  // Per-face normals from the winding (stored normals are often garbage).
+  const normals = new Float32Array(v.length / 3);   // 3 floats per triangle
+  for (let t = 0; t < v.length; t += 9) {
+    const ax = v[t+3]-v[t],   ay = v[t+4]-v[t+1], az = v[t+5]-v[t+2];
+    const bx = v[t+6]-v[t],   by = v[t+7]-v[t+1], bz = v[t+8]-v[t+2];
+    let nx = ay*bz - az*by, ny = az*bx - ax*bz, nz = ax*by - ay*bx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    normals[t/3] = nx/len; normals[t/3+1] = ny/len; normals[t/3+2] = nz/len;
+    // Remap model space → render space: Rx(180°) — y and z flip sign.
+    v[t+1] = -v[t+1]; v[t+2] = -v[t+2];
+    v[t+4] = -v[t+4]; v[t+5] = -v[t+5];
+    v[t+7] = -v[t+7]; v[t+8] = -v[t+8];
+  }
+  for (let i = 0; i < normals.length; i += 3) { normals[i+1] = -normals[i+1]; normals[i+2] = -normals[i+2]; }
+  return { verts: v, normals };
+}
+
 function mountWidget(comp, bodyEl) {
   const renderer = WIDGET_RENDERERS[comp.type];
   if (!renderer) {
@@ -1900,6 +1965,7 @@ const WIDGET_RENDERERS = {
       camEl = Math.min(70, Math.max(-70, camEl - (e.clientY - lastY) * 0.4));
       lastX = e.clientX; lastY = e.clientY;
       applyCamera();
+      renderModel();
     }
     function onCamUp() { dragging = false; camera.classList.remove('grabbing'); }
     stageWrap.addEventListener('pointerdown', onCamDown);
@@ -1908,6 +1974,88 @@ const WIDGET_RENDERERS = {
     window.addEventListener('pointercancel', onCamUp);
 
     let dead = false;
+
+    // ── Optional STL model (manifest ui key "model") ────────────────────────
+    // A flat canvas mirroring the CSS camera + orientation transforms; the
+    // model replaces the CSS fin shape once loaded.  Any failure (missing
+    // file, bad STL) leaves the fin shape in place.
+    let curPan = 0, curTilt = 0, curRoll = 0;   // last telemetry applied (deg)
+    let model = null, mCtx = null, mScale = 0, modelRO = null;
+    let scrArr = null, nRot = null, zArr = null, order = null;  // per-frame scratch
+
+    function renderModel() {
+      if (!model || !mCtx) return;
+      const d2r = Math.PI / 180;
+      // Same stacks as the CSS: camera rotateX(camEl)·rotateY(camAz),
+      // orientation rotateY(-pan)·rotateX(-tilt)·rotateZ(roll).
+      const R = matMul3(matMul3(rotX(camEl * d2r), rotY(camAz * d2r)),
+                        matMul3(rotY(-curPan * d2r), matMul3(rotX(-curTilt * d2r), rotZ(curRoll * d2r))));
+      const v = model.verts, n = model.normals;
+      const w = mCtx.canvas.clientWidth, h = mCtx.canvas.clientHeight;
+      mCtx.clearRect(0, 0, w, h);
+      const cx = w / 2, cy = h / 2;
+      for (let i = 0; i < v.length; i += 3) {
+        const x = v[i], y = v[i+1], z = v[i+2];
+        scrArr[i]   = cx + (R[0]*x + R[1]*y + R[2]*z) * mScale;
+        scrArr[i+1] = cy + (R[3]*x + R[4]*y + R[5]*z) * mScale;
+        scrArr[i+2] =      R[6]*x + R[7]*y + R[8]*z;
+      }
+      const tris = v.length / 9;
+      for (let t = 0; t < tris; t++) {
+        zArr[t] = scrArr[t*9+2] + scrArr[t*9+5] + scrArr[t*9+8];
+        order[t] = t;
+        const nx = n[t*3], ny = n[t*3+1], nz = n[t*3+2];
+        nRot[t*3]   = R[0]*nx + R[1]*ny + R[2]*nz;
+        nRot[t*3+1] = R[3]*nx + R[4]*ny + R[5]*nz;
+        nRot[t*3+2] = R[6]*nx + R[7]*ny + R[8]*nz;
+      }
+      order.sort((a, b) => zArr[a] - zArr[b]);   // painter: far → near (+z = toward viewer)
+      const LX = -0.35, LY = -0.65, LZ = 0.67;   // fixed light, upper-left-front
+      for (let k = 0; k < tris; k++) {
+        const t = order[k], o = t * 9;
+        const dot = nRot[t*3]*LX + nRot[t*3+1]*LY + nRot[t*3+2]*LZ;
+        const s = 0.3 + 0.7 * Math.abs(dot);     // abs: backfaces shade like front
+        mCtx.beginPath();
+        mCtx.moveTo(scrArr[o],   scrArr[o+1]);
+        mCtx.lineTo(scrArr[o+3], scrArr[o+4]);
+        mCtx.lineTo(scrArr[o+6], scrArr[o+7]);
+        mCtx.closePath();
+        mCtx.fillStyle = `rgb(${Math.round(255*s)},${Math.round(184*s)},${Math.round(48*s)})`;
+        mCtx.fill();
+      }
+    }
+
+    if (comp.model) {
+      const mCanvas = document.createElement('canvas');
+      mCanvas.className = 'ori3d-model';
+      stageWrap.appendChild(mCanvas);
+      mCtx = mCanvas.getContext('2d');
+      modelRO = new ResizeObserver(() => {
+        const dpr = window.devicePixelRatio || 1;
+        const w = stageWrap.clientWidth, h = stageWrap.clientHeight;
+        mCanvas.width  = Math.max(1, Math.round(w * dpr));
+        mCanvas.height = Math.max(1, Math.round(h * dpr));
+        mCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        mScale = 0.62 * Math.min(w, h);   // unit-scaled model spans ~62% of the stage
+        renderModel();
+      });
+      modelRO.observe(stageWrap);
+      fetch(apiUrl('/modules/' + encodeURIComponent(comp.mod) + '/files/'
+                   + String(comp.model).split('/').map(encodeURIComponent).join('/')))
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+        .then(buf => {
+          if (dead) return;
+          model = parseStl(buf);
+          scrArr = new Float32Array(model.verts.length);
+          nRot   = new Float32Array(model.normals.length);
+          zArr   = new Float32Array(model.verts.length / 9);
+          order  = new Uint32Array(model.verts.length / 9);
+          live.style.display = 'none';   // the model takes over from the fins
+          renderModel();
+        })
+        .catch(e => console.warn('orientation3d: model unavailable, using fin shape —', e.message));
+    }
+
     async function poll() {
       if (dead) return;
       try {
@@ -1923,6 +2071,8 @@ const WIDGET_RENDERERS = {
         // pan — and is distinct from roll, which spins about the pointer's
         // own forward axis.)
         live.style.transform = `rotateY(${-pan}deg) rotateX(${-tilt}deg) rotateZ(${roll}deg)`;
+        curPan = pan; curTilt = tilt; curRoll = roll;
+        renderModel();
         vPan.textContent  = pan.toFixed(1)  + '°';
         vTilt.textContent = tilt.toFixed(1) + '°';
         vRoll.textContent = roll.toFixed(1) + '°';
@@ -1937,6 +2087,7 @@ const WIDGET_RENDERERS = {
       destroy() {
         dead = true;
         clearInterval(timer);
+        if (modelRO) modelRO.disconnect();
         window.removeEventListener('pointermove', onCamMove);
         window.removeEventListener('pointerup', onCamUp);
         window.removeEventListener('pointercancel', onCamUp);

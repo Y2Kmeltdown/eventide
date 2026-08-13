@@ -281,6 +281,7 @@ Every component's traffic goes through the backend proxy —
 | `joystick` | sidebar | `put`, `telemetry_get?`, `paths?: {x, y}`, `fields?: {x, y, frame}` — two-axis RC pad seeded from a telemetry poll; the poll is skipped while a pan/tilt box has focus so manual edits aren't overwritten. |
 | `table`    | sidebar | `get`, `interval?`, `columns[]` (`{label, path, fmt?}`), `row_action?: {label, method, path, key}`, `stop_action?: {label, method, path}` — polled table with a per-row action button (e.g. ADS-B track/stop). |
 | `map`      | center  | `track?: {socket, get, interval?, lat, lon, heading?, gimbal?, frame?}`, `adsb?: {socket, get, interval?, lat, lon, label?, key?}` — Leaflet map with optional device/track markers. Without bindings it's a plain map. |
+| `orientation3d` | center | `get`, `interval?` (ms), `paths?: {pan, tilt, roll}` (telemetry keys; default `pan`/`tilt`/`roll`), `warn_delta?` (deg, default 45), `model?` — 3D attitude indicator; drag to orbit the view. `model` names an STL file relative to the module root (served read-only at `/api/modules/<name>/files/<path>`): it is drawn flat-shaded at the stage centre, auto-centred and auto-scaled, and rotated by the telemetry. Model axes: **+Z forward (the pointer direction), +Y up, +X right** — keep meshes small (≲ 10k triangles). If the file is missing or unparseable the widget falls back to its built-in fin shape. |
 
 `fmt` is one of the dashboard's named formatters: `int`, `f1`, `f2`, `f6`
 (decimal places), `m_km` (metres → m/km).

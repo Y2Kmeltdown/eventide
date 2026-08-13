@@ -525,6 +525,24 @@ def download_recording(source, filename):
         abort(404)
     return send_file(filepath, as_attachment=True, download_name=filename)
 
+
+# ── Module asset files ────────────────────────────────────────────────────────
+# Read-only access to files inside an installed module's directory.  Used by
+# dashboard widgets that need a module-supplied asset — e.g. the orientation3d
+# widget's STL model (manifest ui key "model", a path relative to the module
+# root): /api/modules/<name>/files/gimbal.stl
+@app.route("/api/modules/<name>/files/<path:relpath>")
+def module_file(name, relpath):
+    if name not in load_registry().get("modules", {}):
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    root = (Path(cfg["packages_dir"]) / name).resolve()
+    filepath = (root / relpath).resolve()
+    if not filepath.is_relative_to(root):
+        abort(400)
+    if not filepath.is_file():
+        abort(404)
+    return send_file(filepath)
+
 # ── Module manager ────────────────────────────────────────────────────────────
 # Modules are GitHub repositories containing an eventide-module.json manifest
 # (see docs/MODULES.md).  Installing a module is a background job:

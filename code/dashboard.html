@@ -202,6 +202,24 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .rec-btn.on{background:var(--warn);color:#040a0f;font-weight:700;box-shadow:0 0 10px var(--warn)}
 .rec-btn:disabled{opacity:.4;cursor:default}
 
+/* Adaptive features widget — collapsible GenICam categories with one
+   control per feature (slider/select/toggle/button) */
+.feat-toolbar{display:flex;gap:6px;margin-bottom:8px}
+.feat-toolbar .feat-filter{flex:1}
+.feat-toolbar .feat-refresh{width:32px;flex-shrink:0;margin-top:0}
+.feat-cat{margin-bottom:2px}
+.feat-cat>summary{font-family:var(--display);font-size:8px;letter-spacing:.15em;color:var(--accent);cursor:pointer;padding:4px 0;user-select:none}
+.feat-cat-body{padding:2px 0 6px 8px;border-left:1px solid var(--border)}
+.feat-row{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.feat-row .feat-name{flex:0 0 45%;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feat-ctl{flex:1;display:flex;align-items:center;gap:5px;min-width:0}
+.feat-unit{font-size:7px;color:var(--text-dim);flex-shrink:0}
+.feat-ro{font-family:var(--mono);font-size:10px;color:var(--text-mid)}
+.feat-slider{flex:1;display:flex;align-items:center;gap:5px;min-width:0}
+.feat-slider input[type=range]{flex:1;min-width:0}
+.feat-slider-val{font-family:var(--mono);font-size:9px;color:var(--text-mid);min-width:28px;text-align:right;flex-shrink:0}
+.feat-cmd{padding:4px 0;font-size:7px}
+
 /* Master record widget — a synthetic "dashboard" component (not backed by
    any installed module) that aggregates every module's "recording"-type
    ui component into one control. Placed/removed via the palette like any
@@ -1451,6 +1469,214 @@ const WIDGET_RENDERERS = {
     }
     window.addEventListener('eventide:target', onTarget);
     return { destroy() { window.removeEventListener('eventide:target', onTarget); } };
+  },
+
+  // Adaptive GenICam feature form (sidebar): fetches the camera's
+  // capabilities tree once (GET `get`, default /api/camera/features) and
+  // renders one control per feature, grouped in collapsible categories.
+  // Live values are fetched lazily per expanded category (each read is a
+  // camera register transaction), or for everything visible on the refresh
+  // button. Edits PUT {"value": ...} to <get>/<name> and the control is set
+  // to the re-read effective (clamped) value. `filter` selects the GenICam
+  // visibility ceiling shown: beginner|expert|guru|all (default expert);
+  // Invisible features are never shown.
+  features(bodyEl, comp) {
+    const base = comp.get || '/api/camera/features';
+    const LEVELS = { beginner: 0, expert: 1, guru: 2, all: 3 };
+    const state = { tree: null, filter: comp.filter || 'expert', dead: false, loaded: new Set() };
+
+    bodyEl.innerHTML = `
+      <div class="feat-toolbar">
+        <select class="form-input feat-filter" title="Visibility filter">
+          <option value="beginner">SIMPLE</option>
+          <option value="expert">EXPERT</option>
+          <option value="guru">GURU</option>
+          <option value="all">ALL</option>
+        </select>
+        <button class="apply-btn feat-refresh" title="Re-read visible values">↺</button>
+      </div>
+      <div class="feat-body"><div class="empty">Loading features…</div></div>`;
+    const filterSel = bodyEl.querySelector('.feat-filter');
+    const refreshBtn = bodyEl.querySelector('.feat-refresh');
+    const listEl = bodyEl.querySelector('.feat-body');
+    filterSel.value = state.filter;
+
+    function visOk(f) {
+      const v = (f.visibility || 'Beginner').toLowerCase();
+      if (v === 'invisible') return false;
+      const fi = LEVELS[state.filter] ?? 1;
+      const li = { beginner: 0, expert: 1, guru: 2 }[v] ?? 0;
+      return li <= fi;
+    }
+
+    function featUrl(name) {
+      return proxyUrl(comp.mod, comp.socket, `${base}/${encodeURIComponent(name)}`);
+    }
+
+    function controlHtml(f) {
+      const dis = (f.locked || f.access === 'RO') ? 'disabled' : '';
+      if (f.type === 'Command')
+        return `<button class="apply-btn feat-cmd" data-cmd="${escHtml(f.name)}" ${f.locked ? 'disabled' : ''}>${escHtml(f.display_name || f.name)}</button>`;
+      if (f.access === 'RO')
+        return `<span class="feat-ro" data-ro="${escHtml(f.name)}">—</span>`;
+      if (f.type === 'Boolean')
+        return `<label class="toggle-switch"><input type="checkbox" data-fi="${escHtml(f.name)}" ${dis}><div class="toggle-track"></div></label>`;
+      if (f.type === 'Enumeration')
+        return `<select class="form-input" data-fi="${escHtml(f.name)}" ${dis}>${
+          (f.enum_entries || []).map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('')}</select>`;
+      if (f.type === 'String')
+        return `<input class="form-input" type="text" data-fi="${escHtml(f.name)}" ${dis}>`;
+      // Integer / Float: slider when a sane finite range exists, else number box
+      const step = f.inc ?? (f.type === 'Integer' ? 1 : 'any');
+      const hasRange = Number.isFinite(f.min) && Number.isFinite(f.max) && f.max > f.min && (f.max - f.min) <= 1000000;
+      if (hasRange)
+        return `<div class="feat-slider"><input class="form-input" type="range" data-fi="${escHtml(f.name)}"
+                  min="${f.min}" max="${f.max}" step="${step}" ${dis}>
+                <span class="feat-slider-val" data-fv="${escHtml(f.name)}">—</span></div>`;
+      return `<input class="form-input" type="number" data-fi="${escHtml(f.name)}"
+                ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${step}" ${dis}>`;
+    }
+
+    function featureRowHtml(f) {
+      const tip = f.tooltip || f.description || '';
+      const unit = f.unit ? `<span class="feat-unit">${escHtml(f.unit)}</span>` : '';
+      return `<div class="feat-row" title="${escHtml(tip)}">
+        <label class="form-label feat-name">${escHtml(f.display_name || f.name)}</label>
+        <div class="feat-ctl">${controlHtml(f)}${unit}</div>
+      </div>`;
+    }
+
+    function categoryHtml(cat) {
+      const kids = (cat.features || []).filter(f => f.features);   // nested categories
+      const feats = (cat.features || []).filter(f => !f.features && f.available && visOk(f));
+      const visibleKids = kids.map(categoryHtml).filter(Boolean);
+      if (!visibleKids.length && !feats.length) return '';
+      return `<details class="feat-cat" data-cat="${escHtml(cat.name)}">
+        <summary>${escHtml(cat.display_name || cat.name)}</summary>
+        <div class="feat-cat-body">
+          ${feats.map(featureRowHtml).join('')}
+          ${visibleKids.join('')}
+        </div>
+      </details>`;
+    }
+
+    function renderTree() {
+      const cats = (state.tree?.categories || []).map(categoryHtml).filter(Boolean).join('');
+      listEl.innerHTML = cats || `<div class="empty">No features at this visibility.</div>`;
+      listEl.querySelectorAll('details.feat-cat').forEach(d =>
+        d.addEventListener('toggle', () => { if (d.open) loadValues(d, false); refitWidget(bodyEl); }));
+      listEl.querySelectorAll('[data-fi]').forEach(el =>
+        el.addEventListener('change', () => putFeature(el)));
+      listEl.querySelectorAll('input[type="range"][data-fi]').forEach(el =>
+        el.addEventListener('input', () => {
+          const span = listEl.querySelector(`[data-fv="${el.dataset.fi}"]`);
+          if (span) span.textContent = el.value;
+        }));
+      listEl.querySelectorAll('[data-cmd]').forEach(btn =>
+        btn.addEventListener('click', () => execCommand(btn)));
+      refitWidget(bodyEl);
+    }
+
+    // Fetch live values for the feature rows inside a category (once per
+    // category per render, or all visible rows when forced by refresh).
+    async function loadValues(scopeEl, force) {
+      const rows = scopeEl.querySelectorAll('[data-fi], [data-ro]');
+      for (const el of rows) {
+        if (state.dead) return;
+        const name = el.dataset.fi || el.dataset.ro;
+        if (!force && state.loaded.has(name)) continue;
+        state.loaded.add(name);
+        try {
+          const r = await fetch(featUrl(name));
+          if (!r.ok) continue;
+          applyValue(el, await r.json());
+        } catch { /* camera busy/offline */ }
+      }
+    }
+
+    function applyValue(el, f) {
+      if (f.value !== undefined && f.value !== null) {
+        if (el.dataset.ro !== undefined) el.textContent = String(f.value);
+        else if (el.type === 'checkbox') el.checked = !!f.value;
+        else el.value = f.value;
+        if (el.type === 'range') {
+          const span = listEl.querySelector(`[data-fv="${el.dataset.fi}"]`);
+          if (span) span.textContent = f.value;
+        }
+      }
+      // live limits may have narrowed (e.g. Width max under binning)
+      if (el.type === 'range' || el.type === 'number') {
+        if (f.min != null) el.min = f.min;
+        if (f.max != null) el.max = f.max;
+        if (f.inc != null) el.step = f.inc;
+      }
+    }
+
+    async function putFeature(el) {
+      if (state.dead) return;
+      const name = el.dataset.fi;
+      let value;
+      if (el.type === 'checkbox') value = el.checked;
+      else if (el.type === 'number' || el.type === 'range') value = parseFloat(el.value);
+      else value = el.value;
+      el.disabled = true;
+      try {
+        const r = await fetch(featUrl(name), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          toast(`${name}: ${data.error || r.statusText}`, 'err');
+          state.loaded.delete(name);
+          const rr = await fetch(featUrl(name)).catch(() => null);
+          if (rr && rr.ok) applyValue(el, await rr.json());   // restore actual value
+        } else {
+          applyValue(el, data);   // clamped/coerced effective value
+          toast(`${name} applied`, 'ok');
+        }
+      } catch (e) {
+        toast(`${name} failed: ${e.message}`, 'err');
+      } finally {
+        el.disabled = false;
+      }
+    }
+
+    async function execCommand(btn) {
+      const name = btn.dataset.cmd;
+      btn.disabled = true;
+      try {
+        const r = await fetch(featUrl(name), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: true }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) toast(`${name}: ${data.error || r.statusText}`, 'err');
+        else toast(`${name} executed`, 'ok');
+      } catch (e) { toast(`${name} failed: ${e.message}`, 'err'); }
+      finally { btn.disabled = false; }
+    }
+
+    filterSel.addEventListener('change', () => {
+      state.filter = filterSel.value;
+      state.loaded.clear();
+      renderTree();
+    });
+    refreshBtn.addEventListener('click', () => loadValues(listEl, true));
+
+    (async () => {
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.socket, base));
+        if (!r.ok) throw new Error(r.statusText);
+        state.tree = await r.json();
+        renderTree();
+      } catch (e) {
+        if (!state.dead)
+          listEl.innerHTML = `<div class="empty">Feature tree unavailable: ${escHtml(e.message)}</div>`;
+      }
+    })();
+
+    return { destroy() { state.dead = true; } };
   },
 
   // Recording control (sidebar): polls `get` for the current state and PUTs

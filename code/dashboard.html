@@ -299,6 +299,7 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 /* Gimbal pan direction — shorter clock-hand, cyan, always on top */
 .dev-gimbal{position:absolute;left:50%;top:50%;width:3px;height:26px;margin-left:-1.5px;margin-top:-23px;transform-origin:50% 100%;background:linear-gradient(to top,transparent 0%,rgba(0,207,255,.85) 35%,#00cfff 100%);border-radius:2px 2px 0 0;filter:drop-shadow(0 0 5px rgba(0,207,255,.8));z-index:2}
 .tgt-marker{position:relative;width:14px;height:14px;background:var(--accent,#00cfff);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 10px rgba(0,207,255,.55)}
+.user-tgt-marker{position:relative;width:14px;height:14px;background:var(--warn,#ff5b6b);border:2px solid #040a0f;border-radius:50%;box-shadow:0 0 10px rgba(255,91,107,.55)}
 
 .nudge-row{display:flex;gap:4px;margin-top:4px}
 .nudge-btn{flex:1;padding:3px 0;font-family:var(--mono);font-size:9px;letter-spacing:.06em;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
@@ -2063,8 +2064,11 @@ const WIDGET_RENDERERS = {
     const device = L.marker([lat0, lon0], { icon: devIcon, interactive: false }).addTo(map);
     device.bindTooltip('DEVICE', { direction: 'top', opacity: 0.9 });
     const tgtIcon = L.divIcon({ className: '', html: `<div class="tgt-marker"></div>`, iconSize: [14, 14], iconAnchor: [7, 7] });
-    const target = L.marker([lat0, lon0], { icon: tgtIcon, interactive: false, opacity: 0 }).addTo(map);
-    target.bindTooltip('TARGET', { direction: 'top', opacity: 0.9 });
+    const sysTarget = L.marker([lat0, lon0], { icon: tgtIcon, interactive: false, opacity: 0 }).addTo(map);
+    sysTarget.bindTooltip('SYSTEM TARGET', { direction: 'top', opacity: 0.9 });
+    const userTgtIcon = L.divIcon({ className: '', html: `<div class="user-tgt-marker"></div>`, iconSize: [14, 14], iconAnchor: [7, 7] });
+    const userTarget = L.marker([lat0, lon0], { icon: userTgtIcon, interactive: false, opacity: 0 }).addTo(map);
+    userTarget.bindTooltip('USER TARGET', { direction: 'top', opacity: 0.9 });
     const adsbMarkers = {};
     let hasFix = false;
 
@@ -2077,7 +2081,7 @@ const WIDGET_RENDERERS = {
     });
 
     map.on('click', e => {
-      target.setLatLng(e.latlng); target.setOpacity(1);
+      userTarget.setLatLng(e.latlng); userTarget.setOpacity(1);
       window.dispatchEvent(new CustomEvent('eventide:target', {
         detail: { lat: +e.latlng.lat.toFixed(6), lon: +e.latlng.lng.toFixed(6) },
       }));
@@ -2119,7 +2123,7 @@ const WIDGET_RENDERERS = {
           }
           const tgt = d.target;
           if (tgt && typeof tgt.lat === 'number' && typeof tgt.lon === 'number') {
-            target.setLatLng([tgt.lat, tgt.lon]); target.setOpacity(1);
+            sysTarget.setLatLng([tgt.lat, tgt.lon]); sysTarget.setOpacity(1);
           }
         } catch { /* module offline */ }
       };

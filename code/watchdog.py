@@ -20,7 +20,7 @@ WATCH_OFF_LED = 0x00
 
 WATCH_version = 0x01
 
-WATCH_TIME_Restart = 5 
+WATCH_TIME_Restart = 8 
 
 Feed_dogs = 4
 try:

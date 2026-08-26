@@ -1930,10 +1930,19 @@ const WIDGET_RENDERERS = {
     let lastX = 0, lastY = 0, dead = false, dragging = false, maxR = 0, dx = 0, dy = 0, tickTimer = null;
     let axisLock = false, lockedAxis = null; // lockedAxis: 'x' | 'y' | null — set once per drag
 
+    // Gamepad state. Browsers never expose XInput directly — Chrome/Edge/
+    // Firefox map Xbox pads onto the standard Gamepad layout, so any XInput
+    // controller works here with no drivers or server-side support.
+    const gpCfg  = comp.gamepad || {};
+    const gpAxes = gpCfg.axes || [0, 1];    // standard-mapping left stick
+    const gpDead = gpCfg.deadzone ?? 0.15;  // radial deadzone
+    let gpIdx = null, gpHot = false, gpAccX = 0, gpAccY = 0, gpT = 0, gpSent = 0, gpRaf = null;
+
     function updateHint() {
-      hintEl.textContent = axisLock
+      hintEl.textContent = (axisLock
         ? '⊕ AXIS LOCK · ONE AXIS PER DRAG ±5°'
-        : '↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°';
+        : '↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°')
+        + (gpIdx !== null ? ' · 🎮 PAD LIVE' : '');
     }
     axisLockEl.addEventListener('change', () => {
       axisLock = axisLockEl.checked;
@@ -2017,6 +2026,50 @@ const WIDGET_RENDERERS = {
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
 
+    // ── Gamepad polling ─────────────────────────────────────────────────────
+    // Rate control mirrors the drag tick: speed grows with deflection,
+    // (1 + 14·d)° per 100 ms → 10–150 °/s. Position integrates every frame
+    // for smooth motion, but network sends are throttled to the same ~10 Hz
+    // a pointer drag produces. The pointer wins: while dragging, stick input
+    // is ignored.
+    function gpRelease() {
+      gpHot = false;
+      pad.classList.remove('active');
+      if (!dragging) knob.style.transform = 'translate(0px, 0px)';
+    }
+    function gpPoll(t) {
+      if (dead) return;
+      gpRaf = requestAnimationFrame(gpPoll);
+      const pads = navigator.getGamepads();
+      let gp = (gpIdx !== null && pads[gpIdx] && pads[gpIdx].connected) ? pads[gpIdx] : null;
+      if (!gp) {   // no pad seen yet, or the active one was unplugged — rescan
+        const had = gpIdx !== null;
+        gpIdx = null;
+        for (const p of pads) if (p && p.connected) { gpIdx = p.index; gp = p; break; }
+        if (gp || had) updateHint();
+        if (!gp) { if (gpHot) gpRelease(); return; }
+      }
+      const dt = gpT ? Math.min(0.1, (t - gpT) / 1000) : 0;
+      gpT = t;
+      const rx = gp.axes[gpAxes[0]] || 0, ry = gp.axes[gpAxes[1]] || 0;
+      const m0 = Math.hypot(rx, ry);
+      if (dragging || m0 <= gpDead) { if (gpHot) gpRelease(); return; }
+      if (!gpHot) { gpHot = true; gpAccX = lastX; gpAccY = lastY; gpSent = t; }
+      const m = Math.min(1, (m0 - gpDead) / (1 - gpDead));   // rescaled 0..1
+      const rate = (1 + 14 * m) * 10;                        // °/s, drag-tick curve
+      gpAccX = Math.min(180, Math.max(-180, gpAccX + rate * (rx / m0) * dt));
+      gpAccY = Math.min(90,  Math.max(-90,  gpAccY - rate * (ry / m0) * dt));
+      pad.classList.add('active');
+      const mr = (pad.clientWidth - knob.clientWidth) / 2;
+      if (mr > 0) knob.style.transform = `translate(${(rx / m0) * m * mr}px, ${(ry / m0) * m * mr}px)`;
+      if (t - gpSent >= 100) {
+        gpSent = t;
+        const nx = +gpAccX.toFixed(1), ny = +gpAccY.toFixed(1);
+        if (nx !== lastX || ny !== lastY) { xEl.value = nx; yEl.value = ny; send(nx, ny); }
+      }
+    }
+    if (navigator.getGamepads) gpRaf = requestAnimationFrame(gpPoll);
+
     // Seed the baseline from telemetry so nudges are relative to reality.
     // Polled, but skipped while either pan/tilt box has focus so a manual
     // edit is never clobbered mid-typing.
@@ -2037,6 +2090,7 @@ const WIDGET_RENDERERS = {
     return { destroy() {
       dead = true;
       clearInterval(seedTimer); clearInterval(tickTimer);
+      if (gpRaf) cancelAnimationFrame(gpRaf);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);

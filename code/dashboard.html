@@ -501,6 +501,18 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .mod-meta span{color:var(--text-mid)}
 .mod-empty{color:var(--text-dim);font-size:9px;font-style:italic;text-align:center;padding:24px 0}
 
+/* Instance sub-panels (instanceable modules) */
+.inst-panel{border:1px solid var(--border);border-radius:var(--r);background:var(--surface2);padding:8px 10px;margin-top:8px}
+.inst-head{display:flex;align-items:center;gap:8px}
+.inst-title{font-family:var(--display);font-size:8px;letter-spacing:.14em;color:var(--text-mid)}
+.inst-value{font-family:var(--mono);font-size:9px;color:var(--text)}
+.inst-actions{display:flex;gap:6px;margin-left:auto}
+.inst-sockets{font-size:8px;color:var(--text-dim);margin-top:4px;line-height:1.6;word-break:break-all}
+.inst-sockets span{color:var(--text-mid)}
+.inst-add{display:flex;align-items:center;gap:8px;margin-top:8px;border-top:1px solid var(--border);padding-top:10px}
+.inst-add-label{font-family:var(--display);font-size:7px;letter-spacing:.2em;color:var(--text-dim);flex-shrink:0}
+.inst-add .mod-input{flex:1;min-width:0}
+
 /* SSH key panel (private GitHub repos) */
 .ssh-panel{padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
 .ssh-head{display:flex;align-items:center;gap:8px}
@@ -827,8 +839,10 @@ async function refreshModuleInfo() {
   return _modInfo;
 }
 
-function proxyUrl(mod, sock, path) {
-  return `${getBase()}/proxy/${mod}/${sock}${path}`;
+// Instanceable modules proxy through their instance: /proxy/<mod>/inst/<iid>/<sock>.
+function proxyUrl(mod, inst, sock, path) {
+  return inst ? `${getBase()}/proxy/${mod}/inst/${inst}/${sock}${path}`
+              : `${getBase()}/proxy/${mod}/${sock}${path}`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -838,14 +852,14 @@ function proxyUrl(mod, sock, path) {
 //  the left/right sidebars or the tabbed centre workspace from
 //  the palette; the layout persists per backend host.
 // ═══════════════════════════════════════════════════════════
-let uiLayout       = [];    // [{m, id, r:'left'|'right'|'center', o}]
+let uiLayout       = [];    // [{m, id, inst?, r:'left'|'right'|'center', o}]
 let uiComponents   = [];    // available components from /api/modules + SYSTEM_COMPONENTS
 let _lastUiSig     = '';    // change detector so polls don't re-render
-const uiLive       = new Map();  // "mod/id" → {destroy(), map?}
+const uiLive       = new Map();  // "mod/id" or "mod/inst/id" → {destroy(), map?}
 
 const LAYOUT_KEY     = () => 'eventide-layout:'    + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
 const SEEN_KEY       = () => 'eventide-ui-seen:'   + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
-const uiKey = e => `${e.m}/${e.id}`;
+const uiKey = e => e.inst ? `${e.m}/${e.inst}/${e.id}` : `${e.m}/${e.id}`;
 
 // Built-in components not backed by any installed module — they flow
 // through the same palette/gridstack pipeline as module-supplied ones
@@ -861,11 +875,23 @@ const SYSTEM_COMPONENTS = [
 function collectUiComponents() {
   const out = [...SYSTEM_COMPONENTS];
   (_modInfo?.modules || []).forEach(m => {
-    (m.ui || []).forEach(c => { if (c && c.id && c.type) out.push({ mod: m.name, ...c }); });
+    (m.ui || []).forEach(c => {
+      if (!c || !c.id || !c.type) return;
+      if (m.instance) {
+        // Instanceable modules contribute one component copy per instance;
+        // the instance id (inst) keys layouts, proxy URLs and widget titles.
+        (m.instances || []).forEach(inst => out.push({
+          mod: m.name, inst: inst.id, ...c,
+          title: (c.title ? c.title + ' · ' + inst.id : c.title),
+        }));
+      } else {
+        out.push({ mod: m.name, ...c });
+      }
+    });
   });
   return out;
 }
-const findComponent = (m, id) => uiComponents.find(c => c.mod === m && c.id === id);
+const findComponent = (m, id, inst) => uiComponents.find(c => c.mod === m && c.id === id && c.inst === inst);
 
 function loadLayoutState() {
   try {
@@ -906,10 +932,11 @@ function reconcileLayout() {
   // exactly where the user had them.
   const next = loadLayoutState().filter(e => e && e.m && e.id);
   uiComponents.forEach(c => {
-    const key = c.mod + '/' + c.id;
-    if (c.default && !seen.has(key) && !next.some(e => e.m === c.mod && e.id === c.id)) {
+    const key = c.inst ? c.mod + '/' + c.inst + '/' + c.id : c.mod + '/' + c.id;
+    if (c.default && !seen.has(key) && !next.some(e => e.m === c.mod && e.id === c.id && e.inst === c.inst)) {
       const region = c.region === 'center' ? 'center' : 'left';
       const entry = { m: c.mod, id: c.id, r: region };
+      if (c.inst) entry.inst = c.inst;
       // Sidebar entries stack at the bottom; centre entries auto-place.
       if (region !== 'center') {
         entry.y = next.reduce((mx, e) => (e.r === region ? Math.max(mx, e.y ?? e.o ?? -1) : mx), -1) + 1;
@@ -942,7 +969,7 @@ let gsGrids = {};        // {left, right, center}
 let _gsRendering = false;
 
 const GS_REGION_EL = { left: '#ui-left-grid', right: '#ui-right-grid', center: '#ui-center-grid' };
-const gsId = e => `${e.m}|${e.id}`;
+const gsId = e => e.inst ? `${e.m}|${e.inst}|${e.id}` : `${e.m}|${e.id}`;
 const EMPTY_REGION_HTML = '<div class="ui-region-empty">No components placed.<br>Open ＋ COMPONENTS to add some.</div>';
 const EMPTY_CENTER_HTML = `<div class="ui-center-empty"><div class="icon">◉</div>
   <div>WORKSPACE EMPTY<br><span style="font-size:8px">Open ＋ COMPONENTS to place module components.</span></div></div>`;
@@ -1050,10 +1077,14 @@ function saveFromGrids() {
   const next = [];
   Object.entries(gsGrids).forEach(([region, grid]) => {
     grid.save(false).forEach(n => {
-      const sep = (n.id || '').indexOf('|');
-      if (sep < 0) return;
-      next.push({ m: n.id.slice(0, sep), id: n.id.slice(sep + 1),
-                  r: region, x: n.x, y: n.y, w: n.w, h: n.h });
+      const parts = (n.id || '').split('|');   // "mod|id" or "mod|inst|id"
+      if (parts.length === 2) {
+        next.push({ m: parts[0], id: parts[1],
+                    r: region, x: n.x, y: n.y, w: n.w, h: n.h });
+      } else if (parts.length === 3) {
+        next.push({ m: parts[0], inst: parts[1], id: parts[2],
+                    r: region, x: n.x, y: n.y, w: n.w, h: n.h });
+      }
     });
   });
   uiLayout = next;
@@ -1064,7 +1095,7 @@ function saveFromGrids() {
 // (phantom entries for uninstalled modules stay saved but don't render).
 function visibleEntries(region) {
   return uiLayout
-    .filter(e => e.r === region && findComponent(e.m, e.id))
+    .filter(e => e.r === region && findComponent(e.m, e.id, e.inst))
     .sort((a, b) => (a.y ?? a.o ?? 0) - (b.y ?? b.o ?? 0) || (a.x ?? 0) - (b.x ?? 0));
 }
 
@@ -1142,7 +1173,7 @@ function renderCenterRegion() {
 }
 
 function buildSidebarWidget(entry) {
-  const comp = findComponent(entry.m, entry.id);
+  const comp = findComponent(entry.m, entry.id, entry.inst);
   const el = document.createElement('div');
   el.className = 'grid-stack-item';
   el.dataset.gsRegion = 'sidebar';
@@ -1159,7 +1190,7 @@ function buildSidebarWidget(entry) {
         <div class="ui-widget-body"></div>
       </div>
     </div>`;
-  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
+  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id, entry.inst));
   const body = el.querySelector('.ui-widget-body');
   if (comp) {
     const instance = mountWidget(comp, body);
@@ -1171,7 +1202,7 @@ function buildSidebarWidget(entry) {
 }
 
 function buildCenterTile(entry) {
-  const comp = findComponent(entry.m, entry.id);
+  const comp = findComponent(entry.m, entry.id, entry.inst);
   const el = document.createElement('div');
   el.className = 'grid-stack-item';
   el.dataset.gsRegion = 'center';
@@ -1186,7 +1217,7 @@ function buildCenterTile(entry) {
       <div class="ui-tile-body"></div>
       <button class="ui-fs-exit" title="Exit fullscreen">✕</button>
     </div>`;
-  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id));
+  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id, entry.inst));
   // Fullscreen via the browser Fullscreen API (like a YouTube player).
   el.querySelector('.ui-widget-fs').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -1208,17 +1239,18 @@ function buildCenterTile(entry) {
 
 // ── Layout mutations ────────────────────────────────────────────────────────
 
-function removeWidget(m, id) {
-  uiLayout = uiLayout.filter(e => !(e.m === m && e.id === id));
+function removeWidget(m, id, inst) {
+  uiLayout = uiLayout.filter(e => !(e.m === m && e.id === id && e.inst === inst));
   saveLayoutState();
   renderWorkspace();
 }
 
-function addComponent(m, id) {
-  const comp = findComponent(m, id);
-  if (!comp || uiLayout.some(e => e.m === m && e.id === id)) return;
+function addComponent(m, id, inst) {
+  const comp = findComponent(m, id, inst);
+  if (!comp || uiLayout.some(e => e.m === m && e.id === id && e.inst === inst)) return;
   const region = comp.region === 'center' ? 'center' : 'left';
   const entry = { m, id, r: region };
+  if (inst) entry.inst = inst;
   // Sidebar entries stack at the bottom; centre entries auto-place in the grid.
   if (region !== 'center') {
     entry.y = uiLayout.reduce((mx, e) => (e.r === region ? Math.max(mx, e.y ?? e.o ?? -1) : mx), -1) + 1;
@@ -1249,23 +1281,34 @@ function renderPalette() {
   }
   const byMod = {};
   uiComponents.forEach(c => { (byMod[c.mod] = byMod[c.mod] || []).push(c); });
-  list.innerHTML = Object.keys(byMod).sort().map(mod => `
-    <div class="ui-palette-mod">${escHtml(mod)}</div>
-    ${byMod[mod].map(c => {
-      const placed = uiLayout.some(e => e.m === c.mod && e.id === c.id);
-      return `<div class="ui-palette-item">
-        <div class="ui-palette-item-info">
-          <div class="ui-palette-item-title">${escHtml(c.title || c.id)}</div>
-          <div class="ui-palette-item-type">${escHtml(c.type)} · ${escHtml(c.region === 'center' ? 'center' : 'sidebar')}</div>
-        </div>
-        <button class="ui-palette-add ${placed ? 'placed' : ''}" data-mod="${escHtml(c.mod)}" data-id="${escHtml(c.id)}">${placed ? '✓' : '＋'}</button>
-      </div>`;
-    }).join('')}`).join('');
+  const itemHtml = c => {
+    const placed = uiLayout.some(e => e.m === c.mod && e.id === c.id && e.inst === c.inst);
+    return `<div class="ui-palette-item">
+      <div class="ui-palette-item-info">
+        <div class="ui-palette-item-title">${escHtml(c.title || c.id)}</div>
+        <div class="ui-palette-item-type">${escHtml(c.type)} · ${escHtml(c.region === 'center' ? 'center' : 'sidebar')}</div>
+      </div>
+      <button class="ui-palette-add ${placed ? 'placed' : ''}" data-mod="${escHtml(c.mod)}" data-id="${escHtml(c.id)}" data-inst="${escHtml(c.inst || '')}">${placed ? '✓' : '＋'}</button>
+    </div>`;
+  };
+  list.innerHTML = Object.keys(byMod).sort().map(mod => {
+    const comps = byMod[mod];
+    // Instanceable modules contribute one component copy per instance —
+    // subgroup them under a "MOD · INSTANCE" header each.
+    const insts = [...new Set(comps.map(c => c.inst).filter(Boolean))].sort();
+    if (!insts.length) {
+      return `<div class="ui-palette-mod">${escHtml(mod)}</div>${comps.map(itemHtml).join('')}`;
+    }
+    return insts.map(inst => `
+      <div class="ui-palette-mod">${escHtml(mod)} · ${escHtml(inst)}</div>
+      ${comps.filter(c => c.inst === inst).map(itemHtml).join('')}`).join('');
+  }).join('');
   list.querySelectorAll('.ui-palette-add').forEach(btn =>
     btn.addEventListener('click', () => {
-      const { mod, id } = btn.dataset;
-      if (uiLayout.some(e => e.m === mod && e.id === id)) removeWidget(mod, id);
-      else addComponent(mod, id);
+      const { mod, id, inst } = btn.dataset;
+      const iid = inst || undefined;
+      if (uiLayout.some(e => e.m === mod && e.id === id && e.inst === iid)) removeWidget(mod, id, iid);
+      else addComponent(mod, id, iid);
       renderPalette();
     }));
 }
@@ -1377,7 +1420,7 @@ const WIDGET_RENDERERS = {
     const img     = bodyEl.querySelector('img');
     const offline = bodyEl.querySelector('.stream-offline');
     const dot     = bodyEl.querySelector('.ui-mjpeg-dot');
-    const url     = proxyUrl(comp.mod, comp.socket, comp.path || '/stream');
+    const url     = proxyUrl(comp.mod, comp.inst, comp.socket, comp.path || '/stream');
     let retry = 500, timer = null, dead = false;
     function connect() {
       if (dead) return;
@@ -1438,7 +1481,7 @@ const WIDGET_RENDERERS = {
     async function populate() {
       for (const ep of getEps) {
         try {
-          const r = await fetch(proxyUrl(comp.mod, comp.socket, ep));
+          const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, ep));
           if (!r.ok) continue;
           const data = await r.json();
           fields.forEach((f, i) => {
@@ -1466,7 +1509,7 @@ const WIDGET_RENDERERS = {
             if ((f.put || comp.put) !== ep) return;
             body[f.key] = getFieldValue(f, inputs[i]);
           });
-          const r = await fetch(proxyUrl(comp.mod, comp.socket, ep), {
+          const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, ep), {
             method, headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
@@ -1535,7 +1578,7 @@ const WIDGET_RENDERERS = {
     }
 
     function featUrl(name) {
-      return proxyUrl(comp.mod, comp.socket, `${base}/${encodeURIComponent(name)}`);
+      return proxyUrl(comp.mod, comp.inst, comp.socket, `${base}/${encodeURIComponent(name)}`);
     }
 
     function controlHtml(f) {
@@ -1691,7 +1734,7 @@ const WIDGET_RENDERERS = {
 
     (async () => {
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, base));
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, base));
         if (!r.ok) throw new Error(r.statusText);
         state.tree = await r.json();
         renderTree();
@@ -1748,7 +1791,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.get), { signal: timeoutSignal(5000) });
         if (!r.ok) return;
         const d = await r.json();
         const v = dotPath(d, key);
@@ -1775,7 +1818,7 @@ const WIDGET_RENDERERS = {
         if (Number.isFinite(secs) && secs > 0) payload[dkey] = secs;
       }
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.put), {
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.put), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
@@ -1807,7 +1850,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get));
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.get));
         if (!r.ok) return;
         const data = await r.json();
         rows.forEach((row, i) => { els[i].textContent = fmtVal(dotPath(data, row.path), row.fmt); });
@@ -1828,7 +1871,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.get), { signal: timeoutSignal(5000) });
         if (!r.ok) return;
         const data = await r.json();
         renderRows(Array.isArray(data) ? data : (data.items || []));
@@ -1865,7 +1908,7 @@ const WIDGET_RENDERERS = {
       const isActive = key === activeKey;
       const act = (isActive && comp.stop_action) ? comp.stop_action : comp.row_action;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, act.path), {
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, act.path), {
           method: act.method || 'POST',
           headers: { 'Content-Type': 'application/json' },
           ...((act.method || 'POST') !== 'DELETE' ? { body: JSON.stringify({ [comp.row_action.key]: key }) } : {}),
@@ -1952,7 +1995,7 @@ const WIDGET_RENDERERS = {
 
     async function send(x, y) {
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.put), {
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.put), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ [fx]: x, [fy]: y, [ff]: frameEl.checked }),
         });
@@ -2077,7 +2120,7 @@ const WIDGET_RENDERERS = {
       if (dead || dragging || !comp.telemetry_get) return;
       if (document.activeElement === xEl || document.activeElement === yEl) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.telemetry_get));
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.telemetry_get));
         if (!r.ok) return;
         const d = await r.json();
         const sx = dotPath(d, px), sy = dotPath(d, py);
@@ -2151,7 +2194,7 @@ const WIDGET_RENDERERS = {
       const t = comp.track;
       const pollTrack = async () => {
         try {
-          const r = await fetch(proxyUrl(comp.mod, t.socket, t.get));
+          const r = await fetch(proxyUrl(comp.mod, comp.inst, t.socket, t.get));
           if (!r.ok) return;
           const d = await r.json();
           const lat = dotPath(d, t.lat || 'lat'), lon = dotPath(d, t.lon || 'lon');
@@ -2188,7 +2231,7 @@ const WIDGET_RENDERERS = {
       const a = comp.adsb;
       const pollAdsb = async () => {
         try {
-          const r = await fetch(proxyUrl(comp.mod, a.socket, a.get), { signal: timeoutSignal(5000) });
+          const r = await fetch(proxyUrl(comp.mod, comp.inst, a.socket, a.get), { signal: timeoutSignal(5000) });
           if (!r.ok) return;
           const tracks = await r.json();
           const seen = new Set();
@@ -2385,7 +2428,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.socket, comp.get));
+        const r = await fetch(proxyUrl(comp.mod, comp.inst, comp.socket, comp.get));
         if (!r.ok) return;
         const d = await r.json();
         const pan = dotPath(d, pp), tilt = dotPath(d, pt), roll = dotPath(d, pr);
@@ -2539,7 +2582,7 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
   async function poll() {
     if (state.dead) return;
     try {
-      const r = await fetch(proxyUrl(c.mod, c.socket, c.get), { signal: timeoutSignal(5000) });
+      const r = await fetch(proxyUrl(c.mod, c.inst, c.socket, c.get), { signal: timeoutSignal(5000) });
       if (!r.ok) throw new Error('offline');
       const d = await r.json();
       state.offline = false;
@@ -2562,7 +2605,7 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
     if (state.busy || !state.control || state.offline) return;
     state.busy = true; render();
     try {
-      const r = await fetch(proxyUrl(c.mod, c.socket, c.put), {
+      const r = await fetch(proxyUrl(c.mod, c.inst, c.socket, c.put), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [key]: next }),
       });
@@ -2795,7 +2838,7 @@ let logMode      = null;   // 'job' (install log) | 'proc' (service log)
 let logStream    = 'stdout'; // 'stdout' | 'stderr' — which supervisord log to tail
 let superProcs   = null;   // live supervisor.getAllProcessInfo, null if RPC down
 let lastModules  = [];     // last module registry snapshot from the backend
-let editingModule = null;  // module name whose args form is open (poll re-render paused)
+let editingModule = null;  // args form is open for this module ('name' or 'name/iid') — poll re-render paused
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
@@ -2857,12 +2900,61 @@ function renderModules(modules) {
   });
 
   html += modules.map(m => {
-    const socks = (m.sockets || []).map(s =>
-      s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
-    ).join(', ');
     const args = (m.arguments || []).map(a => `${a.flag}=${a.default}`).join('  ');
     const fallback = {};
     (m.programs || []).forEach(p => { fallback[p.name] = p.status; });
+    if (m.instance) {
+      // Instanceable module: one sub-panel per instance (own sockets,
+      // services, EDIT/REMOVE) plus an ADD INSTANCE row.  Sockets move from
+      // the card meta into each instance panel.
+      const instLabel = m.instance.label || m.instance.argument;
+      const panels = (m.instances || []).map(inst => {
+        if (editingModule === m.name + '/' + inst.id) {
+          return `<div class="inst-panel">${argsFormHtml(m, inst)}</div>`;
+        }
+        const isocks = (inst.sockets || []).map(s =>
+          s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
+        ).join(', ');
+        const ifallback = {};
+        (inst.programs || []).forEach(p => { ifallback[p.name] = p.status; });
+        const irows = svcRowsHtml((inst.programs || []).map(p => p.name), procByName, ifallback);
+        return `<div class="inst-panel">
+          <div class="inst-head">
+            <span class="inst-title">${escHtml(String(instLabel).toUpperCase())}</span>
+            <span class="inst-value">${escHtml(inst.value)}</span>
+            <span class="inst-actions">
+              <button class="super-btn" onclick="editModuleArgs('${escHtml(m.name)}','${escHtml(inst.id)}')">✎ EDIT</button>
+              <button class="super-btn s-warn" onclick="removeInstance('${escHtml(m.name)}','${escHtml(inst.id)}')">✕ REMOVE</button>
+            </span>
+          </div>
+          ${isocks ? `<div class="inst-sockets">sockets: <span>${escHtml(isocks)}</span></div>` : ''}
+          <div class="svc-list">${irows || '<div class="mod-empty">No services found.</div>'}</div>
+        </div>`;
+      }).join('');
+      const instArg = (m.arguments || []).find(a => a.name === m.instance.argument);
+      const addRow = `<div class="inst-add">
+        <span class="inst-add-label">ADD INSTANCE — ${escHtml(String(instLabel).toUpperCase())}</span>
+        <input class="mod-input" id="add-inst-${escHtml(m.name)}" value="${escHtml(instArg ? String(instArg.default) : '')}" spellcheck="false">
+        <button class="super-btn s-green" onclick="addInstance('${escHtml(m.name)}')">＋ ADD</button>
+      </div>`;
+      return svcCardHtml({
+        title: m.name,
+        version: 'v' + (m.version || '?'),
+        desc: m.description || '',
+        services: (m.programs || []).map(p => p.name),
+        procByName,
+        fallbackStatus: fallback,
+        metaHtml:
+          (m.repo_url ? 'repo: <span>' + escHtml(m.repo_url) + '</span><br>' : '') +
+          (args ? 'args: <span>' + escHtml(args) + '</span>' : ''),
+        uninstallable: true,
+        editable: false,
+        bodyHtml: `<div class="arg-section-title">INSTANCES</div>${panels}${addRow}`,
+      });
+    }
+    const socks = (m.sockets || []).map(s =>
+      s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
+    ).join(', ');
     return svcCardHtml({
       title: m.name,
       version: 'v' + (m.version || '?'),
@@ -2882,10 +2974,12 @@ function renderModules(modules) {
   list.innerHTML = html;
 }
 
-function svcCardHtml(o) {
-  const rows = o.services.map(name => {
-    const info  = o.procByName[name];
-    const state = info ? info.statename : (o.fallbackStatus[name] || 'UNKNOWN');
+// Service rows (status badge, name, meta, start/stop/restart/log buttons) —
+// shared by module cards and per-instance panels.
+function svcRowsHtml(services, procByName, fallbackStatus) {
+  return services.map(name => {
+    const info  = procByName[name];
+    const state = info ? info.statename : (fallbackStatus[name] || 'UNKNOWN');
     const fullName = info && info.group && info.group !== info.name
       ? `${info.group}:${info.name}` : name;
     const canStart = ['STOPPED','EXITED','FATAL','UNKNOWN'].includes(state);
@@ -2907,18 +3001,23 @@ function svcCardHtml(o) {
       </span>
     </div>`;
   }).join('');
+}
+
+function svcCardHtml(o) {
+  const rows = svcRowsHtml(o.services, o.procByName, o.fallbackStatus);
   const namesArg = o.services.join(',');
+  const editable = o.editable !== false && o.uninstallable;
   const actions = o.editing ? '' : `<div class="mod-card-actions">
       <button class="super-btn s-green" onclick="moduleAction('start','${namesArg}')">▶ START</button>
       <button class="super-btn s-warn"  onclick="moduleAction('stop','${namesArg}')">■ STOP</button>
       <button class="super-btn"         onclick="moduleAction('restart','${namesArg}')">↺ RESTART</button>
-      ${o.uninstallable ? `<button class="super-btn" onclick="editModuleArgs('${escHtml(o.title)}')">✎ EDIT</button>` : ''}
+      ${editable ? `<button class="super-btn" onclick="editModuleArgs('${escHtml(o.title)}')">✎ EDIT</button>` : ''}
       ${o.uninstallable ? `<button class="super-btn s-warn" onclick="uninstallModule('${escHtml(o.title)}')">✕ UNINSTALL</button>` : ''}
     </div>`;
   const body = o.editing
     ? argsFormHtml(o.module)
     : `${o.desc ? `<div class="mod-desc">${escHtml(o.desc)}</div>` : ''}
-       <div class="svc-list">${rows || '<div class="mod-empty">No services found.</div>'}</div>
+       ${o.bodyHtml ?? `<div class="svc-list">${rows || '<div class="mod-empty">No services found.</div>'}</div>`}
        ${o.metaHtml ? `<div class="mod-meta">${o.metaHtml}</div>` : ''}`;
   return `<div class="mod-card">
     <div class="mod-card-head">
@@ -3082,16 +3181,30 @@ async function moduleAction(action, namesCsv) {
 // arguments.  Saving posts the values to the backend, which rewrites the
 // module's supervisor conf and runs reread/update (restarting the affected
 // programs).  While a form is open, loadModules skips re-rendering so the
-// 5 s poll can't wipe in-progress edits.
-function argsFormHtml(m) {
-  const rows = (m.arguments || []).map(a =>
-    `<label class="arg-row">
+// 5 s poll can't wipe in-progress edits.  For instanceable modules the form
+// is per instance (inst): argument values come from the instance, the
+// instance argument itself is pinned (disabled), and saving posts to the
+// per-instance endpoint.
+function argsFormHtml(m, inst) {
+  const iid = inst ? inst.id : null;
+  const instArgs = (inst && inst.args) || {};
+  const iaName = m.instance ? m.instance.argument : null;
+  const rows = (m.arguments || []).map(a => {
+    const isInstanceArg = iaName === a.name;
+    const val = isInstanceArg && inst ? (inst.value ?? a.default)
+                                      : (instArgs[a.name] ?? a.default);
+    return `<label class="arg-row">
       <span class="arg-label">${escHtml(a.flag)}<span class="arg-name">${escHtml(a.name)} · ${escHtml(a.type)}</span></span>
-      <input class="mod-input arg-input" data-arg="${escHtml(a.name)}" value="${escHtml(String(a.default))}" spellcheck="false">
-    </label>`).join('');
+      <input class="mod-input arg-input" data-arg="${escHtml(a.name)}" value="${escHtml(String(val))}" spellcheck="false"
+        ${isInstanceArg ? 'disabled title="Identifies this instance — remove and re-add the instance to change it"' : ''}>
+    </label>`;
+  }).join('');
   // Supervisor run parameters per program (autostart/autorestart/startretries/
   // priority) — saved into the manifest and re-rendered into the conf.d file.
-  const progRows = (m.programs || []).map(p =>
+  // Instance forms show this instance's (suffixed) programs; settings are
+  // template-level and apply to every instance on save.
+  const progs = inst ? (inst.programs || []) : (m.programs || []);
+  const progRows = progs.map(p =>
     `<div class="prog-settings" data-prog="${escHtml(p.name)}">
       <div class="prog-settings-name">${escHtml(p.name)}</div>
       <label class="prog-toggle"><input type="checkbox" data-param="autostart" ${p.autostart !== false ? 'checked' : ''}> autostart</label>
@@ -3099,21 +3212,23 @@ function argsFormHtml(m) {
       <label class="prog-num">startretries <input class="mod-input" type="number" min="0" data-param="startretries" value="${p.startretries ?? 10000}"></label>
       <label class="prog-num">priority <input class="mod-input" type="number" min="0" data-param="priority" value="${p.priority ?? 10}"></label>
     </div>`).join('');
-  return `<div class="arg-form" data-module="${escHtml(m.name)}">
+  return `<div class="arg-form" data-module="${escHtml(m.name)}"${iid ? ` data-iid="${escHtml(iid)}"` : ''}>
     ${rows || '<div class="mod-empty">This module declares no arguments.</div>'}
     <div class="arg-section-title">SUPERVISOR SETTINGS</div>
     ${progRows}
     <div class="arg-actions">
-      <button class="super-btn s-green" onclick="saveModuleArgs('${escHtml(m.name)}')">✔ SAVE &amp; APPLY</button>
+      <button class="super-btn s-green" onclick="saveModuleArgs('${escHtml(m.name)}'${iid ? `,'${escHtml(iid)}'` : ''})">✔ SAVE &amp; APPLY</button>
       <button class="super-btn" onclick="cancelModuleArgs()">✕ CANCEL</button>
     </div>
     <div class="arg-hint">Saving rewrites the module's supervisor config and reloads
-    supervisord — running programs restart with the new settings.</div>
+    supervisord — running programs restart with the new settings.${iid
+      ? ' The instance argument is fixed — remove and re-add the instance to change it. Supervisor settings apply to all instances of this module.'
+      : ''}</div>
   </div>`;
 }
 
-function editModuleArgs(name) {
-  editingModule = name;
+function editModuleArgs(name, iid) {
+  editingModule = iid ? name + '/' + iid : name;
   renderModules(lastModules);
 }
 
@@ -3122,11 +3237,13 @@ function cancelModuleArgs() {
   renderModules(lastModules);
 }
 
-async function saveModuleArgs(name) {
-  const form = document.querySelector(`.arg-form[data-module="${name}"]`);
+async function saveModuleArgs(name, iid) {
+  const sel = iid ? `.arg-form[data-module="${name}"][data-iid="${iid}"]`
+                  : `.arg-form[data-module="${name}"]`;
+  const form = document.querySelector(sel);
   if (!form) return;
   const args = {};
-  form.querySelectorAll('.arg-input').forEach(i => { args[i.dataset.arg] = i.value; });
+  form.querySelectorAll('.arg-input:not([disabled])').forEach(i => { args[i.dataset.arg] = i.value; });
   const programs = {};
   form.querySelectorAll('.prog-settings').forEach(ps => {
     const params = {};
@@ -3135,8 +3252,10 @@ async function saveModuleArgs(name) {
     });
     programs[ps.dataset.prog] = params;
   });
+  const url = iid ? `/modules/${encodeURIComponent(name)}/instances/${encodeURIComponent(iid)}/args`
+                  : '/modules/' + encodeURIComponent(name) + '/args';
   try {
-    const r = await fetch(apiUrl('/modules/' + encodeURIComponent(name) + '/args'), {
+    const r = await fetch(apiUrl(url), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({args, programs}),
@@ -3148,6 +3267,38 @@ async function saveModuleArgs(name) {
     if (data.warning) toast(data.warning, 'err');
     loadModules();
   } catch (e) { toast('Save failed: ' + e.message, 'err'); }
+}
+
+// ── Module instances (instanceable modules) ────────────────
+async function addInstance(name) {
+  const input = document.getElementById('add-inst-' + name);
+  const value = input ? input.value.trim() : '';
+  if (!value) { toast('Enter an instance value first', 'err'); return; }
+  try {
+    const r = await fetch(apiUrl(`/modules/${encodeURIComponent(name)}/instances`), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({value}),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Failed to add instance', 'err'); return; }
+    toast(`Instance '${(data.instance && data.instance.id) || value}' added`, 'ok');
+    loadModules();
+  } catch (e) { toast('Add instance failed: ' + e.message, 'err'); }
+}
+
+async function removeInstance(name, iid) {
+  if (!confirm(`Remove instance '${iid}' from module '${name}'? Its supervisor programs will be stopped and removed.`)) return;
+  try {
+    const r = await fetch(apiUrl(`/modules/${encodeURIComponent(name)}/instances/${encodeURIComponent(iid)}`),
+                          {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Failed to remove instance', 'err'); return; }
+    if (editingModule === name + '/' + iid) editingModule = null;
+    toast(`Instance '${iid}' removed`, 'ok');
+    if (data.warning) toast(data.warning, 'err');
+    loadModules();
+  } catch (e) { toast('Remove instance failed: ' + e.message, 'err'); }
 }
 
 // ── Shared log panel (install log ⇄ service logs) ──────────

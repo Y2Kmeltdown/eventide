@@ -12,10 +12,12 @@ decoupled frontend server (frontend.py) is still preferred: it keeps
 HTML/tile bandwidth off the link — see eventide.nginx.
 
 Module network locations are NOT hardcoded in nginx.  TCP ports for module
-sockets are allocated by this server at install time (see --port-pool), and
-any HTTP service a module exposes is reachable through the generic proxy
+sockets are allocated by this server (see --port-pool) — at install time, or
+per instance at instance-creation time for instanceable modules — and any
+HTTP service a module exposes is reachable through the generic proxy
 
-  /proxy/<module>/<socket>/<upstream path>  →  127.0.0.1:<allocated port>/<upstream path>
+  /proxy/<module>/<socket>/<upstream path>         →  127.0.0.1:<allocated port>/<upstream path>
+  /proxy/<module>/inst/<iid>/<socket>/<upstream…>  →  same, for one instance
 
 resolved from the installed-modules registry at request time.  nginx only
 fronts this process (location /) and the base playback server (/playback/).
@@ -330,36 +332,41 @@ _HOP_BY_HOP_HEADERS = {
 }
 
 
-def _module_tcp_port(module: str, socket_name: str) -> int | None:
-    """Allocated TCP port of an installed module's socket, or None."""
+def _instance_tcp_port(module: str, iid: str, socket_name: str) -> int | None:
+    """Allocated TCP port of one module instance's socket, or None."""
     entry = load_registry().get("modules", {}).get(module)
     if entry is None:
         return None
-    for s in entry.get("manifest", {}).get("sockets", []):
-        if s.get("name") == socket_name and s.get("type") == "tcp":
+    inst = (entry.get("instances") or {}).get(iid)
+    if inst is None:
+        return None
+    for s in (inst or {}).get("sockets", []):
+        if isinstance(s, dict) and s.get("name") == socket_name and s.get("type") == "tcp":
             port = s.get("port")
             return port if isinstance(port, int) else None
     return None
 
 
-@app.route("/proxy/<module>/<socket_name>/", defaults={"rest": ""},
-           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-@app.route("/proxy/<module>/<socket_name>/<path:rest>",
-           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-def module_socket_proxy(module, socket_name, rest):
-    port = _module_tcp_port(module, socket_name)
-    if port is None:
-        return jsonify({
-            "error": f"no such module tcp socket: {module}/{socket_name}"
-        }), 404
+def _module_tcp_port(module: str, socket_name: str) -> int | None:
+    """Allocated TCP port of an installed module's socket, or None.
 
-    if request.method == "OPTIONS":
-        resp = app.make_default_options_response()
-        resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
+    Resolves against the implicit "default" instance, so this only works for
+    non-instanceable modules (instanceable modules are proxied per instance —
+    see /proxy/<module>/inst/<iid>/<socket>/...).
+    """
+    return _instance_tcp_port(module, "default", socket_name)
 
+
+def _proxy_options_response():
+    resp = app.make_default_options_response()
+    resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
+
+def _proxy_to_port(port: int, rest: str, desc: str):
+    """Forward the current request to 127.0.0.1:<port>/<rest> (streamed)."""
     url = f"http://127.0.0.1:{port}/{rest}"
     if request.query_string:
         url += "?" + request.query_string.decode()
@@ -379,7 +386,7 @@ def module_socket_proxy(module, socket_name, rest):
         )
     except _http.exceptions.ConnectionError:
         return jsonify({
-            "error": f"{module}/{socket_name} is unreachable on port {port}"
+            "error": f"{desc} is unreachable on port {port}"
         }), 502
     except _http.exceptions.RequestException as exc:
         return jsonify({"error": f"proxy error: {exc}"}), 502
@@ -393,6 +400,44 @@ def module_socket_proxy(module, socket_name, rest):
         status=upstream.status_code,
         headers=resp_headers,
     )
+
+
+@app.route("/proxy/<module>/<socket_name>/", defaults={"rest": ""},
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+@app.route("/proxy/<module>/<socket_name>/<path:rest>",
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+def module_socket_proxy(module, socket_name, rest):
+    port = _module_tcp_port(module, socket_name)
+    if port is None:
+        entry = load_registry().get("modules", {}).get(module)
+        if entry is not None and entry.get("manifest", {}).get("instance"):
+            return jsonify({
+                "error": f"module '{module}' is instanceable — proxy per "
+                         f"instance at /proxy/{module}/inst/<iid>/{socket_name}/..."
+            }), 404
+        return jsonify({
+            "error": f"no such module tcp socket: {module}/{socket_name}"
+        }), 404
+
+    if request.method == "OPTIONS":
+        return _proxy_options_response()
+    return _proxy_to_port(port, rest, f"{module}/{socket_name}")
+
+
+@app.route("/proxy/<module>/inst/<iid>/<socket_name>/", defaults={"rest": ""},
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+@app.route("/proxy/<module>/inst/<iid>/<socket_name>/<path:rest>",
+           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+def module_instance_socket_proxy(module, iid, socket_name, rest):
+    port = _instance_tcp_port(module, iid, socket_name)
+    if port is None:
+        return jsonify({
+            "error": f"no such module instance tcp socket: {module}/{iid}/{socket_name}"
+        }), 404
+
+    if request.method == "OPTIONS":
+        return _proxy_options_response()
+    return _proxy_to_port(port, rest, f"{module}/{iid}/{socket_name}")
 
 # ── Viewfinder API ────────────────────────────────────────────────────────────
 
@@ -464,17 +509,23 @@ def api_stream_config_get(cam):
 # ── Recordings ────────────────────────────────────────────────────────────────
 # Recording sources are module-driven: every installed module that declares
 # `recordings_subdir` in its manifest gets a recordings directory
-# (<recordings_dir>/<recordings_subdir>) and shows up as a source here.  The
-# dashboard's PLAYBACK tab builds one inner tab per source — sources no
-# installed module declares simply do not exist.
+# (<recordings_dir>/<recordings_subdir>) and shows up as a source here.  For
+# instanceable modules each instance records to its own directory
+# (<recordings_subdir>-<iid>) and appears as its own source.  The dashboard's
+# PLAYBACK tab builds one inner tab per source — sources no installed module
+# declares simply do not exist.
 
 def _recording_sources() -> list[dict]:
     """Recording sources declared by installed modules: [{name, module}]."""
     sources = []
     for mod_name, entry in load_registry().get("modules", {}).items():
-        sub = entry.get("manifest", {}).get("recordings_subdir")
-        if isinstance(sub, str) and sub:
-            sources.append({"name": sub, "module": mod_name})
+        manifest = entry.get("manifest", {})
+        instanceable = bool(manifest.get("instance"))
+        for inst in (entry.get("instances") or {}).values():
+            sub = _instance_recordings_subdir(manifest, inst or {})
+            if sub:
+                label = f"{mod_name} ({(inst or {}).get('id')})" if instanceable else mod_name
+                sources.append({"name": sub, "module": label})
     sources.sort(key=lambda s: s["name"])
     return sources
 
@@ -579,7 +630,9 @@ module_jobs_lock = threading.Lock()
 install_lock = threading.Lock()   # one install job at a time
 
 
-def _job_log(job: dict, line: str) -> None:
+def _job_log(job: dict | None, line: str) -> None:
+    if job is None:
+        return  # instance operations outside install jobs have no job log
     with module_jobs_lock:
         job["log"].append(str(line))
         if len(job["log"]) > _JOB_LOG_CAP:
@@ -616,6 +669,10 @@ def load_registry() -> dict:
     try:
         data = json.loads(path.read_text())
         if isinstance(data, dict) and isinstance(data.get("modules"), dict):
+            # Backfill implicit default instances for entries written before
+            # the instance system existed (persisted on the next save).
+            for name, entry in data["modules"].items():
+                _migrate_entry(name, entry)
             return data
     except (json.JSONDecodeError, OSError):
         pass
@@ -731,6 +788,36 @@ def validate_manifest(m) -> list[str]:
             elif atype == "str" and not isinstance(a["default"], str):
                 errors.append(f"argument '{an}' default must be a string")
 
+    # Instanceable modules opt in by naming the argument that identifies a
+    # unique copy (e.g. the serial port).  Without this key the module runs
+    # exactly one implicit instance and nothing about its behaviour changes.
+    instanceable = False
+    inst = m.get("instance")
+    if inst is not None:
+        if not isinstance(inst, dict):
+            errors.append("'instance' must be an object")
+        else:
+            ia = inst.get("argument")
+            if not isinstance(ia, str) or not ia:
+                errors.append("'instance.argument' is required and must name an argument")
+            else:
+                idecl = next(
+                    (a for a in args if isinstance(a, dict) and a.get("name") == ia),
+                    None,
+                )
+                if idecl is None:
+                    errors.append(
+                        f"'instance.argument' references undeclared argument '{ia}'"
+                    )
+                elif idecl.get("type") not in ("str", "int"):
+                    errors.append(
+                        f"'instance.argument' '{ia}' must be of type str or int"
+                    )
+                else:
+                    instanceable = True
+            if "label" in inst and not isinstance(inst["label"], str):
+                errors.append("'instance.label' must be a string")
+
     sock_names: set[str] = set()
     sockets = m.get("sockets", [])
     if not isinstance(sockets, list):
@@ -747,6 +834,9 @@ def validate_manifest(m) -> list[str]:
                 continue
             if sn in seen_sock_names:
                 errors.append(f"duplicate socket name '{sn}'")
+            if sn == "inst":
+                # Reserved: /proxy/<module>/inst/<iid>/<socket>/... would clash.
+                errors.append("socket name 'inst' is reserved")
             seen_sock_names.add(sn)
             sock_names.add(sn)
             stype = s.get("type")
@@ -754,16 +844,28 @@ def validate_manifest(m) -> list[str]:
                 errors.append(f"socket '{sn}' type must be 'tcp' or 'unix'")
             elif stype == "tcp":
                 # 'port' is optional: when omitted, eventide allocates one
-                # from --port-pool at install time.
+                # from --port-pool (per instance for instanceable modules,
+                # otherwise at install time).
                 port = s.get("port")
                 if port is not None and (
                     not isinstance(port, int) or not (1 <= port <= 65535)
                 ):
                     errors.append(f"socket '{sn}' tcp 'port' must be 1-65535 when given")
             else:
+                # 'path' is optional: when omitted, eventide generates one
+                # (per instance for instanceable modules).  Instanceable
+                # modules must NOT pin a path — copies would collide.
                 spath = s.get("path")
-                if not isinstance(spath, str) or not spath.startswith("/"):
-                    errors.append(f"socket '{sn}' needs an absolute unix 'path'")
+                if spath is not None:
+                    if not isinstance(spath, str) or not spath.startswith("/"):
+                        errors.append(
+                            f"socket '{sn}' unix 'path' must be absolute when given"
+                        )
+                    elif instanceable:
+                        errors.append(
+                            f"socket '{sn}': instanceable modules must not declare "
+                            "a unix 'path' — paths are generated per instance"
+                        )
 
     programs = m.get("programs")
     if not isinstance(programs, list) or not programs:
@@ -954,9 +1056,7 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
             f"module '{name}' is already installed (uninstall it first to reinstall)"
         )
     existing_programs = {
-        p["name"]
-        for e in installed.values()
-        for p in e["manifest"].get("programs", [])
+        pn for e in installed.values() for pn in _entry_program_names(e)
     }
     for p in manifest.get("programs", []):
         if p["name"] in existing_programs:
@@ -977,10 +1077,18 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
     existing_ports: dict[int, str] = {}
     for ename, e in installed.items():
         for s in e["manifest"].get("sockets", []):
-            if s.get("type") == "tcp":
+            if s.get("type") == "tcp" and isinstance(s.get("port"), int):
                 existing_ports.setdefault(s["port"], ename)
+        for ei in (e.get("instances") or {}).values():
+            for s in (ei or {}).get("sockets", []):
+                if isinstance(s, dict) and s.get("type") == "tcp" and isinstance(s.get("port"), int):
+                    existing_ports.setdefault(s["port"], ename)
     for s in manifest.get("sockets", []):
-        if s.get("type") == "tcp" and s.get("port") in existing_ports:
+        if (
+            s.get("type") == "tcp"
+            and isinstance(s.get("port"), int)
+            and s["port"] in existing_ports
+        ):
             errors.append(
                 f"socket port {s['port']} is already used by module "
                 f"'{existing_ports[s['port']]}'"
@@ -990,59 +1098,287 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
 
 # ── Port allocation ───────────────────────────────────────────────────────────
 # TCP ports are platform-assigned: a module socket may request an explicit
-# 'port' (honoured if free), but the default is to leave it out and let the
-# installer pick one from --port-pool.  The allocated port is written back
-# into the manifest before it is rendered and registered, so modules.json,
-# /api/modules, and every later re-render all see the same number.
+# 'port' (honoured if free), but the default is to leave it out and let
+# eventide pick one from --port-pool.  For non-instanceable modules the
+# allocated port is written back into the manifest at install time (so
+# modules.json, /api/modules, and every later re-render all see the same
+# number); for instanceable modules ports are allocated per instance and live
+# on the registry's instance entries instead.
 
-def _allocate_ports(manifest: dict, registry: dict, job: dict) -> None:
-    """Assign TCP ports to the manifest's sockets that don't declare one."""
-    wanted = [
-        s for s in manifest.get("sockets", [])
-        if isinstance(s, dict) and s.get("type") == "tcp" and s.get("port") is None
-    ]
-    if not wanted:
-        return
+def _port_pool() -> range:
     try:
         start_s, end_s = str(cfg.get("port_pool", "8100-8199")).split("-", 1)
-        pool = range(int(start_s), int(end_s) + 1)
+        return range(int(start_s), int(end_s) + 1)
     except ValueError:
         raise RuntimeError(
             f"invalid --port-pool {cfg.get('port_pool')!r} (expected 'start-end')"
         )
 
+
+def _port_free(port: int) -> bool:
+    # A bind test catches anything the registry doesn't know about
+    # (base services, other software on the payload).
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("0.0.0.0", port))
+        except OSError:
+            return False
+    return True
+
+
+def _used_ports(registry: dict, extra_manifest: dict | None = None) -> set[int]:
+    """Every TCP port already claimed: baked manifests + all instance sockets."""
     used: set[int] = set()
-    for entry in registry.get("modules", {}).values():
-        for s in entry.get("manifest", {}).get("sockets", []):
+    manifests = [e.get("manifest", {}) for e in registry.get("modules", {}).values()]
+    if extra_manifest is not None:
+        manifests.append(extra_manifest)
+    for m in manifests:
+        for s in m.get("sockets", []):
             if isinstance(s, dict) and isinstance(s.get("port"), int):
                 used.add(s["port"])
+    for entry in registry.get("modules", {}).values():
+        for inst in (entry.get("instances") or {}).values():
+            for s in (inst or {}).get("sockets", []):
+                if isinstance(s, dict) and isinstance(s.get("port"), int):
+                    used.add(s["port"])
+    return used
+
+
+def _allocate_one_port(used: set[int], job: dict | None, sock_name: str) -> int:
+    for port in _port_pool():
+        if port in used or not _port_free(port):
+            continue
+        _job_log(job, f"allocated tcp port {port} to socket '{sock_name}'")
+        return port
+    raise RuntimeError(
+        f"no free port in pool {cfg.get('port_pool')} "
+        f"for socket '{sock_name}'"
+    )
+
+
+def _allocate_ports(manifest: dict, registry: dict, job: dict) -> None:
+    """Assign TCP ports to the manifest's sockets that don't declare one."""
+    used = _used_ports(registry, extra_manifest=manifest)
     for s in manifest.get("sockets", []):
-        if isinstance(s, dict) and isinstance(s.get("port"), int):
-            used.add(s["port"])
+        if not (isinstance(s, dict) and s.get("type") == "tcp" and s.get("port") is None):
+            continue
+        s["port"] = _allocate_one_port(used, job, s.get("name"))
+        used.add(s["port"])
 
-    def _port_free(port: int) -> bool:
-        # A bind test catches anything the registry doesn't know about
-        # (base services, other software on the payload).
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            try:
-                probe.bind(("0.0.0.0", port))
-            except OSError:
-                return False
-        return True
 
-    for s in wanted:
-        for port in pool:
-            if port in used or not _port_free(port):
-                continue
-            s["port"] = port
+def _generate_unix_paths(manifest: dict, module_name: str, job: dict | None) -> None:
+    """Fill in generated paths for unix sockets that don't declare one
+    (non-instanceable modules — instanceable modules get paths per instance)."""
+    for s in manifest.get("sockets", []):
+        if isinstance(s, dict) and s.get("type") == "unix" and not s.get("path"):
+            s["path"] = f"/tmp/eventide-{module_name}-{s.get('name')}.sock"
+            _job_log(job, f"generated unix path {s['path']} for socket '{s.get('name')}'")
+
+
+# ── Module instances ──────────────────────────────────────────────────────────
+# A manifest that declares `instance: {"argument": "<arg>"}` is instanceable:
+# eventide runs one copy of its programs per instance value (e.g. the serial
+# port).  Everything about an instance — its argument values, allocated TCP
+# ports, generated unix socket paths, supervisor program names — is stored on
+# the registry entry's `instances` map.  Non-instanceable modules get a single
+# implicit "default" instance mirroring the manifest, so every consumer can
+# treat modules uniformly.
+
+def _instance_id(value) -> str | None:
+    """Slug identifying an instance, derived from its value
+    (/dev/ttyS1 → dev-ttys1).  None when the value has no usable characters."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
+    return slug or None
+
+
+def _default_instance(manifest: dict, name: str, conf_file: str | None,
+                      created_at) -> dict:
+    """The implicit instance of a non-instanceable module — mirrors the
+    (port-baked) manifest exactly."""
+    return {
+        "id": "default",
+        "value": None,
+        "args": {
+            a["name"]: a.get("default")
+            for a in manifest.get("arguments", [])
+            if isinstance(a, dict) and "name" in a
+        },
+        "sockets": manifest.get("sockets", []),
+        "programs": [
+            p["name"] for p in manifest.get("programs", [])
+            if isinstance(p, dict) and "name" in p
+        ],
+        "conf_file": conf_file or str(
+            Path(cfg.get("supervisor_conf_d", "/etc/supervisor/conf.d"))
+            / f"module-{name}.conf"
+        ),
+        "created_at": created_at,
+    }
+
+
+def _migrate_entry(name: str, entry: dict) -> None:
+    """Backfill the default instance for pre-instances registry entries."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("manifest"), dict):
+        return
+    # Only entries written before the instance system existed lack the key;
+    # an empty dict is a valid state (all instances removed) — leave it alone.
+    if isinstance(entry.get("instances"), dict):
+        return
+    entry["instances"] = {
+        "default": _default_instance(
+            entry["manifest"], name, entry.get("conf_file"),
+            entry.get("installed_at"),
+        )
+    }
+
+
+def _entry_program_names(entry: dict) -> list[str]:
+    """All supervisor program names a registry entry owns (every instance)."""
+    names: list[str] = []
+    for inst in (entry.get("instances") or {}).values():
+        names.extend((inst or {}).get("programs") or [])
+    return names
+
+
+def _program_names(manifest: dict, inst: dict | None = None) -> list[str]:
+    """Program names for one instance — suffixed with -<iid> when the module
+    is instanceable (<program>-<iid>)."""
+    suffix = f"-{inst['id']}" if inst and manifest.get("instance") else ""
+    return [
+        p["name"] + suffix
+        for p in manifest.get("programs", [])
+        if isinstance(p, dict) and "name" in p
+    ]
+
+
+def _instance_recordings_subdir(manifest: dict, inst: dict) -> str | None:
+    """Recordings subdir for one instance: <sub>-<iid> for instanceable
+    modules (each copy records to its own directory), <sub> otherwise."""
+    sub = manifest.get("recordings_subdir")
+    if not isinstance(sub, str) or not sub:
+        return None
+    if manifest.get("instance"):
+        return f"{sub}-{inst['id']}"
+    return sub
+
+
+def _instance_manifest(manifest: dict, inst: dict) -> dict:
+    """The manifest overlaid with an instance's values, for rendering: the
+    instance's sockets (allocated ports / generated paths) replace the
+    manifest's, its argument values become the defaults, and an instanceable
+    module's recordings subdir gains the -<iid> suffix."""
+    eff = dict(manifest)
+    eff["sockets"] = inst.get("sockets", [])
+    values = inst.get("args", {})
+    eff["arguments"] = [
+        {**a, "default": values[a["name"]]}
+        if isinstance(a, dict) and a.get("name") in values else a
+        for a in manifest.get("arguments", [])
+    ]
+    sub = _instance_recordings_subdir(manifest, inst)
+    if sub:
+        eff["recordings_subdir"] = sub
+    return eff
+
+
+def _setup_instance_sockets(manifest: dict, module_name: str, registry: dict,
+                            inst: dict, job: dict | None) -> None:
+    """Resolve an instance's sockets: allocate a TCP port per tcp socket
+    (honouring an explicit 'port' request when free) and generate a unix
+    path per unix socket."""
+    used = _used_ports(registry)
+    resolved = []
+    for s in manifest.get("sockets", []):
+        if not isinstance(s, dict):
+            continue
+        s2 = dict(s)
+        if s2.get("type") == "tcp":
+            port = s2.get("port")
+            if isinstance(port, int):
+                if port in used or not _port_free(port):
+                    raise RuntimeError(
+                        f"tcp port {port} for socket '{s2.get('name')}' "
+                        "is already in use"
+                    )
+            else:
+                port = _allocate_one_port(used, job, s2.get("name"))
+            s2["port"] = port
             used.add(port)
-            _job_log(job, f"allocated tcp port {port} to socket '{s.get('name')}'")
-            break
         else:
-            raise RuntimeError(
-                f"no free port in pool {cfg.get('port_pool')} "
-                f"for socket '{s.get('name')}'"
+            s2["path"] = (
+                f"/tmp/eventide-{module_name}-{inst['id']}-{s2.get('name')}.sock"
             )
+        resolved.append(s2)
+    inst["sockets"] = resolved
+
+
+def _build_instance(manifest: dict, name: str, registry: dict, value,
+                    args: dict | None, job: dict | None) -> dict:
+    """Validate and assemble a new instance of an instanceable module
+    (no side effects: no conf written, registry untouched)."""
+    spec = manifest.get("instance") or {}
+    iid = _instance_id(value)
+    if iid is None:
+        raise RuntimeError(f"instance value {value!r} produces an empty instance id")
+    entry = registry.get("modules", {}).get(name) or {}
+    for existing in (entry.get("instances") or {}).values():
+        if (existing or {}).get("value") == value:
+            raise RuntimeError(f"an instance with value {value!r} already exists")
+        if (existing or {}).get("id") == iid:
+            raise RuntimeError(
+                f"instance value {value!r} collides with existing instance "
+                f"'{iid}' ({(existing or {}).get('value')!r})"
+            )
+
+    programs = _program_names(manifest, {"id": iid})
+    taken = {
+        pn
+        for e in registry.get("modules", {}).values()
+        for pn in _entry_program_names(e)
+    }
+    clashes = [pn for pn in programs if pn in taken]
+    if clashes:
+        raise RuntimeError(
+            f"program name(s) already used by another module: {', '.join(clashes)}"
+        )
+
+    inst = {
+        "id": iid,
+        "value": value,
+        "args": {
+            a["name"]: a.get("default")
+            for a in manifest.get("arguments", [])
+            if isinstance(a, dict) and "name" in a
+        },
+        "sockets": [],
+        "programs": programs,
+        "conf_file": str(
+            Path(cfg["supervisor_conf_d"]) / f"module-{name}-{iid}.conf"
+        ),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    inst["args"][spec.get("argument")] = value
+    if args:
+        inst["args"].update(args)
+        inst["args"][spec.get("argument")] = value
+    _setup_instance_sockets(manifest, name, registry, inst, job)
+    return inst
+
+
+def _render_instance_conf(name: str, entry: dict, inst: dict) -> None:
+    """Render and write an instance's supervisor conf file."""
+    manifest = entry["manifest"]
+    suffix = f"-{inst['id']}" if manifest.get("instance") else ""
+    conf_file = inst.get("conf_file") or str(
+        Path(cfg["supervisor_conf_d"]) / f"module-{name}{suffix}.conf"
+    )
+    _atomic_write(
+        Path(conf_file),
+        render_module_conf(
+            _instance_manifest(manifest, inst), name,
+            entry.get("repo_url", ""), program_suffix=suffix,
+        ),
+    )
 
 
 # ── Config rendering ──────────────────────────────────────────────────────────
@@ -1074,13 +1410,15 @@ def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
     return out
 
 
-def render_module_conf(manifest: dict, module_name: str, repo_url: str) -> str:
+def render_module_conf(manifest: dict, module_name: str, repo_url: str,
+                       program_suffix: str = "") -> str:
     lines = [
         f"; Generated by the eventide module manager from {repo_url}",
         "; Do not edit by hand — changes are lost on reinstall.",
     ]
     for p in manifest["programs"]:
-        lines.append(f"[program:{p['name']}]")
+        # program_suffix is "-<iid>" for instances of instanceable modules.
+        lines.append(f"[program:{p['name']}{program_suffix}]")
         lines.append(f"command={render_placeholders(p['command'], manifest, module_name)}")
         lines.append(
             "directory="
@@ -1293,11 +1631,11 @@ def supervisor_statuses() -> dict[str, dict]:
     return result
 
 
-def _verify_programs(job: dict, manifest: dict) -> None:
+def _verify_programs(job: dict, manifest: dict, inst: dict | None = None) -> None:
     if not shutil.which("supervisorctl"):
         job["warnings"].append("supervisorctl not available; skipped program verification")
         return
-    wanted = [p["name"] for p in manifest.get("programs", [])]
+    wanted = _program_names(manifest, inst)
     states: dict[str, str | None] = {}
     deadline = time.time() + 10
     while time.time() < deadline:
@@ -1354,8 +1692,13 @@ def _run_install_job(job: dict) -> None:
         errors = conflict_errors(manifest, registry)
         if errors:
             raise RuntimeError("; ".join(errors))
-        # Allocate TCP ports before anything renders the manifest.
-        _allocate_ports(manifest, registry, job)
+        # Allocate TCP ports + generate unix socket paths before anything
+        # renders the manifest.  Instanceable modules skip this: ports and
+        # unix paths are allocated per instance instead (manifest sockets
+        # stay unallocated).
+        if not manifest.get("instance"):
+            _allocate_ports(manifest, registry, job)
+            _generate_unix_paths(manifest, name, job)
 
         module_dir = Path(cfg["packages_dir"]) / name
         if module_dir.exists():
@@ -1437,7 +1780,9 @@ def _run_install_job(job: dict) -> None:
             copied_artifacts.append(str(dst_path))
             _job_log(job, f"copied {src} → {dst_path}")
         sub = manifest.get("recordings_subdir")
-        if sub:
+        instanceable = bool(manifest.get("instance"))
+        instances: dict[str, dict] = {}
+        if sub and not instanceable:
             rec_dir = Path(cfg["recordings_dir"]) / sub
             rec_dir.mkdir(parents=True, exist_ok=True)
             _job_log(job, f"created recordings dir {rec_dir}")
@@ -1449,26 +1794,74 @@ def _run_install_job(job: dict) -> None:
 
         # ── Supervisor config ─────────────────────────────────────────────
         _job_status(job, "configuring")
-        conf_text = render_module_conf(manifest, name, job["repo_url"])
-        conf_path = Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
-        _atomic_write(conf_path, conf_text)
+        if instanceable:
+            # Auto-create the first instance from the instance argument's
+            # default value, so install behaves like any other module: its
+            # programs come up immediately (wrong default? fix it from the
+            # MODULES tab afterwards).
+            spec = manifest["instance"]
+            default_value = next(
+                (
+                    a.get("default")
+                    for a in manifest.get("arguments", [])
+                    if isinstance(a, dict) and a.get("name") == spec.get("argument")
+                ),
+                None,
+            )
+            first = _build_instance(
+                manifest, name, registry, default_value, None, job
+            )
+            instances[first["id"]] = first
+            _job_log(
+                job,
+                f"created instance '{first['id']}' ({spec.get('argument')}"
+                f"={default_value!r})",
+            )
+            rec_sub = _instance_recordings_subdir(manifest, first)
+            if rec_sub:
+                rec_dir = Path(cfg["recordings_dir"]) / rec_sub
+                rec_dir.mkdir(parents=True, exist_ok=True)
+                _job_log(job, f"created recordings dir {rec_dir}")
+            conf_path = Path(first["conf_file"])
+            _atomic_write(
+                conf_path,
+                render_module_conf(
+                    _instance_manifest(manifest, first), name, job["repo_url"],
+                    program_suffix=f"-{first['id']}",
+                ),
+            )
+        else:
+            conf_path = Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+            _atomic_write(
+                conf_path,
+                render_module_conf(manifest, name, job["repo_url"]),
+            )
         _job_log(job, f"wrote {conf_path}")
         _supervisor_apply(job)
 
         # ── Verify & register ─────────────────────────────────────────────
         _job_status(job, "verifying")
-        _verify_programs(job, manifest)
+        _verify_programs(job, manifest, next(iter(instances.values()), None))
 
         registry = load_registry()
-        registry.setdefault("modules", {})[name] = {
+        installed_at = datetime.now(timezone.utc).isoformat()
+        entry = {
             "manifest": manifest,
             "repo_url": job["repo_url"],
             "ref": job.get("ref"),
             "commit": commit,
-            "installed_at": datetime.now(timezone.utc).isoformat(),
+            "installed_at": installed_at,
             "artifacts": copied_artifacts,
             "conf_file": str(conf_path),
+            "instances": (
+                instances if instanceable else {
+                    "default": _default_instance(
+                        manifest, name, str(conf_path), installed_at
+                    )
+                }
+            ),
         }
+        registry.setdefault("modules", {})[name] = entry
         save_registry(registry)
         registered = True
         _job_status(job, "done")
@@ -1511,21 +1904,24 @@ def _uninstall_module(name: str) -> dict | None:
     entry = registry.get("modules", {}).get(name)
     if entry is None:
         return None
-    manifest = entry["manifest"]
 
+    program_names = _entry_program_names(entry)
     if shutil.which("supervisorctl"):
-        for p in manifest.get("programs", []):
+        for pname in program_names:
             try:
-                _supervisorctl("stop", p["name"])
+                _supervisorctl("stop", pname)
             except (subprocess.TimeoutExpired, OSError):
                 pass  # best-effort stop
 
-    conf_path = Path(
-        entry.get("conf_file")
-        or Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
-    )
-    if conf_path.exists():
-        conf_path.unlink()
+    conf_paths = {
+        (inst or {}).get("conf_file")
+        for inst in (entry.get("instances") or {}).values()
+    }
+    conf_paths.add(entry.get("conf_file"))
+    conf_paths.add(str(Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"))
+    for conf in conf_paths:
+        if conf:
+            Path(conf).unlink(missing_ok=True)
     if shutil.which("supervisorctl"):
         for args in (("reread",), ("update",)):
             try:
@@ -1551,6 +1947,42 @@ def api_modules_list():
     modules = []
     for name, entry in sorted(registry.get("modules", {}).items()):
         m = entry["manifest"]
+        prog_templates = {
+            p["name"]: p for p in m.get("programs", []) if isinstance(p, dict)
+        }
+
+        def _prog_info(pname: str, inst: dict | None = None) -> dict:
+            template = pname
+            if inst is not None and m.get("instance"):
+                suffix = f"-{inst['id']}"
+                if pname.endswith(suffix):
+                    template = pname[: -len(suffix)]
+            t = prog_templates.get(template, {})
+            return {
+                "name": pname,
+                "status": statuses.get(pname, {}).get("status", "UNKNOWN"),
+                "status_detail": statuses.get(pname, {}).get("description", ""),
+                # Supervisor settings (editable via the args form)
+                "autostart": t.get("autostart", True),
+                "autorestart": t.get("autorestart", True),
+                "startretries": int(t.get("startretries", 10000)),
+                "priority": int(t.get("priority", 10)),
+            }
+
+        instances = []
+        for iid, inst in sorted((entry.get("instances") or {}).items()):
+            inst = inst or {}
+            instances.append({
+                "id": iid,
+                "value": inst.get("value"),
+                "args": inst.get("args", {}),
+                "sockets": inst.get("sockets", []),
+                "recordings_subdir": _instance_recordings_subdir(m, inst),
+                "created_at": inst.get("created_at"),
+                "programs": [
+                    _prog_info(pname, inst) for pname in inst.get("programs", [])
+                ],
+            })
         modules.append({
             "name": name,
             "version": m.get("version"),
@@ -1559,22 +1991,14 @@ def api_modules_list():
             "repo_url": entry.get("repo_url"),
             "installed_at": entry.get("installed_at"),
             "recordings_subdir": m.get("recordings_subdir"),
+            "instance": m.get("instance"),
+            "instances": instances,
             "ui": m.get("ui", []),
             "arguments": m.get("arguments", []),
             "sockets": m.get("sockets", []),
-            "programs": [
-                {
-                    "name": p["name"],
-                    "status": statuses.get(p["name"], {}).get("status", "UNKNOWN"),
-                    "status_detail": statuses.get(p["name"], {}).get("description", ""),
-                    # Supervisor settings (editable via the args form)
-                    "autostart": p.get("autostart", True),
-                    "autorestart": p.get("autorestart", True),
-                    "startretries": int(p.get("startretries", 10000)),
-                    "priority": int(p.get("priority", 10)),
-                }
-                for p in m.get("programs", [])
-            ],
+            # Flat program list across instances — for non-instanceable
+            # modules this is exactly the manifest's programs, as before.
+            "programs": [pi for inst in instances for pi in inst["programs"]],
         })
     return jsonify({"modules": modules})
 
@@ -1696,33 +2120,9 @@ def api_modules_uninstall(name):
     return jsonify({"ok": True, "removed": name})
 
 
-@app.route("/api/modules/<name>/args", methods=["POST"])
-def api_modules_args(name):
-    """Update a module's argument values and reload its supervisor config.
-
-    The new values become the stored defaults in the registry manifest, the
-    module's conf.d file is re-rendered from them, and supervisor is told to
-    reread/update — which restarts any running programs whose command line
-    changed.  An optional "programs" object updates supervisor settings
-    (autostart, autorestart, startretries, priority) per program the same way.
-    """
-    registry = load_registry()
-    entry = registry.get("modules", {}).get(name)
-    if entry is None:
-        return jsonify({"error": f"module not installed: {name}"}), 404
-    data = request.get_json() or {}
-    new_args = data.get("args")
-    if not isinstance(new_args, dict):
-        return jsonify({
-            "error": "args must be an object mapping argument name → value"
-        }), 400
-    new_progs = data.get("programs", {})
-    if not isinstance(new_progs, dict):
-        return jsonify({
-            "error": "programs must be an object mapping program name → settings"
-        }), 400
-
-    manifest = entry["manifest"]
+def _coerce_arg_updates(manifest: dict, new_args: dict) -> tuple[dict, list[str]]:
+    """Type-check argument values against the manifest's declared arguments.
+    Returns (updates, errors) — updates are safe to apply when errors is empty."""
     declared = {a["name"]: a for a in manifest.get("arguments", [])}
     updates: dict = {}
     errors: list[str] = []
@@ -1752,9 +2152,15 @@ def api_modules_args(name):
             errors.append(f"argument '{key}' must be a single line")
             continue
         updates[key] = value
+    return updates, errors
 
+
+def _coerce_prog_updates(manifest: dict, new_progs: dict) -> tuple[dict, list[str]]:
+    """Validate per-program supervisor settings (autostart, autorestart,
+    startretries, priority).  Returns (updates by program name, errors)."""
     prog_by_name = {p["name"]: p for p in manifest.get("programs", [])}
     prog_updates: dict[str, dict] = {}
+    errors: list[str] = []
     for pname, params in new_progs.items():
         prog = prog_by_name.get(pname)
         if prog is None:
@@ -1785,42 +2191,294 @@ def api_modules_args(name):
             else:
                 errors.append(f"program '{pname}' unknown setting '{key}'")
         prog_updates[pname] = clean
+    return prog_updates, errors
+
+
+def _apply_prog_updates(manifest: dict, prog_updates: dict) -> None:
+    prog_by_name = {p["name"]: p for p in manifest.get("programs", [])}
+    for pname, clean in prog_updates.items():
+        if pname in prog_by_name:
+            prog_by_name[pname].update(clean)
+
+
+def _supervisor_reread_update() -> str | None:
+    """supervisorctl reread && update; an error message on failure, None on
+    success or when supervisorctl is unavailable (caller decides whether the
+    latter deserves a warning)."""
+    if not shutil.which("supervisorctl"):
+        return None
+    for sargs in (("reread",), ("update",)):
+        rc, out = _supervisorctl(*sargs)
+        if rc != 0:
+            return f"supervisorctl {' '.join(sargs)} failed: {out}"
+    return None
+
+
+@app.route("/api/modules/<name>/args", methods=["POST"])
+def api_modules_args(name):
+    """Update a module's argument values and reload its supervisor config.
+
+    The new values become the stored defaults in the registry manifest, the
+    module's conf.d file is re-rendered from them, and supervisor is told to
+    reread/update — which restarts any running programs whose command line
+    changed.  An optional "programs" object updates supervisor settings
+    (autostart, autorestart, startretries, priority) per program the same way.
+    Instanceable modules are edited per instance instead — see
+    /api/modules/<name>/instances/<iid>/args.
+    """
+    registry = load_registry()
+    entry = registry.get("modules", {}).get(name)
+    if entry is None:
+        return jsonify({"error": f"module not installed: {name}"}), 404
+    manifest = entry["manifest"]
+    if manifest.get("instance"):
+        return jsonify({
+            "error": f"module '{name}' is instanceable — edit arguments per "
+                     f"instance via /api/modules/{name}/instances/<iid>/args"
+        }), 400
+    data = request.get_json() or {}
+    new_args = data.get("args")
+    if not isinstance(new_args, dict):
+        return jsonify({
+            "error": "args must be an object mapping argument name → value"
+        }), 400
+    new_progs = data.get("programs", {})
+    if not isinstance(new_progs, dict):
+        return jsonify({
+            "error": "programs must be an object mapping program name → settings"
+        }), 400
+
+    updates, errors = _coerce_arg_updates(manifest, new_args)
+    prog_updates, prog_errors = _coerce_prog_updates(manifest, new_progs)
+    errors += prog_errors
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
 
-    for pname, clean in prog_updates.items():
-        prog_by_name[pname].update(clean)
-
+    _apply_prog_updates(manifest, prog_updates)
     for arg in manifest.get("arguments", []):
         if arg["name"] in updates:
             arg["default"] = updates[arg["name"]]
 
-    conf_path = Path(
-        entry.get("conf_file")
-        or Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
-    )
-    try:
-        _atomic_write(
-            conf_path,
-            render_module_conf(manifest, name, entry.get("repo_url", "")),
+    # Keep the implicit default instance in sync with the manifest, then
+    # re-render its conf (equivalent to rendering the manifest directly).
+    inst = (entry.get("instances") or {}).get("default")
+    if inst is None:
+        inst = _default_instance(
+            manifest, name, entry.get("conf_file"), entry.get("installed_at")
         )
+        entry.setdefault("instances", {})["default"] = inst
+    inst.setdefault("args", {}).update(updates)
+    try:
+        _render_instance_conf(name, entry, inst)
     except OSError as exc:
-        return jsonify({"error": f"failed to write {conf_path}: {exc}"}), 500
+        return jsonify({"error": f"failed to write {inst.get('conf_file')}: {exc}"}), 500
     save_registry(registry)
 
+    err = _supervisor_reread_update()
+    if err:
+        return jsonify({"error": err}), 500
+    resp = {"ok": True, "arguments": manifest.get("arguments", [])}
     if not shutil.which("supervisorctl"):
+        resp["warning"] = ("supervisorctl not found — config written but "
+                           "supervisor not reloaded")
+    return jsonify(resp)
+
+
+# ── Module instances API ──────────────────────────────────────────────────────
+
+@app.route("/api/modules/<name>/instances", methods=["POST"])
+def api_instances_create(name):
+    """Create (and start) an instance of an instanceable module.
+
+    Body: {"value": "/dev/ttyS1", "args": {...}?} — value is the instance
+    identifier substituted into the instance argument (and slugified into the
+    instance id); args optionally overrides other argument defaults for this
+    instance.  TCP ports are allocated and unix paths generated now.
+    """
+    data = request.get_json() or {}
+    if "value" not in data:
+        return jsonify({"error": "value is required"}), 400
+    value = data.get("value")
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return jsonify({"error": "value must be a string or integer"}), 400
+    if isinstance(value, str) and (not value.strip() or "\n" in value or "\r" in value):
+        return jsonify({"error": "value must be a non-empty single line"}), 400
+    extra_args = data.get("args", {})
+    if not isinstance(extra_args, dict):
         return jsonify({
-            "ok": True,
-            "warning": "supervisorctl not found — config written but supervisor not reloaded",
-            "arguments": manifest.get("arguments", []),
-        })
-    for sargs in (("reread",), ("update",)):
-        rc, out = _supervisorctl(*sargs)
-        if rc != 0:
+            "error": "args must be an object mapping argument name → value"
+        }), 400
+
+    with install_lock:  # serialize with installs and other instance changes
+        registry = load_registry()
+        entry = registry.get("modules", {}).get(name)
+        if entry is None:
+            return jsonify({"error": f"module not installed: {name}"}), 404
+        manifest = entry["manifest"]
+        spec = manifest.get("instance")
+        if not spec:
             return jsonify({
-                "error": f"supervisorctl {' '.join(sargs)} failed: {out}"
+                "error": f"module '{name}' is not instanceable (its manifest "
+                         "declares no 'instance' key)"
+            }), 400
+        ia = spec.get("argument")
+        coerced, errors = _coerce_arg_updates(manifest, {**extra_args, ia: value})
+        if errors:
+            return jsonify({"error": "; ".join(errors)}), 400
+        value = coerced[ia]
+        arg_updates = {k: v for k, v in coerced.items() if k != ia}
+        try:
+            inst = _build_instance(manifest, name, registry, value, arg_updates, None)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        rec_sub = _instance_recordings_subdir(manifest, inst)
+        if rec_sub:
+            try:
+                (Path(cfg["recordings_dir"]) / rec_sub).mkdir(
+                    parents=True, exist_ok=True
+                )
+            except OSError as exc:
+                return jsonify({
+                    "error": f"failed to create recordings dir {rec_sub}: {exc}"
+                }), 500
+        entry.setdefault("instances", {})[inst["id"]] = inst
+        try:
+            _render_instance_conf(name, entry, inst)
+        except OSError as exc:
+            entry["instances"].pop(inst["id"], None)
+            return jsonify({
+                "error": f"failed to write {inst['conf_file']}: {exc}"
             }), 500
-    return jsonify({"ok": True, "arguments": manifest.get("arguments", [])})
+        save_registry(registry)
+        err = _supervisor_reread_update()
+        if err:
+            return jsonify({"error": err}), 500
+    return jsonify({"ok": True, "instance": inst}), 201
+
+
+@app.route("/api/modules/<name>/instances/<iid>", methods=["DELETE"])
+def api_instances_delete(name, iid):
+    """Stop and remove an instance: its programs stop, its conf file is
+    deleted, and supervisor is reloaded.  Deleting the last instance leaves
+    the module installed but running nothing."""
+    with install_lock:
+        registry = load_registry()
+        entry = registry.get("modules", {}).get(name)
+        if entry is None:
+            return jsonify({"error": f"module not installed: {name}"}), 404
+        instances = entry.get("instances") or {}
+        inst = instances.get(iid)
+        if inst is None:
+            return jsonify({"error": f"no such instance: {name}/{iid}"}), 404
+
+        if shutil.which("supervisorctl"):
+            for pname in (inst or {}).get("programs", []):
+                try:
+                    _supervisorctl("stop", pname)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass  # best-effort stop
+        conf = (inst or {}).get("conf_file")
+        if conf:
+            Path(conf).unlink(missing_ok=True)
+        del instances[iid]
+        save_registry(registry)
+        err = _supervisor_reread_update()
+    resp = {"ok": True, "removed": f"{name}/{iid}"}
+    if err:
+        resp["warning"] = err
+    return jsonify(resp)
+
+
+@app.route("/api/modules/<name>/instances/<iid>/args", methods=["POST"])
+def api_instance_args(name, iid):
+    """Update one instance's argument values and reload its supervisor config.
+
+    Same body as /api/modules/<name>/args.  The instance argument itself is
+    pinned (remove and re-add the instance to change it).  Supervisor program
+    settings live on the shared program templates, so "programs" updates are
+    applied to every instance's conf.  Program names in "programs" may be
+    given as template names or this instance's suffixed names.
+    """
+    with install_lock:
+        registry = load_registry()
+        entry = registry.get("modules", {}).get(name)
+        if entry is None:
+            return jsonify({"error": f"module not installed: {name}"}), 404
+        manifest = entry["manifest"]
+        instances = entry.get("instances") or {}
+        inst = instances.get(iid)
+        if inst is None:
+            return jsonify({"error": f"no such instance: {name}/{iid}"}), 404
+        data = request.get_json() or {}
+        new_args = data.get("args")
+        if not isinstance(new_args, dict):
+            return jsonify({
+                "error": "args must be an object mapping argument name → value"
+            }), 400
+        new_progs = data.get("programs", {})
+        if not isinstance(new_progs, dict):
+            return jsonify({
+                "error": "programs must be an object mapping program name → settings"
+            }), 400
+
+        spec = manifest.get("instance")
+        if spec:
+            # Accept this instance's suffixed program names as aliases for
+            # the shared program templates.
+            suffix = f"-{iid}"
+            new_progs = {
+                (k[: -len(suffix)] if k.endswith(suffix) else k): v
+                for k, v in new_progs.items()
+            }
+        updates, errors = _coerce_arg_updates(manifest, new_args)
+        prog_updates, prog_errors = _coerce_prog_updates(manifest, new_progs)
+        errors += prog_errors
+        if spec and spec.get("argument") in updates and (
+            updates[spec["argument"]] != inst.get("value")
+        ):
+            errors.append(
+                f"argument '{spec['argument']}' identifies this instance — "
+                "remove and re-add the instance to change it"
+            )
+        if errors:
+            return jsonify({"error": "; ".join(errors)}), 400
+
+        _apply_prog_updates(manifest, prog_updates)
+        inst.setdefault("args", {}).update(updates)
+        if spec:
+            inst["args"][spec["argument"]] = inst.get("value")  # pinned
+            rec_sub = _instance_recordings_subdir(manifest, inst)
+            if rec_sub:
+                try:
+                    (Path(cfg["recordings_dir"]) / rec_sub).mkdir(
+                        parents=True, exist_ok=True
+                    )
+                except OSError as exc:
+                    return jsonify({
+                        "error": f"failed to create recordings dir {rec_sub}: {exc}"
+                    }), 500
+        else:
+            for arg in manifest.get("arguments", []):
+                if arg["name"] in updates:
+                    arg["default"] = updates[arg["name"]]
+
+        # Program settings are template-level: re-render every instance conf
+        # so they take effect module-wide; otherwise only this conf changed.
+        try:
+            for other in instances.values():
+                _render_instance_conf(name, entry, other or {})
+        except OSError as exc:
+            return jsonify({"error": f"failed to write conf file: {exc}"}), 500
+        save_registry(registry)
+        err = _supervisor_reread_update()
+        if err:
+            return jsonify({"error": err}), 500
+    resp = {"ok": True, "args": inst.get("args", {})}
+    if not shutil.which("supervisorctl"):
+        resp["warning"] = ("supervisorctl not found — config written but "
+                           "supervisor not reloaded")
+    return jsonify(resp)
 
 # ── SSH deploy key ────────────────────────────────────────────────────────────
 # Private GitHub repos are cloned over SSH (see _clone_repo's HTTPS→SSH

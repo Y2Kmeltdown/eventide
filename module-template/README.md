@@ -105,6 +105,37 @@ its files:
 (The hello template itself binds no sockets and writes no recordings, so its
 manifest keeps `"sockets": []` and no `recordings_subdir`.)
 
+## Instanceable modules
+
+If your module wraps hardware that can exist more than once on a payload — a
+serial device, a second camera — declare an `instance` key and eventide runs
+**one copy of the module's programs per instance** the operator creates in the
+MODULES tab (an ADD INSTANCE row appears on the module card; the first
+instance is auto-created at install from the argument's `default`):
+
+```json
+"instance": { "argument": "port", "label": "Serial port" },
+"arguments": [
+  { "name": "port", "flag": "--port", "type": "str", "default": "/dev/ttyS1" }
+]
+```
+
+`instance.argument` names the CLI argument (declared in `arguments`, type
+`str` or `int`) that identifies a copy. Per instance, eventide renders the
+programs with that instance's argument values (`{arg:port}` → `/dev/ttyS2`),
+allocates fresh TCP ports from its pool, generates unix socket paths
+(`/tmp/eventide-<name>-<iid>-<socket>.sock`), and — when `recordings_subdir`
+is declared — gives the instance its own recordings directory
+(`<subdir>-<iid>`). Supervisor programs are named `<program>-<iid>`; each
+instance shows up in the MODULES tab with its own services, EDIT and REMOVE
+buttons. Rules: don't pin `path` on unix sockets or `port` on tcp sockets
+(the copies would collide) — always reference them via `{socket:<name>}`.
+
+Modules without an `instance` key are not instanceable and behave exactly as
+before. Full details and migration steps: `docs/MODULES.md` in the main
+eventide repository ("Instanceable modules", "Migrating a manifest to
+instanceable").
+
 ## Dashboard UI components
 
 Modules can advertise panels for the dashboard's MAIN tab in an optional

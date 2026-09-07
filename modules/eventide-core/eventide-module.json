@@ -1,0 +1,30 @@
+{
+  "name": "eventide-core",
+  "version": "1.0.0",
+  "description": "Core Eventide services: playback server and master recording control.",
+  "author": "Eventide",
+  "install": {
+    "commands": ["cd playback && cargo build --release"],
+    "artifacts": {
+      "playback/target/release/playback": "{install_dir}/playback"
+    }
+  },
+  "sockets": [
+    { "name": "playback", "type": "tcp", "port": 8084, "description": "MJPEG playback server" }
+  ],
+  "programs": [
+    {
+      "name": "playback_server",
+      "command": "{install_dir}/playback --recordings {recordings_dir} --bind 0.0.0.0:{socket:playback}",
+      "directory": "{install_dir}",
+      "autostart": true,
+      "autorestart": true,
+      "startretries": 10000,
+      "priority": 2,
+      "user": "root"
+    }
+  ],
+  "ui": [
+    { "id": "master-record", "type": "master-record", "title": "RECORDING", "region": "sidebar", "default": true }
+  ]
+}

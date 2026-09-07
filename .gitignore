@@ -1,4 +1,5 @@
 event_frame_gen
 /recordings
 /code/playback/target
+/modules/eventide-core/playback/target
 /code/__pycache__

@@ -180,12 +180,12 @@ sudo mkdir -p /usr/local/eventide
 sudo mkdir -p /usr/local/eventide/packages
 sudo cp -a code /usr/local/eventide/code
 sudo cp -a config /usr/local/eventide/config
+sudo cp -a modules /usr/local/eventide/modules
 
 sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" /usr/local/eventide
 sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" "$EVENTIDE_DIR"
 
 sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/eventide.service
-sudo sed -i "s@SEDPLACEHOLDER@$EVENTIDE_DIR@g" /usr/local/eventide/config/playback.conf
 
 ## SYSTEM PACKAGES
 step "System packages (generic)"
@@ -230,13 +230,6 @@ install_service eventide
 step "OS-specific services ($OS)"
 run_os_hook services
 
-## PLAYBACK SERVER (in-repo component)
-step "Playback server build"
-cd /usr/local/eventide/code/playback
-"$EVENTIDE_HOME/.cargo/bin/cargo" build --release
-check_file /usr/local/eventide/code/playback/target/release/playback
-cd - > /dev/null
-
 ## NGINX
 step "nginx configuration"
 sudo cp /usr/local/eventide/config/eventide.nginx /etc/nginx/sites-available/eventide.nginx
@@ -262,16 +255,30 @@ step "supervisord base configuration"
 sudo mkdir -p /etc/supervisor/conf.d
 # Remove stale monolithic configs from pre-module installs.
 sudo rm -f /etc/supervisor/conf.d/supervisor.conf /etc/supervisor/conf.d/supervisord.conf
+# playback.conf is now managed by the eventide-core default module.
+sudo rm -f /etc/supervisor/conf.d/playback.conf
 sudo cp /usr/local/eventide/config/supervisor-base.conf /etc/supervisor/conf.d/00-eventide-base.conf
-sudo cp /usr/local/eventide/config/playback.conf /etc/supervisor/conf.d/playback.conf
 sudo systemctl restart supervisor
+
+## DEFAULT EVENTIDE MODULE
+step "Default eventide-core module"
+# Install the built-in module that provides the playback server and master-record UI.
+sudo /usr/bin/python3 /usr/local/eventide/code/eventide.py \
+    --recordings-dir "$EVENTIDE_DIR" \
+    --packages-dir /usr/local/eventide/packages \
+    --supervisor-conf-d /etc/supervisor/conf.d \
+    --modules-registry /usr/local/eventide/modules.json \
+    --settings-file /usr/local/eventide/data/settings.json \
+    --install-local /usr/local/eventide/modules/eventide-core
+# The module install runs as root; ensure the eventide user still owns the tree.
+sudo chown -R "$EVENTIDE_USER:$EVENTIDE_USER" /usr/local/eventide
 
 ## VERIFICATION
 step "Verification"
 check_file /usr/local/eventide/code/eventide.py
-check_file /usr/local/eventide/code/playback/target/release/playback
+check_file /usr/local/eventide/code/playback
 check_file /etc/supervisor/conf.d/00-eventide-base.conf
-check_file /etc/supervisor/conf.d/playback.conf
+check_file /etc/supervisor/conf.d/module-eventide-core.conf
 for svc in "${INSTALLED_SERVICES[@]}" supervisor; do
     systemctl is-enabled --quiet "$svc.service" || fail "$svc.service is not enabled"
     echo "[OK] $svc.service enabled"

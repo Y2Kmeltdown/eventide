@@ -32,7 +32,7 @@ This document covers:
 │    eventide.py  ──► /api/modules/*  (module manager, runs as root)│
 │    supervisord   ──► /etc/supervisor/conf.d/                       │
 │                        00-eventide-base.conf   (inet_http_server)  │
-│                        playback.conf           (in-repo component) │
+│                        module-eventide-core.conf (default module)  │
 │                        module-<name>.conf      (one per module)    │
 │    /usr/local/eventide/                                            │
 │      modules.json            ← installed-modules registry          │
@@ -378,6 +378,12 @@ Every component's traffic goes through the backend proxy —
 
 `fmt` is one of the dashboard's named formatters: `int`, `f1`, `f2`, `f6`
 (decimal places), `m_km` (metres → m/km).
+
+### Special component types
+
+| Type          | Region   | Description |
+| ------------- | -------- | ----------- |
+| `master-record` | `sidebar` | Aggregates every installed module's `recording`-type component into one panel with per-source rows and a RECORD ALL / STOP ALL button. Provided by the built-in `eventide-core` module; no other module should declare it. |
 
 ### Example (evk-datalogger)
 

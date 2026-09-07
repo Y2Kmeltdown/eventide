@@ -41,6 +41,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -174,6 +175,46 @@ stream_configs: dict[str, dict] = {
 # Config (populated in main)
 cfg: dict = {}
 
+# ── System-wide settings ──────────────────────────────────────────────────────
+# Editable from the dashboard SETTINGS tab. Persisted to disk so values survive
+# backend restarts. New keys can be added freely; the UI only sends values that
+# the user actually changed.
+
+DEFAULT_SETTINGS = {
+    "ui_refresh_interval_ms": 5000,
+    "default_playback_speed": 1.0,
+    "timezone": "UTC",
+}
+
+_settings: dict = {}
+_settings_lock = threading.Lock()
+
+
+def settings_path() -> Path:
+    return Path(cfg.get("settings_file", "/usr/local/eventide/data/settings.json"))
+
+
+def load_settings() -> dict:
+    path = settings_path()
+    if not path.exists():
+        return dict(DEFAULT_SETTINGS)
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            merged = dict(DEFAULT_SETTINGS)
+            merged.update(data)
+            return merged
+    except (json.JSONDecodeError, OSError):
+        pass
+    return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(data: dict) -> None:
+    path = settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(path, json.dumps(data, indent=2) + "\n")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def kill_proc(proc: subprocess.Popen | None) -> None:
@@ -269,6 +310,32 @@ _PLAYBACK_UPSTREAM_URL = os.environ.get(
 )
 
 
+def _playback_upstream_url() -> str:
+    """Resolve the playback server from the eventide-core module when installed.
+
+    If the default module is registered and has a 'playback' TCP socket, use
+    its allocated/declared port. Otherwise fall back to the PLAYBACK_UPSTREAM_URL
+    environment variable / default so the proxy keeps working during install or
+    when the module is not yet registered.
+    """
+    try:
+        entry = load_registry().get("modules", {}).get("eventide-core")
+        if entry:
+            inst = (entry.get("instances") or {}).get("default")
+            if inst:
+                for s in (inst.get("sockets") or []):
+                    if (
+                        isinstance(s, dict)
+                        and s.get("name") == "playback"
+                        and s.get("type") == "tcp"
+                        and isinstance(s.get("port"), int)
+                    ):
+                        return f"http://127.0.0.1:{s['port']}"
+    except Exception:
+        pass
+    return _PLAYBACK_UPSTREAM_URL
+
+
 @app.route("/playback/", defaults={"rest": ""},
            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 @app.route("/playback/<path:rest>",
@@ -281,7 +348,7 @@ def playback_proxy(rest):
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp
 
-    url = f"{_PLAYBACK_UPSTREAM_URL}/{rest}"
+    url = f"{_playback_upstream_url()}/{rest}"
     if request.query_string:
         url += "?" + request.query_string.decode()
     headers = {
@@ -506,6 +573,32 @@ def api_stream_config_get(cam):
         abort(400)
     return jsonify(stream_configs[cam])
 
+# ── System settings ───────────────────────────────────────────────────────────
+# The SETTINGS tab reads/writes a small persisted JSON blob. Unknown keys are
+# accepted so the UI can evolve without backend changes; type coercion is left
+# to the UI for now.
+
+@app.route("/api/settings")
+def api_settings_get():
+    global _settings
+    with _settings_lock:
+        _settings = load_settings()
+        return jsonify(_settings)
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_settings_post():
+    global _settings
+    data = request.get_json() or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "settings body must be a JSON object"}), 400
+    with _settings_lock:
+        _settings = load_settings()
+        _settings.update(data)
+        save_settings(_settings)
+        return jsonify(_settings)
+
+
 # ── Recordings ────────────────────────────────────────────────────────────────
 # Recording sources are module-driven: every installed module that declares
 # `recordings_subdir` in its manifest gets a recordings directory
@@ -534,6 +627,28 @@ def _recordings_dir(source: str) -> Path:
     return Path(cfg["recordings_dir"]) / source
 
 
+def _favorites_path(source: str) -> Path:
+    return _recordings_dir(source) / ".favorites.json"
+
+
+def _load_favorites(source: str) -> set[str]:
+    path = _favorites_path(source)
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, list):
+            return {str(x) for x in data if isinstance(x, str)}
+    except (json.JSONDecodeError, OSError):
+        pass
+    return set()
+
+
+def _save_favorites(source: str, favorites: set[str]) -> None:
+    path = _favorites_path(source)
+    _atomic_write(path, json.dumps(sorted(favorites), indent=2) + "\n")
+
+
 @app.route("/api/recordings")
 def list_recording_sources():
     """List the recording sources declared by installed modules."""
@@ -553,14 +668,21 @@ def _list_recordings_for(source: str):
     recordings_dir = _recordings_dir(source)
     if not recordings_dir.exists():
         return jsonify({"files": []})
+    favorites = _load_favorites(source)
     seen = set()
     entries = []
     for pattern in RECORDING_EXTENSIONS:
         for f in recordings_dir.glob(pattern):
             if f.is_file() and f.name not in seen:
                 seen.add(f.name)
-                entries.append({"name": f.name, "size": f.stat().st_size, "ext": f.suffix.lstrip(".")})
-    entries.sort(key=lambda x: x["name"], reverse=True)
+                entries.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "ext": f.suffix.lstrip("."),
+                    "favorited": f.name in favorites,
+                })
+    # Favorites first, then newest-by-name descending.
+    entries.sort(key=lambda x: (-int(x["favorited"]), x["name"]), reverse=False)
     return jsonify({"files": entries})
 
 
@@ -575,6 +697,48 @@ def download_recording(source, filename):
     if not filepath.exists():
         abort(404)
     return send_file(filepath, as_attachment=True, download_name=filename)
+
+
+@app.route("/api/recordings/<source>/<filename>/favorite", methods=["POST"])
+def favorite_recording(source, filename):
+    if source not in {s["name"] for s in _recording_sources()}:
+        return jsonify({"error": f"unknown recording source: {source}"}), 404
+    recordings_dir = _recordings_dir(source)
+    filepath = (recordings_dir / filename).resolve()
+    if filepath.parent != recordings_dir.resolve():
+        return jsonify({"error": "invalid filename"}), 400
+    if not filepath.exists():
+        return jsonify({"error": "file not found"}), 404
+    favorites = _load_favorites(source)
+    if filename in favorites:
+        favorites.discard(filename)
+        favorited = False
+    else:
+        favorites.add(filename)
+        favorited = True
+    _save_favorites(source, favorites)
+    return jsonify({"favorited": favorited, "favorites": sorted(favorites)})
+
+
+@app.route("/api/recordings/<source>/<filename>", methods=["DELETE"])
+def delete_recording(source, filename):
+    if source not in {s["name"] for s in _recording_sources()}:
+        return jsonify({"error": f"unknown recording source: {source}"}), 404
+    recordings_dir = _recordings_dir(source)
+    filepath = (recordings_dir / filename).resolve()
+    if filepath.parent != recordings_dir.resolve():
+        return jsonify({"error": "invalid filename"}), 400
+    if not filepath.exists():
+        return jsonify({"error": "file not found"}), 404
+    try:
+        filepath.unlink()
+        favorites = _load_favorites(source)
+        if filename in favorites:
+            favorites.discard(filename)
+            _save_favorites(source, favorites)
+        return jsonify({"ok": True})
+    except OSError as exc:
+        return jsonify({"error": f"delete failed: {exc}"}), 500
 
 
 # ── Module asset files ────────────────────────────────────────────────────────
@@ -611,7 +775,7 @@ _PROGRAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 _ARG_TYPES = ("str", "int", "float")
 _UI_COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording", "orientation3d", "features")
+_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording", "orientation3d", "features", "master-record")
 _UI_REGIONS = ("sidebar", "center")
 _UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select", "nudge")
 _KNOWN_PLACEHOLDERS = (
@@ -1670,6 +1834,13 @@ def _run_install_job(job: dict) -> None:
             _job_status(job, "extracting")
             staging.mkdir(parents=True, exist_ok=True)
             module_root = _extract_zip(Path(job["zip_path"]), staging, job)
+        elif job.get("source_type") == "local":
+            _job_status(job, "copying")
+            local_root = Path(job["repo_url"])
+            if not local_root.is_dir():
+                raise RuntimeError(f"local module path does not exist: {local_root}")
+            shutil.copytree(local_root, staging, dirs_exist_ok=True)
+            module_root = staging
         else:
             _job_status(job, "cloning")
             _clone_repo(job["repo_url"], job.get("ref"), staging, job)
@@ -2047,6 +2218,19 @@ def _new_install_job(*, source_type: str, repo_url: str,
 
 def _launch_install_job(job: dict) -> None:
     threading.Thread(target=_run_install_job_guarded, args=(job,), daemon=True).start()
+
+
+def _install_local_module(path: str | Path) -> dict:
+    """Synchronous install of a local module directory. Used by install.sh for
+    built-in default modules. Returns the finished job dict."""
+    local_path = Path(path).resolve()
+    install_lock.acquire()
+    try:
+        job = _new_install_job(source_type="local", repo_url=str(local_path))
+        _run_install_job(job)
+        return job
+    finally:
+        install_lock.release()
 
 
 @app.route("/api/modules/install", methods=["POST"])
@@ -2612,6 +2796,10 @@ def main():
     parser.add_argument("--html-file",             default=str(Path(__file__).resolve().with_name("dashboard.html")),
                         help="Path to the dashboard HTML file served at / "
                              "(default: dashboard.html alongside this script)")
+    parser.add_argument("--settings-file",         default="/usr/local/eventide/data/settings.json",
+                        help="Path to persisted system settings JSON")
+    parser.add_argument("--install-local",         default=None, metavar="PATH",
+                        help="Install a module from a local directory and exit")
     args = parser.parse_args()
 
     cfg.update(vars(args))
@@ -2620,6 +2808,23 @@ def main():
     _SUPERVISOR_RPC_URL = args.supervisor_rpc_url
 
     Path(args.packages_dir).mkdir(parents=True, exist_ok=True)
+
+    # Load persisted system settings.
+    global _settings
+    _settings = load_settings()
+
+    if args.install_local:
+        job = _install_local_module(args.install_local)
+        if job.get("status") == "done":
+            print(f"[install-local] module '{job['module']}' installed")
+            for line in job.get("log", []):
+                print(f"[install-local] {line}")
+            sys.exit(0)
+        else:
+            print(f"[install-local] failed: {job.get('error')}")
+            for line in job.get("log", []):
+                print(f"[install-local] {line}")
+            sys.exit(1)
 
     print(f"[backend]  Recordings dir:    {args.recordings_dir}")
     print(f"[backend]  Viewfinder binary: {args.viewfinder_bin}")

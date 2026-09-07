@@ -30,10 +30,12 @@ server {
     listen 80;
     server_name _;  # matches any hostname / IP
 
-    # --- MJPEG playback (base component, fixed port) ---
-    # (When nginx is absent — bench installs, a remote frontend pointed
-    # straight at eventide.py's port — eventide.py proxies /playback/ to
-    # the same upstream itself, so both deployments behave identically.)
+    # --- MJPEG playback (eventide-core default module) ---
+    # The playback server is provided by the built-in eventide-core module,
+    # which declares a TCP socket named 'playback' on port 8084. nginx proxies
+    # the /playback/ path directly to that port. When nginx is absent, eventide.py
+    # proxies /playback/ to the module's socket as well, so both deployments behave
+    # identically.
     location /playback/ {
         proxy_pass http://127.0.0.1:8084/;
         proxy_buffering off;

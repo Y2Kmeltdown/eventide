@@ -105,36 +105,37 @@ its files:
 (The hello template itself binds no sockets and writes no recordings, so its
 manifest keeps `"sockets": []` and no `recordings_subdir`.)
 
-## Instanceable modules
+## Copyable programs (per-program instancing)
 
-If your module wraps hardware that can exist more than once on a payload — a
-serial device, a second camera — declare an `instance` key and eventide runs
-**one copy of the module's programs per instance** the operator creates in the
-MODULES tab (an ADD INSTANCE row appears on the module card; the first
-instance is auto-created at install from the argument's `default`):
+If one of your programs wraps hardware that can exist more than once on a
+payload — a serial device, a second camera — declare an `instance` key **on
+that program's entry** and the operator can add copies of it from the MODULES
+tab (a COPIES section with an ADD COPY row appears under the program):
 
 ```json
-"instance": { "argument": "port", "label": "Serial port" },
-"arguments": [
-  { "name": "port", "flag": "--port", "type": "str", "default": "/dev/ttyS1" }
+"programs": [
+  { "name": "serial_daemon",
+    "command": "{venv_python} {module_dir}/daemon.py --port {arg:port}",
+    "instance": { "argument": "port", "label": "Serial port" } }
 ]
 ```
 
-`instance.argument` names the CLI argument (declared in `arguments`, type
-`str` or `int`) that identifies a copy. Per instance, eventide renders the
-programs with that instance's argument values (`{arg:port}` → `/dev/ttyS2`),
-allocates fresh TCP ports from its pool, generates unix socket paths
-(`/tmp/eventide-<name>-<iid>-<socket>.sock`), and — when `recordings_subdir`
-is declared — gives the instance its own recordings directory
-(`<subdir>-<iid>`). Supervisor programs are named `<program>-<iid>`; each
-instance shows up in the MODULES tab with its own services, EDIT and REMOVE
-buttons. Rules: don't pin `path` on unix sockets or `port` on tcp sockets
-(the copies would collide) — always reference them via `{socket:<name>}`.
+`instance.argument` names a CLI argument (declared in `arguments`, type `str`
+or `int`) that identifies a copy. The **base program** always runs once, with
+the argument's `default` — install behaves exactly as it does today. Each
+copy the operator adds is rendered with its own value (`{arg:port}` →
+`/dev/ttyS2`), gets fresh pool-allocated TCP ports and generated unix socket
+paths (`/tmp/eventide-<module>-<cid>-<socket>.sock`) for the sockets its
+command references, and — when the command uses `{recordings_subdir}` — its
+own recordings directory (`<subdir>-<cid>`). Supervisor names copies
+`<program>-<cid>`; each copy shows up in the module card with its own
+service row and EDIT/REMOVE buttons. Rules: omit `port` on tcp sockets the
+program uses (explicit ports belong to the base program); always reference
+sockets via `{socket:<name>}`.
 
-Modules without an `instance` key are not instanceable and behave exactly as
+Programs without an `instance` key are not copyable and run exactly once, as
 before. Full details and migration steps: `docs/MODULES.md` in the main
-eventide repository ("Instanceable modules", "Migrating a manifest to
-instanceable").
+eventide repository ("Program copies", "Making a program copyable").
 
 ## Dashboard UI components
 

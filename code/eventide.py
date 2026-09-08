@@ -12,12 +12,12 @@ decoupled frontend server (frontend.py) is still preferred: it keeps
 HTML/tile bandwidth off the link — see eventide.nginx.
 
 Module network locations are NOT hardcoded in nginx.  TCP ports for module
-sockets are allocated by this server (see --port-pool) — at install time, or
-per instance at instance-creation time for instanceable modules — and any
-HTTP service a module exposes is reachable through the generic proxy
+sockets are allocated by this server (see --port-pool) at install time —
+copies of copyable programs get their own ports when created — and any HTTP
+service a module exposes is reachable through the generic proxy
 
-  /proxy/<module>/<socket>/<upstream path>         →  127.0.0.1:<allocated port>/<upstream path>
-  /proxy/<module>/inst/<iid>/<socket>/<upstream…>  →  same, for one instance
+  /proxy/<module>/<socket>/<upstream path>          →  127.0.0.1:<allocated port>/<upstream path>
+  /proxy/<module>/copy/<cid>/<socket>/<upstream…>   →  same, for one copy of a copyable program
 
 resolved from the installed-modules registry at request time.  nginx only
 fronts this process (location /) and the base playback server (/playback/).
@@ -321,16 +321,14 @@ def _playback_upstream_url() -> str:
     try:
         entry = load_registry().get("modules", {}).get("eventide-core")
         if entry:
-            inst = (entry.get("instances") or {}).get("default")
-            if inst:
-                for s in (inst.get("sockets") or []):
-                    if (
-                        isinstance(s, dict)
-                        and s.get("name") == "playback"
-                        and s.get("type") == "tcp"
-                        and isinstance(s.get("port"), int)
-                    ):
-                        return f"http://127.0.0.1:{s['port']}"
+            for s in entry.get("manifest", {}).get("sockets", []):
+                if (
+                    isinstance(s, dict)
+                    and s.get("name") == "playback"
+                    and s.get("type") == "tcp"
+                    and isinstance(s.get("port"), int)
+                ):
+                    return f"http://127.0.0.1:{s['port']}"
     except Exception:
         pass
     return _PLAYBACK_UPSTREAM_URL
@@ -399,29 +397,36 @@ _HOP_BY_HOP_HEADERS = {
 }
 
 
-def _instance_tcp_port(module: str, iid: str, socket_name: str) -> int | None:
-    """Allocated TCP port of one module instance's socket, or None."""
+def _copy_tcp_port(module: str, cid: str, socket_name: str) -> int | None:
+    """Allocated TCP port of one program copy's socket, or None."""
     entry = load_registry().get("modules", {}).get(module)
     if entry is None:
         return None
-    inst = (entry.get("instances") or {}).get(iid)
-    if inst is None:
-        return None
-    for s in (inst or {}).get("sockets", []):
-        if isinstance(s, dict) and s.get("name") == socket_name and s.get("type") == "tcp":
-            port = s.get("port")
-            return port if isinstance(port, int) else None
+    for prog_copies in (entry.get("copies") or {}).values():
+        copy = (prog_copies or {}).get(cid)
+        if copy is None:
+            continue
+        for s in (copy or {}).get("sockets", []):
+            if isinstance(s, dict) and s.get("name") == socket_name and s.get("type") == "tcp":
+                port = s.get("port")
+                return port if isinstance(port, int) else None
     return None
 
 
 def _module_tcp_port(module: str, socket_name: str) -> int | None:
     """Allocated TCP port of an installed module's socket, or None.
 
-    Resolves against the implicit "default" instance, so this only works for
-    non-instanceable modules (instanceable modules are proxied per instance —
-    see /proxy/<module>/inst/<iid>/<socket>/...).
+    Resolves the module-level (base program) port; copies of copyable
+    programs are proxied per copy — see /proxy/<module>/copy/<cid>/<socket>/...
     """
-    return _instance_tcp_port(module, "default", socket_name)
+    entry = load_registry().get("modules", {}).get(module)
+    if entry is None:
+        return None
+    for s in entry.get("manifest", {}).get("sockets", []):
+        if s.get("name") == socket_name and s.get("type") == "tcp":
+            port = s.get("port")
+            return port if isinstance(port, int) else None
+    return None
 
 
 def _proxy_options_response():
@@ -476,12 +481,6 @@ def _proxy_to_port(port: int, rest: str, desc: str):
 def module_socket_proxy(module, socket_name, rest):
     port = _module_tcp_port(module, socket_name)
     if port is None:
-        entry = load_registry().get("modules", {}).get(module)
-        if entry is not None and entry.get("manifest", {}).get("instance"):
-            return jsonify({
-                "error": f"module '{module}' is instanceable — proxy per "
-                         f"instance at /proxy/{module}/inst/<iid>/{socket_name}/..."
-            }), 404
         return jsonify({
             "error": f"no such module tcp socket: {module}/{socket_name}"
         }), 404
@@ -491,20 +490,20 @@ def module_socket_proxy(module, socket_name, rest):
     return _proxy_to_port(port, rest, f"{module}/{socket_name}")
 
 
-@app.route("/proxy/<module>/inst/<iid>/<socket_name>/", defaults={"rest": ""},
+@app.route("/proxy/<module>/copy/<cid>/<socket_name>/", defaults={"rest": ""},
            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-@app.route("/proxy/<module>/inst/<iid>/<socket_name>/<path:rest>",
+@app.route("/proxy/<module>/copy/<cid>/<socket_name>/<path:rest>",
            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-def module_instance_socket_proxy(module, iid, socket_name, rest):
-    port = _instance_tcp_port(module, iid, socket_name)
+def module_copy_socket_proxy(module, cid, socket_name, rest):
+    port = _copy_tcp_port(module, cid, socket_name)
     if port is None:
         return jsonify({
-            "error": f"no such module instance tcp socket: {module}/{iid}/{socket_name}"
+            "error": f"no such program copy tcp socket: {module}/{cid}/{socket_name}"
         }), 404
 
     if request.method == "OPTIONS":
         return _proxy_options_response()
-    return _proxy_to_port(port, rest, f"{module}/{iid}/{socket_name}")
+    return _proxy_to_port(port, rest, f"{module}/{cid}/{socket_name}")
 
 # ── Viewfinder API ────────────────────────────────────────────────────────────
 
@@ -602,23 +601,30 @@ def api_settings_post():
 # ── Recordings ────────────────────────────────────────────────────────────────
 # Recording sources are module-driven: every installed module that declares
 # `recordings_subdir` in its manifest gets a recordings directory
-# (<recordings_dir>/<recordings_subdir>) and shows up as a source here.  For
-# instanceable modules each instance records to its own directory
-# (<recordings_subdir>-<iid>) and appears as its own source.  The dashboard's
-# PLAYBACK tab builds one inner tab per source — sources no installed module
-# declares simply do not exist.
+# (<recordings_dir>/<recordings_subdir>) and shows up as a source here.
+# Copies of copyable programs record to their own directory
+# (<recordings_subdir>-<cid>) and appear as their own sources.  The
+# dashboard's PLAYBACK tab builds one inner tab per source — sources no
+# installed module declares simply do not exist.
 
 def _recording_sources() -> list[dict]:
     """Recording sources declared by installed modules: [{name, module}]."""
     sources = []
     for mod_name, entry in load_registry().get("modules", {}).items():
         manifest = entry.get("manifest", {})
-        instanceable = bool(manifest.get("instance"))
-        for inst in (entry.get("instances") or {}).values():
-            sub = _instance_recordings_subdir(manifest, inst or {})
-            if sub:
-                label = f"{mod_name} ({(inst or {}).get('id')})" if instanceable else mod_name
-                sources.append({"name": sub, "module": label})
+        sub = manifest.get("recordings_subdir")
+        if isinstance(sub, str) and sub:
+            sources.append({"name": sub, "module": mod_name})
+        for p in manifest.get("programs", []):
+            if not isinstance(p, dict) or "name" not in p:
+                continue
+            for cid in ((entry.get("copies") or {}).get(p["name"])) or {}:
+                csub = _copy_recordings_subdir(manifest, p, cid)
+                if csub:
+                    sources.append({
+                        "name": csub,
+                        "module": f"{mod_name} ({p['name']}/{cid})",
+                    })
     sources.sort(key=lambda s: s["name"])
     return sources
 
@@ -796,7 +802,7 @@ install_lock = threading.Lock()   # one install job at a time
 
 def _job_log(job: dict | None, line: str) -> None:
     if job is None:
-        return  # instance operations outside install jobs have no job log
+        return  # copy operations outside install jobs have no job log
     with module_jobs_lock:
         job["log"].append(str(line))
         if len(job["log"]) > _JOB_LOG_CAP:
@@ -833,10 +839,6 @@ def load_registry() -> dict:
     try:
         data = json.loads(path.read_text())
         if isinstance(data, dict) and isinstance(data.get("modules"), dict):
-            # Backfill implicit default instances for entries written before
-            # the instance system existed (persisted on the next save).
-            for name, entry in data["modules"].items():
-                _migrate_entry(name, entry)
             return data
     except (json.JSONDecodeError, OSError):
         pass
@@ -952,36 +954,6 @@ def validate_manifest(m) -> list[str]:
             elif atype == "str" and not isinstance(a["default"], str):
                 errors.append(f"argument '{an}' default must be a string")
 
-    # Instanceable modules opt in by naming the argument that identifies a
-    # unique copy (e.g. the serial port).  Without this key the module runs
-    # exactly one implicit instance and nothing about its behaviour changes.
-    instanceable = False
-    inst = m.get("instance")
-    if inst is not None:
-        if not isinstance(inst, dict):
-            errors.append("'instance' must be an object")
-        else:
-            ia = inst.get("argument")
-            if not isinstance(ia, str) or not ia:
-                errors.append("'instance.argument' is required and must name an argument")
-            else:
-                idecl = next(
-                    (a for a in args if isinstance(a, dict) and a.get("name") == ia),
-                    None,
-                )
-                if idecl is None:
-                    errors.append(
-                        f"'instance.argument' references undeclared argument '{ia}'"
-                    )
-                elif idecl.get("type") not in ("str", "int"):
-                    errors.append(
-                        f"'instance.argument' '{ia}' must be of type str or int"
-                    )
-                else:
-                    instanceable = True
-            if "label" in inst and not isinstance(inst["label"], str):
-                errors.append("'instance.label' must be a string")
-
     sock_names: set[str] = set()
     sockets = m.get("sockets", [])
     if not isinstance(sockets, list):
@@ -998,9 +970,9 @@ def validate_manifest(m) -> list[str]:
                 continue
             if sn in seen_sock_names:
                 errors.append(f"duplicate socket name '{sn}'")
-            if sn == "inst":
-                # Reserved: /proxy/<module>/inst/<iid>/<socket>/... would clash.
-                errors.append("socket name 'inst' is reserved")
+            if sn == "copy":
+                # Reserved: /proxy/<module>/copy/<cid>/<socket>/... would clash.
+                errors.append("socket name 'copy' is reserved")
             seen_sock_names.add(sn)
             sock_names.add(sn)
             stype = s.get("type")
@@ -1008,28 +980,22 @@ def validate_manifest(m) -> list[str]:
                 errors.append(f"socket '{sn}' type must be 'tcp' or 'unix'")
             elif stype == "tcp":
                 # 'port' is optional: when omitted, eventide allocates one
-                # from --port-pool (per instance for instanceable modules,
-                # otherwise at install time).
+                # from --port-pool at install time (copies of copyable
+                # programs get their own per-copy ports).
                 port = s.get("port")
                 if port is not None and (
                     not isinstance(port, int) or not (1 <= port <= 65535)
                 ):
                     errors.append(f"socket '{sn}' tcp 'port' must be 1-65535 when given")
             else:
-                # 'path' is optional: when omitted, eventide generates one
-                # (per instance for instanceable modules).  Instanceable
-                # modules must NOT pin a path — copies would collide.
+                # 'path' is optional: when omitted, eventide generates one at
+                # install time (copies of copyable programs always get
+                # per-copy generated paths regardless).
                 spath = s.get("path")
-                if spath is not None:
-                    if not isinstance(spath, str) or not spath.startswith("/"):
-                        errors.append(
-                            f"socket '{sn}' unix 'path' must be absolute when given"
-                        )
-                    elif instanceable:
-                        errors.append(
-                            f"socket '{sn}': instanceable modules must not declare "
-                            "a unix 'path' — paths are generated per instance"
-                        )
+                if spath is not None and (
+                    not isinstance(spath, str) or not spath.startswith("/")
+                ):
+                    errors.append(f"socket '{sn}' unix 'path' must be absolute when given")
 
     programs = m.get("programs")
     if not isinstance(programs, list) or not programs:
@@ -1071,6 +1037,38 @@ def validate_manifest(m) -> list[str]:
                         )
                 else:
                     errors.append(f"program '{pn}' uses unknown placeholder '{{{ph}}}'")
+            # A program may opt into being copyable by naming the argument
+            # that identifies a unique copy (e.g. the serial port).  Without
+            # this key the program runs exactly once, as before.
+            pspec = p.get("instance")
+            if pspec is not None:
+                if not isinstance(pspec, dict):
+                    errors.append(f"program '{pn}' 'instance' must be an object")
+                else:
+                    ia = pspec.get("argument")
+                    if not isinstance(ia, str) or not ia:
+                        errors.append(
+                            f"program '{pn}' instance.argument is required and "
+                            "must name an argument"
+                        )
+                    else:
+                        idecl = next(
+                            (a for a in args
+                             if isinstance(a, dict) and a.get("name") == ia),
+                            None,
+                        )
+                        if idecl is None:
+                            errors.append(
+                                f"program '{pn}' instance.argument references "
+                                f"undeclared argument '{ia}'"
+                            )
+                        elif idecl.get("type") not in ("str", "int"):
+                            errors.append(
+                                f"program '{pn}' instance.argument '{ia}' must "
+                                "be of type str or int"
+                            )
+                    if "label" in pspec and not isinstance(pspec["label"], str):
+                        errors.append(f"program '{pn}' instance.label must be a string")
 
     ui = m.get("ui", [])
     if not isinstance(ui, list):
@@ -1243,10 +1241,11 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
         for s in e["manifest"].get("sockets", []):
             if s.get("type") == "tcp" and isinstance(s.get("port"), int):
                 existing_ports.setdefault(s["port"], ename)
-        for ei in (e.get("instances") or {}).values():
-            for s in (ei or {}).get("sockets", []):
-                if isinstance(s, dict) and s.get("type") == "tcp" and isinstance(s.get("port"), int):
-                    existing_ports.setdefault(s["port"], ename)
+        for prog_copies in (e.get("copies") or {}).values():
+            for c in (prog_copies or {}).values():
+                for s in (c or {}).get("sockets", []):
+                    if isinstance(s, dict) and s.get("type") == "tcp" and isinstance(s.get("port"), int):
+                        existing_ports.setdefault(s["port"], ename)
     for s in manifest.get("sockets", []):
         if (
             s.get("type") == "tcp"
@@ -1263,11 +1262,10 @@ def conflict_errors(manifest: dict, registry: dict) -> list[str]:
 # ── Port allocation ───────────────────────────────────────────────────────────
 # TCP ports are platform-assigned: a module socket may request an explicit
 # 'port' (honoured if free), but the default is to leave it out and let
-# eventide pick one from --port-pool.  For non-instanceable modules the
-# allocated port is written back into the manifest at install time (so
-# modules.json, /api/modules, and every later re-render all see the same
-# number); for instanceable modules ports are allocated per instance and live
-# on the registry's instance entries instead.
+# eventide pick one from --port-pool.  The allocated port is written back into
+# the manifest at install time (so modules.json, /api/modules, and every later
+# re-render all see the same number); copies of copyable programs get their
+# own pool-allocated ports at copy-creation time, stored on the copy.
 
 def _port_pool() -> range:
     try:
@@ -1291,7 +1289,7 @@ def _port_free(port: int) -> bool:
 
 
 def _used_ports(registry: dict, extra_manifest: dict | None = None) -> set[int]:
-    """Every TCP port already claimed: baked manifests + all instance sockets."""
+    """Every TCP port already claimed: baked manifests + all copy sockets."""
     used: set[int] = set()
     manifests = [e.get("manifest", {}) for e in registry.get("modules", {}).values()]
     if extra_manifest is not None:
@@ -1301,10 +1299,11 @@ def _used_ports(registry: dict, extra_manifest: dict | None = None) -> set[int]:
             if isinstance(s, dict) and isinstance(s.get("port"), int):
                 used.add(s["port"])
     for entry in registry.get("modules", {}).values():
-        for inst in (entry.get("instances") or {}).values():
-            for s in (inst or {}).get("sockets", []):
-                if isinstance(s, dict) and isinstance(s.get("port"), int):
-                    used.add(s["port"])
+        for prog_copies in (entry.get("copies") or {}).values():
+            for c in (prog_copies or {}).values():
+                for s in (c or {}).get("sockets", []):
+                    if isinstance(s, dict) and isinstance(s.get("port"), int):
+                        used.add(s["port"])
     return used
 
 
@@ -1332,182 +1331,148 @@ def _allocate_ports(manifest: dict, registry: dict, job: dict) -> None:
 
 def _generate_unix_paths(manifest: dict, module_name: str, job: dict | None) -> None:
     """Fill in generated paths for unix sockets that don't declare one
-    (non-instanceable modules — instanceable modules get paths per instance)."""
+    (the base programs' sockets — copies always get per-copy paths)."""
     for s in manifest.get("sockets", []):
         if isinstance(s, dict) and s.get("type") == "unix" and not s.get("path"):
             s["path"] = f"/tmp/eventide-{module_name}-{s.get('name')}.sock"
             _job_log(job, f"generated unix path {s['path']} for socket '{s.get('name')}'")
 
 
-# ── Module instances ──────────────────────────────────────────────────────────
-# A manifest that declares `instance: {"argument": "<arg>"}` is instanceable:
-# eventide runs one copy of its programs per instance value (e.g. the serial
-# port).  Everything about an instance — its argument values, allocated TCP
-# ports, generated unix socket paths, supervisor program names — is stored on
-# the registry entry's `instances` map.  Non-instanceable modules get a single
-# implicit "default" instance mirroring the manifest, so every consumer can
-# treat modules uniformly.
+# ── Program copies (per-program instancing) ───────────────────────────────────
+# A program whose manifest entry declares `instance: {"argument": "<arg>"}` is
+# COPYABLE: beyond the base program (which always runs once, with the
+# argument's default and the module-level sockets), the operator can add
+# copies of just that program — one per value of the instance argument (e.g.
+# one per serial port).  Copies live on the registry entry as
+# {"copies": {"<program>": {"<cid>": {...}}}}; each copy carries its argument
+# values and its own resolved sockets, and is rendered into the module's
+# single conf file as <program>-<cid> right after its base program.
 
-def _instance_id(value) -> str | None:
-    """Slug identifying an instance, derived from its value
+def _copy_id(value) -> str | None:
+    """Slug identifying a copy, derived from its value
     (/dev/ttyS1 → dev-ttys1).  None when the value has no usable characters."""
     slug = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
     return slug or None
 
 
-def _default_instance(manifest: dict, name: str, conf_file: str | None,
-                      created_at) -> dict:
-    """The implicit instance of a non-instanceable module — mirrors the
-    (port-baked) manifest exactly."""
-    return {
-        "id": "default",
-        "value": None,
-        "args": {
-            a["name"]: a.get("default")
-            for a in manifest.get("arguments", [])
-            if isinstance(a, dict) and "name" in a
-        },
-        "sockets": manifest.get("sockets", []),
-        "programs": [
-            p["name"] for p in manifest.get("programs", [])
-            if isinstance(p, dict) and "name" in p
-        ],
-        "conf_file": conf_file or str(
-            Path(cfg.get("supervisor_conf_d", "/etc/supervisor/conf.d"))
-            / f"module-{name}.conf"
-        ),
-        "created_at": created_at,
-    }
+def _copy_program_name(program: str, cid: str) -> str:
+    return f"{program}-{cid}"
 
 
-def _migrate_entry(name: str, entry: dict) -> None:
-    """Backfill the default instance for pre-instances registry entries."""
-    if not isinstance(entry, dict) or not isinstance(entry.get("manifest"), dict):
-        return
-    # Only entries written before the instance system existed lack the key;
-    # an empty dict is a valid state (all instances removed) — leave it alone.
-    if isinstance(entry.get("instances"), dict):
-        return
-    entry["instances"] = {
-        "default": _default_instance(
-            entry["manifest"], name, entry.get("conf_file"),
-            entry.get("installed_at"),
-        )
-    }
+def _program_socket_names(program: dict) -> list[str]:
+    """Socket names a program's command/directory references via {socket:<name>}."""
+    text = str(program.get("command", "")) + str(program.get("directory", ""))
+    return re.findall(r"\{socket:([^}]*)\}", text)
 
 
 def _entry_program_names(entry: dict) -> list[str]:
-    """All supervisor program names a registry entry owns (every instance)."""
-    names: list[str] = []
-    for inst in (entry.get("instances") or {}).values():
-        names.extend((inst or {}).get("programs") or [])
+    """All supervisor program names a registry entry owns (base + copies)."""
+    manifest = entry.get("manifest", {})
+    names = [
+        p["name"] for p in manifest.get("programs", [])
+        if isinstance(p, dict) and "name" in p
+    ]
+    for prog, copies in (entry.get("copies") or {}).items():
+        names.extend(_copy_program_name(prog, cid) for cid in (copies or {}))
     return names
 
 
-def _program_names(manifest: dict, inst: dict | None = None) -> list[str]:
-    """Program names for one instance — suffixed with -<iid> when the module
-    is instanceable (<program>-<iid>)."""
-    suffix = f"-{inst['id']}" if inst and manifest.get("instance") else ""
-    return [
-        p["name"] + suffix
-        for p in manifest.get("programs", [])
-        if isinstance(p, dict) and "name" in p
-    ]
-
-
-def _instance_recordings_subdir(manifest: dict, inst: dict) -> str | None:
-    """Recordings subdir for one instance: <sub>-<iid> for instanceable
-    modules (each copy records to its own directory), <sub> otherwise."""
+def _copy_recordings_subdir(manifest: dict, program: dict, cid: str) -> str | None:
+    """A copy records to <recordings_subdir>-<cid> — but only when its
+    program actually references the recordings dir."""
     sub = manifest.get("recordings_subdir")
     if not isinstance(sub, str) or not sub:
         return None
-    if manifest.get("instance"):
-        return f"{sub}-{inst['id']}"
-    return sub
+    text = str(program.get("command", "")) + str(program.get("directory", ""))
+    if "{recordings_subdir}" not in text:
+        return None
+    return f"{sub}-{cid}"
 
 
-def _instance_manifest(manifest: dict, inst: dict) -> dict:
-    """The manifest overlaid with an instance's values, for rendering: the
-    instance's sockets (allocated ports / generated paths) replace the
-    manifest's, its argument values become the defaults, and an instanceable
-    module's recordings subdir gains the -<iid> suffix."""
+def _copy_manifest(manifest: dict, program: dict, copy: dict) -> dict:
+    """The manifest overlaid with a copy's values, for rendering the copy's
+    program block: the copy's argument values become the defaults, its
+    resolved sockets override the same-named module sockets, and the
+    recordings subdir gains the -<cid> suffix when the program uses it."""
     eff = dict(manifest)
-    eff["sockets"] = inst.get("sockets", [])
-    values = inst.get("args", {})
+    copy_sock_names = {
+        s.get("name") for s in copy.get("sockets", []) if isinstance(s, dict)
+    }
+    eff["sockets"] = list(copy.get("sockets", [])) + [
+        s for s in manifest.get("sockets", [])
+        if isinstance(s, dict) and s.get("name") not in copy_sock_names
+    ]
+    values = copy.get("args", {})
     eff["arguments"] = [
         {**a, "default": values[a["name"]]}
         if isinstance(a, dict) and a.get("name") in values else a
         for a in manifest.get("arguments", [])
     ]
-    sub = _instance_recordings_subdir(manifest, inst)
+    sub = _copy_recordings_subdir(manifest, program, copy["id"])
     if sub:
         eff["recordings_subdir"] = sub
     return eff
 
 
-def _setup_instance_sockets(manifest: dict, module_name: str, registry: dict,
-                            inst: dict, job: dict | None) -> None:
-    """Resolve an instance's sockets: allocate a TCP port per tcp socket
-    (honouring an explicit 'port' request when free) and generate a unix
-    path per unix socket."""
+def _setup_copy_sockets(manifest: dict, module_name: str, program: dict,
+                        registry: dict, copy: dict, job: dict | None) -> None:
+    """Resolve a copy's sockets: a fresh pool TCP port and a generated unix
+    path per socket its program references.  (Explicit 'port'/'path' values
+    belong to the base program — copies always allocate/generate.)"""
     used = _used_ports(registry)
+    by_name = {
+        s.get("name"): s for s in manifest.get("sockets", []) if isinstance(s, dict)
+    }
     resolved = []
-    for s in manifest.get("sockets", []):
-        if not isinstance(s, dict):
-            continue
+    for sname in dict.fromkeys(_program_socket_names(program)):
+        s = by_name.get(sname)
+        if s is None:
+            continue  # validation catches undeclared sockets at install
         s2 = dict(s)
         if s2.get("type") == "tcp":
-            port = s2.get("port")
-            if isinstance(port, int):
-                if port in used or not _port_free(port):
-                    raise RuntimeError(
-                        f"tcp port {port} for socket '{s2.get('name')}' "
-                        "is already in use"
-                    )
-            else:
-                port = _allocate_one_port(used, job, s2.get("name"))
-            s2["port"] = port
-            used.add(port)
+            s2["port"] = _allocate_one_port(used, job, sname)
+            used.add(s2["port"])
         else:
             s2["path"] = (
-                f"/tmp/eventide-{module_name}-{inst['id']}-{s2.get('name')}.sock"
+                f"/tmp/eventide-{module_name}-{copy['id']}-{sname}.sock"
             )
         resolved.append(s2)
-    inst["sockets"] = resolved
+    copy["sockets"] = resolved
 
 
-def _build_instance(manifest: dict, name: str, registry: dict, value,
-                    args: dict | None, job: dict | None) -> dict:
-    """Validate and assemble a new instance of an instanceable module
-    (no side effects: no conf written, registry untouched)."""
-    spec = manifest.get("instance") or {}
-    iid = _instance_id(value)
-    if iid is None:
-        raise RuntimeError(f"instance value {value!r} produces an empty instance id")
-    entry = registry.get("modules", {}).get(name) or {}
-    for existing in (entry.get("instances") or {}).values():
-        if (existing or {}).get("value") == value:
-            raise RuntimeError(f"an instance with value {value!r} already exists")
-        if (existing or {}).get("id") == iid:
+def _build_copy(manifest: dict, module_name: str, program: dict,
+                registry: dict, value, args: dict | None,
+                job: dict | None) -> dict:
+    """Validate and assemble a new copy of a copyable program (no side
+    effects: registry untouched, no conf written)."""
+    spec = program.get("instance") or {}
+    cid = _copy_id(value)
+    if cid is None:
+        raise RuntimeError(f"copy value {value!r} produces an empty copy id")
+    entry = registry.get("modules", {}).get(module_name) or {}
+    existing = ((entry.get("copies") or {}).get(program["name"])) or {}
+    for other in existing.values():
+        if (other or {}).get("value") == value:
+            raise RuntimeError(f"a copy with value {value!r} already exists")
+        if (other or {}).get("id") == cid:
             raise RuntimeError(
-                f"instance value {value!r} collides with existing instance "
-                f"'{iid}' ({(existing or {}).get('value')!r})"
+                f"copy value {value!r} collides with existing copy "
+                f"'{cid}' ({(other or {}).get('value')!r})"
             )
 
-    programs = _program_names(manifest, {"id": iid})
+    pname = _copy_program_name(program["name"], cid)
     taken = {
         pn
         for e in registry.get("modules", {}).values()
         for pn in _entry_program_names(e)
     }
-    clashes = [pn for pn in programs if pn in taken]
-    if clashes:
+    if pname in taken:
         raise RuntimeError(
-            f"program name(s) already used by another module: {', '.join(clashes)}"
+            f"program name '{pname}' is already used by another module"
         )
 
-    inst = {
-        "id": iid,
+    copy = {
+        "id": cid,
         "value": value,
         "args": {
             a["name"]: a.get("default")
@@ -1515,32 +1480,28 @@ def _build_instance(manifest: dict, name: str, registry: dict, value,
             if isinstance(a, dict) and "name" in a
         },
         "sockets": [],
-        "programs": programs,
-        "conf_file": str(
-            Path(cfg["supervisor_conf_d"]) / f"module-{name}-{iid}.conf"
-        ),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    inst["args"][spec.get("argument")] = value
+    copy["args"][spec.get("argument")] = value
     if args:
-        inst["args"].update(args)
-        inst["args"][spec.get("argument")] = value
-    _setup_instance_sockets(manifest, name, registry, inst, job)
-    return inst
+        copy["args"].update(args)
+        copy["args"][spec.get("argument")] = value  # pinned
+    _setup_copy_sockets(manifest, module_name, program, registry, copy, job)
+    return copy
 
 
-def _render_instance_conf(name: str, entry: dict, inst: dict) -> None:
-    """Render and write an instance's supervisor conf file."""
+def _render_module_conf(name: str, entry: dict) -> None:
+    """Render and write the module's supervisor conf: base programs plus all
+    copies, from the registry entry's manifest and copies map."""
     manifest = entry["manifest"]
-    suffix = f"-{inst['id']}" if manifest.get("instance") else ""
-    conf_file = inst.get("conf_file") or str(
-        Path(cfg["supervisor_conf_d"]) / f"module-{name}{suffix}.conf"
+    conf_file = entry.get("conf_file") or str(
+        Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
     )
     _atomic_write(
         Path(conf_file),
         render_module_conf(
-            _instance_manifest(manifest, inst), name,
-            entry.get("repo_url", ""), program_suffix=suffix,
+            manifest, name, entry.get("repo_url", ""),
+            copies=entry.get("copies"),
         ),
     )
 
@@ -1574,33 +1535,50 @@ def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
     return out
 
 
+def _program_conf_lines(p: dict, manifest: dict, module_name: str,
+                        suffix: str = "") -> list[str]:
+    """One [program:...] block.  suffix is "-<cid>" for copies of copyable
+    programs; copies render from a copy-overlaid manifest (see
+    _copy_manifest) but share the base program's supervisor settings."""
+    lines = [f"[program:{p['name']}{suffix}]"]
+    lines.append(f"command={render_placeholders(p['command'], manifest, module_name)}")
+    lines.append(
+        "directory="
+        + render_placeholders(p.get("directory", "{install_dir}"), manifest, module_name)
+    )
+    lines.append(f"autostart={'true' if p.get('autostart', True) else 'false'}")
+    lines.append(f"autorestart={'true' if p.get('autorestart', True) else 'false'}")
+    lines.append(f"startretries={int(p.get('startretries', 10000))}")
+    lines.append(f"priority={int(p.get('priority', 10))}")
+    user = p.get("user", "root")
+    lines.append(f"user={user}")
+    # supervisord gives programs a bare environment — unlike systemd it
+    # does not set HOME, which breaks tools that need a per-user dir
+    # (e.g. MAVProxy's ~/.mavproxy).  Provide it explicitly.
+    home = "/root" if user == "root" else f"/home/{user}"
+    lines.append(f'environment=HOME="{home}"')
+    lines.append("stdout_logfile=/var/log/supervisor/%(program_name)s.log")
+    lines.append("")
+    return lines
+
+
 def render_module_conf(manifest: dict, module_name: str, repo_url: str,
-                       program_suffix: str = "") -> str:
+                       copies: dict | None = None) -> str:
     lines = [
         f"; Generated by the eventide module manager from {repo_url}",
         "; Do not edit by hand — changes are lost on reinstall.",
     ]
     for p in manifest["programs"]:
-        # program_suffix is "-<iid>" for instances of instanceable modules.
-        lines.append(f"[program:{p['name']}{program_suffix}]")
-        lines.append(f"command={render_placeholders(p['command'], manifest, module_name)}")
-        lines.append(
-            "directory="
-            + render_placeholders(p.get("directory", "{install_dir}"), manifest, module_name)
-        )
-        lines.append(f"autostart={'true' if p.get('autostart', True) else 'false'}")
-        lines.append(f"autorestart={'true' if p.get('autorestart', True) else 'false'}")
-        lines.append(f"startretries={int(p.get('startretries', 10000))}")
-        lines.append(f"priority={int(p.get('priority', 10))}")
-        user = p.get("user", "root")
-        lines.append(f"user={user}")
-        # supervisord gives programs a bare environment — unlike systemd it
-        # does not set HOME, which breaks tools that need a per-user dir
-        # (e.g. MAVProxy's ~/.mavproxy).  Provide it explicitly.
-        home = "/root" if user == "root" else f"/home/{user}"
-        lines.append(f'environment=HOME="{home}"')
-        lines.append("stdout_logfile=/var/log/supervisor/%(program_name)s.log")
-        lines.append("")
+        lines.extend(_program_conf_lines(p, manifest, module_name))
+        # Copies of this program (per-program instancing) render right after
+        # their base program, named <program>-<cid>.
+        for copy in ((copies or {}).get(p["name"]) or {}).values():
+            lines.extend(
+                _program_conf_lines(
+                    p, _copy_manifest(manifest, p, copy), module_name,
+                    suffix=f"-{copy['id']}",
+                )
+            )
     return "\n".join(lines)
 
 
@@ -1795,11 +1773,11 @@ def supervisor_statuses() -> dict[str, dict]:
     return result
 
 
-def _verify_programs(job: dict, manifest: dict, inst: dict | None = None) -> None:
+def _verify_programs(job: dict, manifest: dict) -> None:
     if not shutil.which("supervisorctl"):
         job["warnings"].append("supervisorctl not available; skipped program verification")
         return
-    wanted = _program_names(manifest, inst)
+    wanted = [p["name"] for p in manifest.get("programs", [])]
     states: dict[str, str | None] = {}
     deadline = time.time() + 10
     while time.time() < deadline:
@@ -1864,12 +1842,10 @@ def _run_install_job(job: dict) -> None:
         if errors:
             raise RuntimeError("; ".join(errors))
         # Allocate TCP ports + generate unix socket paths before anything
-        # renders the manifest.  Instanceable modules skip this: ports and
-        # unix paths are allocated per instance instead (manifest sockets
-        # stay unallocated).
-        if not manifest.get("instance"):
-            _allocate_ports(manifest, registry, job)
-            _generate_unix_paths(manifest, name, job)
+        # renders the manifest (copies of copyable programs get their own
+        # per-copy ports/paths later, at copy-creation time).
+        _allocate_ports(manifest, registry, job)
+        _generate_unix_paths(manifest, name, job)
 
         module_dir = Path(cfg["packages_dir"]) / name
         if module_dir.exists():
@@ -1951,9 +1927,7 @@ def _run_install_job(job: dict) -> None:
             copied_artifacts.append(str(dst_path))
             _job_log(job, f"copied {src} → {dst_path}")
         sub = manifest.get("recordings_subdir")
-        instanceable = bool(manifest.get("instance"))
-        instances: dict[str, dict] = {}
-        if sub and not instanceable:
+        if sub:
             rec_dir = Path(cfg["recordings_dir"]) / sub
             rec_dir.mkdir(parents=True, exist_ok=True)
             _job_log(job, f"created recordings dir {rec_dir}")
@@ -1965,74 +1939,31 @@ def _run_install_job(job: dict) -> None:
 
         # ── Supervisor config ─────────────────────────────────────────────
         _job_status(job, "configuring")
-        if instanceable:
-            # Auto-create the first instance from the instance argument's
-            # default value, so install behaves like any other module: its
-            # programs come up immediately (wrong default? fix it from the
-            # MODULES tab afterwards).
-            spec = manifest["instance"]
-            default_value = next(
-                (
-                    a.get("default")
-                    for a in manifest.get("arguments", [])
-                    if isinstance(a, dict) and a.get("name") == spec.get("argument")
-                ),
-                None,
-            )
-            first = _build_instance(
-                manifest, name, registry, default_value, None, job
-            )
-            instances[first["id"]] = first
-            _job_log(
-                job,
-                f"created instance '{first['id']}' ({spec.get('argument')}"
-                f"={default_value!r})",
-            )
-            rec_sub = _instance_recordings_subdir(manifest, first)
-            if rec_sub:
-                rec_dir = Path(cfg["recordings_dir"]) / rec_sub
-                rec_dir.mkdir(parents=True, exist_ok=True)
-                _job_log(job, f"created recordings dir {rec_dir}")
-            conf_path = Path(first["conf_file"])
-            _atomic_write(
-                conf_path,
-                render_module_conf(
-                    _instance_manifest(manifest, first), name, job["repo_url"],
-                    program_suffix=f"-{first['id']}",
-                ),
-            )
-        else:
-            conf_path = Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
-            _atomic_write(
-                conf_path,
-                render_module_conf(manifest, name, job["repo_url"]),
-            )
+        conf_path = Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+        _atomic_write(
+            conf_path,
+            render_module_conf(manifest, name, job["repo_url"]),
+        )
         _job_log(job, f"wrote {conf_path}")
         _supervisor_apply(job)
 
         # ── Verify & register ─────────────────────────────────────────────
         _job_status(job, "verifying")
-        _verify_programs(job, manifest, next(iter(instances.values()), None))
+        _verify_programs(job, manifest)
 
         registry = load_registry()
-        installed_at = datetime.now(timezone.utc).isoformat()
-        entry = {
+        registry.setdefault("modules", {})[name] = {
             "manifest": manifest,
             "repo_url": job["repo_url"],
             "ref": job.get("ref"),
             "commit": commit,
-            "installed_at": installed_at,
+            "installed_at": datetime.now(timezone.utc).isoformat(),
             "artifacts": copied_artifacts,
             "conf_file": str(conf_path),
-            "instances": (
-                instances if instanceable else {
-                    "default": _default_instance(
-                        manifest, name, str(conf_path), installed_at
-                    )
-                }
-            ),
+            # Copies of copyable programs (per-program instancing) are added
+            # later via the copies API.
+            "copies": {},
         }
-        registry.setdefault("modules", {})[name] = entry
         save_registry(registry)
         registered = True
         _job_status(job, "done")
@@ -2084,15 +2015,11 @@ def _uninstall_module(name: str) -> dict | None:
             except (subprocess.TimeoutExpired, OSError):
                 pass  # best-effort stop
 
-    conf_paths = {
-        (inst or {}).get("conf_file")
-        for inst in (entry.get("instances") or {}).values()
-    }
-    conf_paths.add(entry.get("conf_file"))
-    conf_paths.add(str(Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"))
-    for conf in conf_paths:
-        if conf:
-            Path(conf).unlink(missing_ok=True)
+    conf_path = Path(
+        entry.get("conf_file")
+        or Path(cfg["supervisor_conf_d"]) / f"module-{name}.conf"
+    )
+    conf_path.unlink(missing_ok=True)
     if shutil.which("supervisorctl"):
         for args in (("reread",), ("update",)):
             try:
@@ -2118,42 +2045,23 @@ def api_modules_list():
     modules = []
     for name, entry in sorted(registry.get("modules", {}).items()):
         m = entry["manifest"]
-        prog_templates = {
-            p["name"]: p for p in m.get("programs", []) if isinstance(p, dict)
-        }
+        copies_by_prog = entry.get("copies") or {}
 
-        def _prog_info(pname: str, inst: dict | None = None) -> dict:
-            template = pname
-            if inst is not None and m.get("instance"):
-                suffix = f"-{inst['id']}"
-                if pname.endswith(suffix):
-                    template = pname[: -len(suffix)]
-            t = prog_templates.get(template, {})
+        def _copy_info(p: dict, copy: dict) -> dict:
+            cname = _copy_program_name(p["name"], copy["id"])
             return {
-                "name": pname,
-                "status": statuses.get(pname, {}).get("status", "UNKNOWN"),
-                "status_detail": statuses.get(pname, {}).get("description", ""),
-                # Supervisor settings (editable via the args form)
-                "autostart": t.get("autostart", True),
-                "autorestart": t.get("autorestart", True),
-                "startretries": int(t.get("startretries", 10000)),
-                "priority": int(t.get("priority", 10)),
+                "id": copy["id"],
+                "value": copy.get("value"),
+                "args": copy.get("args", {}),
+                "sockets": copy.get("sockets", []),
+                "recordings_subdir": _copy_recordings_subdir(m, p, copy["id"]),
+                "created_at": copy.get("created_at"),
+                # The copy's supervisor program (<program>-<cid>)
+                "name": cname,
+                "status": statuses.get(cname, {}).get("status", "UNKNOWN"),
+                "status_detail": statuses.get(cname, {}).get("description", ""),
             }
 
-        instances = []
-        for iid, inst in sorted((entry.get("instances") or {}).items()):
-            inst = inst or {}
-            instances.append({
-                "id": iid,
-                "value": inst.get("value"),
-                "args": inst.get("args", {}),
-                "sockets": inst.get("sockets", []),
-                "recordings_subdir": _instance_recordings_subdir(m, inst),
-                "created_at": inst.get("created_at"),
-                "programs": [
-                    _prog_info(pname, inst) for pname in inst.get("programs", [])
-                ],
-            })
         modules.append({
             "name": name,
             "version": m.get("version"),
@@ -2162,14 +2070,28 @@ def api_modules_list():
             "repo_url": entry.get("repo_url"),
             "installed_at": entry.get("installed_at"),
             "recordings_subdir": m.get("recordings_subdir"),
-            "instance": m.get("instance"),
-            "instances": instances,
             "ui": m.get("ui", []),
             "arguments": m.get("arguments", []),
             "sockets": m.get("sockets", []),
-            # Flat program list across instances — for non-instanceable
-            # modules this is exactly the manifest's programs, as before.
-            "programs": [pi for inst in instances for pi in inst["programs"]],
+            "programs": [
+                {
+                    "name": p["name"],
+                    "status": statuses.get(p["name"], {}).get("status", "UNKNOWN"),
+                    "status_detail": statuses.get(p["name"], {}).get("description", ""),
+                    # Supervisor settings (editable via the args form)
+                    "autostart": p.get("autostart", True),
+                    "autorestart": p.get("autorestart", True),
+                    "startretries": int(p.get("startretries", 10000)),
+                    "priority": int(p.get("priority", 10)),
+                    # Per-program instancing: spec (or None) + live copies
+                    "instance": p.get("instance"),
+                    "copies": [
+                        _copy_info(p, c)
+                        for c in (copies_by_prog.get(p["name"]) or {}).values()
+                    ],
+                }
+                for p in m.get("programs", [])
+            ],
         })
     return jsonify({"modules": modules})
 
@@ -2403,23 +2325,19 @@ def api_modules_args(name):
     """Update a module's argument values and reload its supervisor config.
 
     The new values become the stored defaults in the registry manifest, the
-    module's conf.d file is re-rendered from them, and supervisor is told to
-    reread/update — which restarts any running programs whose command line
-    changed.  An optional "programs" object updates supervisor settings
-    (autostart, autorestart, startretries, priority) per program the same way.
-    Instanceable modules are edited per instance instead — see
-    /api/modules/<name>/instances/<iid>/args.
+    module's conf.d file is re-rendered from them (including every copy of
+    its copyable programs), and supervisor is told to reread/update — which
+    restarts any running programs whose command line changed.  An optional
+    "programs" object updates supervisor settings (autostart, autorestart,
+    startretries, priority) per program the same way; copies share their
+    base program's settings.  Per-copy argument overrides go through
+    /api/modules/<name>/programs/<prog>/copies/<cid>/args.
     """
     registry = load_registry()
     entry = registry.get("modules", {}).get(name)
     if entry is None:
         return jsonify({"error": f"module not installed: {name}"}), 404
     manifest = entry["manifest"]
-    if manifest.get("instance"):
-        return jsonify({
-            "error": f"module '{name}' is instanceable — edit arguments per "
-                     f"instance via /api/modules/{name}/instances/<iid>/args"
-        }), 400
     data = request.get_json() or {}
     new_args = data.get("args")
     if not isinstance(new_args, dict):
@@ -2443,19 +2361,10 @@ def api_modules_args(name):
         if arg["name"] in updates:
             arg["default"] = updates[arg["name"]]
 
-    # Keep the implicit default instance in sync with the manifest, then
-    # re-render its conf (equivalent to rendering the manifest directly).
-    inst = (entry.get("instances") or {}).get("default")
-    if inst is None:
-        inst = _default_instance(
-            manifest, name, entry.get("conf_file"), entry.get("installed_at")
-        )
-        entry.setdefault("instances", {})["default"] = inst
-    inst.setdefault("args", {}).update(updates)
     try:
-        _render_instance_conf(name, entry, inst)
+        _render_module_conf(name, entry)
     except OSError as exc:
-        return jsonify({"error": f"failed to write {inst.get('conf_file')}: {exc}"}), 500
+        return jsonify({"error": f"failed to write conf file: {exc}"}), 500
     save_registry(registry)
 
     err = _supervisor_reread_update()
@@ -2468,16 +2377,38 @@ def api_modules_args(name):
     return jsonify(resp)
 
 
-# ── Module instances API ──────────────────────────────────────────────────────
+# ── Program copies API (per-program instancing) ───────────────────────────────
 
-@app.route("/api/modules/<name>/instances", methods=["POST"])
-def api_instances_create(name):
-    """Create (and start) an instance of an instanceable module.
+def _copyable_program(entry: dict, pname: str):
+    """(program, error_response) — the named program of a module, when it is
+    declared copyable; otherwise a ready-made error response."""
+    manifest = entry["manifest"]
+    prog = next(
+        (p for p in manifest.get("programs", [])
+         if isinstance(p, dict) and p.get("name") == pname),
+        None,
+    )
+    if prog is None:
+        return None, (jsonify({
+            "error": f"no such program: {pname}"
+        }), 404)
+    if not prog.get("instance"):
+        return None, (jsonify({
+            "error": f"program '{pname}' is not copyable (its manifest entry "
+                     "declares no 'instance' key)"
+        }), 400)
+    return prog, None
 
-    Body: {"value": "/dev/ttyS1", "args": {...}?} — value is the instance
-    identifier substituted into the instance argument (and slugified into the
-    instance id); args optionally overrides other argument defaults for this
-    instance.  TCP ports are allocated and unix paths generated now.
+
+@app.route("/api/modules/<name>/programs/<pname>/copies", methods=["POST"])
+def api_copies_create(name, pname):
+    """Create (and start) a copy of a copyable program.
+
+    Body: {"value": "/dev/ttyS2", "args": {...}?} — value is the copy
+    identifier substituted into the program's instance argument (and
+    slugified into the copy id); args optionally overrides other argument
+    defaults for this copy only.  Per-copy TCP ports are allocated and unix
+    paths generated now; the module conf is re-rendered with the copy added.
     """
     data = request.get_json() or {}
     if "value" not in data:
@@ -2493,18 +2424,16 @@ def api_instances_create(name):
             "error": "args must be an object mapping argument name → value"
         }), 400
 
-    with install_lock:  # serialize with installs and other instance changes
+    with install_lock:  # serialize with installs and other copy changes
         registry = load_registry()
         entry = registry.get("modules", {}).get(name)
         if entry is None:
             return jsonify({"error": f"module not installed: {name}"}), 404
         manifest = entry["manifest"]
-        spec = manifest.get("instance")
-        if not spec:
-            return jsonify({
-                "error": f"module '{name}' is not instanceable (its manifest "
-                         "declares no 'instance' key)"
-            }), 400
+        prog, err_resp = _copyable_program(entry, pname)
+        if err_resp is not None:
+            return err_resp
+        spec = prog["instance"]
         ia = spec.get("argument")
         coerced, errors = _coerce_arg_updates(manifest, {**extra_args, ia: value})
         if errors:
@@ -2512,11 +2441,13 @@ def api_instances_create(name):
         value = coerced[ia]
         arg_updates = {k: v for k, v in coerced.items() if k != ia}
         try:
-            inst = _build_instance(manifest, name, registry, value, arg_updates, None)
+            copy = _build_copy(
+                manifest, name, prog, registry, value, arg_updates, None
+            )
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 400
 
-        rec_sub = _instance_recordings_subdir(manifest, inst)
+        rec_sub = _copy_recordings_subdir(manifest, prog, copy["id"])
         if rec_sub:
             try:
                 (Path(cfg["recordings_dir"]) / rec_sub).mkdir(
@@ -2526,63 +2457,67 @@ def api_instances_create(name):
                 return jsonify({
                     "error": f"failed to create recordings dir {rec_sub}: {exc}"
                 }), 500
-        entry.setdefault("instances", {})[inst["id"]] = inst
+        entry.setdefault("copies", {}).setdefault(pname, {})[copy["id"]] = copy
         try:
-            _render_instance_conf(name, entry, inst)
+            _render_module_conf(name, entry)
         except OSError as exc:
-            entry["instances"].pop(inst["id"], None)
-            return jsonify({
-                "error": f"failed to write {inst['conf_file']}: {exc}"
-            }), 500
+            entry["copies"][pname].pop(copy["id"], None)
+            return jsonify({"error": f"failed to write conf file: {exc}"}), 500
         save_registry(registry)
         err = _supervisor_reread_update()
         if err:
             return jsonify({"error": err}), 500
-    return jsonify({"ok": True, "instance": inst}), 201
+    resp = {"ok": True, "copy": copy,
+            "name": _copy_program_name(pname, copy["id"])}
+    if not shutil.which("supervisorctl"):
+        resp["warning"] = ("supervisorctl not found — config written but "
+                           "supervisor not reloaded")
+    return jsonify(resp), 201
 
 
-@app.route("/api/modules/<name>/instances/<iid>", methods=["DELETE"])
-def api_instances_delete(name, iid):
-    """Stop and remove an instance: its programs stop, its conf file is
-    deleted, and supervisor is reloaded.  Deleting the last instance leaves
-    the module installed but running nothing."""
+@app.route("/api/modules/<name>/programs/<pname>/copies/<cid>", methods=["DELETE"])
+def api_copies_delete(name, pname, cid):
+    """Stop and remove a copy of a program: its supervisor program stops, the
+    module conf is re-rendered without it, and supervisor is reloaded.  The
+    base program is unaffected."""
     with install_lock:
         registry = load_registry()
         entry = registry.get("modules", {}).get(name)
         if entry is None:
             return jsonify({"error": f"module not installed: {name}"}), 404
-        instances = entry.get("instances") or {}
-        inst = instances.get(iid)
-        if inst is None:
-            return jsonify({"error": f"no such instance: {name}/{iid}"}), 404
+        copies = (entry.get("copies") or {}).get(pname) or {}
+        copy = copies.get(cid)
+        if copy is None:
+            return jsonify({
+                "error": f"no such copy: {name}/{pname}/{cid}"
+            }), 404
 
         if shutil.which("supervisorctl"):
-            for pname in (inst or {}).get("programs", []):
-                try:
-                    _supervisorctl("stop", pname)
-                except (subprocess.TimeoutExpired, OSError):
-                    pass  # best-effort stop
-        conf = (inst or {}).get("conf_file")
-        if conf:
-            Path(conf).unlink(missing_ok=True)
-        del instances[iid]
+            try:
+                _supervisorctl("stop", _copy_program_name(pname, cid))
+            except (subprocess.TimeoutExpired, OSError):
+                pass  # best-effort stop
+        del copies[cid]
+        try:
+            _render_module_conf(name, entry)
+        except OSError as exc:
+            return jsonify({"error": f"failed to write conf file: {exc}"}), 500
         save_registry(registry)
         err = _supervisor_reread_update()
-    resp = {"ok": True, "removed": f"{name}/{iid}"}
+    resp = {"ok": True, "removed": f"{name}/{pname}/{cid}"}
     if err:
         resp["warning"] = err
     return jsonify(resp)
 
 
-@app.route("/api/modules/<name>/instances/<iid>/args", methods=["POST"])
-def api_instance_args(name, iid):
-    """Update one instance's argument values and reload its supervisor config.
+@app.route("/api/modules/<name>/programs/<pname>/copies/<cid>/args", methods=["POST"])
+def api_copy_args(name, pname, cid):
+    """Update one copy's argument values and reload the supervisor config.
 
-    Same body as /api/modules/<name>/args.  The instance argument itself is
-    pinned (remove and re-add the instance to change it).  Supervisor program
-    settings live on the shared program templates, so "programs" updates are
-    applied to every instance's conf.  Program names in "programs" may be
-    given as template names or this instance's suffixed names.
+    Body: {"args": {...}}.  The copy's instance argument is pinned (remove
+    and re-add the copy to change it).  Supervisor settings are not
+    per-copy — they are shared with the base program and edited via
+    /api/modules/<name>/args.
     """
     with install_lock:
         registry = load_registry()
@@ -2590,75 +2525,45 @@ def api_instance_args(name, iid):
         if entry is None:
             return jsonify({"error": f"module not installed: {name}"}), 404
         manifest = entry["manifest"]
-        instances = entry.get("instances") or {}
-        inst = instances.get(iid)
-        if inst is None:
-            return jsonify({"error": f"no such instance: {name}/{iid}"}), 404
+        copies = (entry.get("copies") or {}).get(pname) or {}
+        copy = copies.get(cid)
+        if copy is None:
+            return jsonify({
+                "error": f"no such copy: {name}/{pname}/{cid}"
+            }), 404
         data = request.get_json() or {}
         new_args = data.get("args")
         if not isinstance(new_args, dict):
             return jsonify({
                 "error": "args must be an object mapping argument name → value"
             }), 400
-        new_progs = data.get("programs", {})
-        if not isinstance(new_progs, dict):
-            return jsonify({
-                "error": "programs must be an object mapping program name → settings"
-            }), 400
 
-        spec = manifest.get("instance")
-        if spec:
-            # Accept this instance's suffixed program names as aliases for
-            # the shared program templates.
-            suffix = f"-{iid}"
-            new_progs = {
-                (k[: -len(suffix)] if k.endswith(suffix) else k): v
-                for k, v in new_progs.items()
-            }
+        prog, err_resp = _copyable_program(entry, pname)
+        if err_resp is not None:
+            return err_resp
+        spec = prog["instance"]
         updates, errors = _coerce_arg_updates(manifest, new_args)
-        prog_updates, prog_errors = _coerce_prog_updates(manifest, new_progs)
-        errors += prog_errors
-        if spec and spec.get("argument") in updates and (
-            updates[spec["argument"]] != inst.get("value")
+        if spec.get("argument") in updates and (
+            updates[spec["argument"]] != copy.get("value")
         ):
             errors.append(
-                f"argument '{spec['argument']}' identifies this instance — "
-                "remove and re-add the instance to change it"
+                f"argument '{spec['argument']}' identifies this copy — "
+                "remove and re-add the copy to change it"
             )
         if errors:
             return jsonify({"error": "; ".join(errors)}), 400
 
-        _apply_prog_updates(manifest, prog_updates)
-        inst.setdefault("args", {}).update(updates)
-        if spec:
-            inst["args"][spec["argument"]] = inst.get("value")  # pinned
-            rec_sub = _instance_recordings_subdir(manifest, inst)
-            if rec_sub:
-                try:
-                    (Path(cfg["recordings_dir"]) / rec_sub).mkdir(
-                        parents=True, exist_ok=True
-                    )
-                except OSError as exc:
-                    return jsonify({
-                        "error": f"failed to create recordings dir {rec_sub}: {exc}"
-                    }), 500
-        else:
-            for arg in manifest.get("arguments", []):
-                if arg["name"] in updates:
-                    arg["default"] = updates[arg["name"]]
-
-        # Program settings are template-level: re-render every instance conf
-        # so they take effect module-wide; otherwise only this conf changed.
+        copy.setdefault("args", {}).update(updates)
+        copy["args"][spec["argument"]] = copy.get("value")  # pinned
         try:
-            for other in instances.values():
-                _render_instance_conf(name, entry, other or {})
+            _render_module_conf(name, entry)
         except OSError as exc:
             return jsonify({"error": f"failed to write conf file: {exc}"}), 500
         save_registry(registry)
         err = _supervisor_reread_update()
         if err:
             return jsonify({"error": err}), 500
-    resp = {"ok": True, "args": inst.get("args", {})}
+    resp = {"ok": True, "args": copy.get("args", {})}
     if not shutil.which("supervisorctl"):
         resp["warning"] = ("supervisorctl not found — config written but "
                            "supervisor not reloaded")

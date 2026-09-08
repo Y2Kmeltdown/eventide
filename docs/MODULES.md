@@ -9,7 +9,7 @@ This document covers:
 
 - [Architecture](#architecture)
 - [The module manifest (`eventide-module.json`)](#the-module-manifest)
-- [Instanceable modules (`instance`)](#instanceable-modules-instance)
+- [Program copies (`instance`)](#program-copies-instance)
 - [Network locations (ports & proxying)](#network-locations-ports--proxying)
 - [Dashboard UI components (`ui`)](#dashboard-ui-components-ui)
 - [Install lifecycle & error handling](#install-lifecycle--error-handling)
@@ -17,7 +17,7 @@ This document covers:
 - [Backend API reference](#backend-api-reference)
 - [Authoring a module](#authoring-a-module)
 - [Porting the existing components](#porting-the-existing-components)
-- [Migrating a manifest to instanceable](#migrating-a-manifest-to-instanceable)
+- [Making a program copyable](#making-a-program-copyable)
 - [Migrating from a pre-module install](#migrating-from-a-pre-module-install)
 - [Troubleshooting](#troubleshooting)
 
@@ -142,10 +142,11 @@ files. Must be unique across installed modules. Program commands should
 reference the directory through the `{recordings_subdir}` placeholder (below)
 rather than hardcoding the path.
 
-For **instanceable** modules each instance records to its own directory,
-`<recordings_dir>/<recordings_subdir>-<iid>`, created when the instance is
-created — `{recordings_subdir}` expands accordingly per instance, and the
-PLAYBACK tab gets one inner tab per instance.
+For **copyable programs** (programs declaring `instance`, see below) each
+copy records to its own directory, `<recordings_dir>/<recordings_subdir>-<cid>`,
+created when the copy is created — `{recordings_subdir}` expands accordingly
+in the copy's command, and the PLAYBACK tab gets one inner tab per recording
+copy. The base program always records to `<recordings_dir>/<recordings_subdir>`.
 
 #### `arguments` (optional)
 
@@ -162,44 +163,21 @@ dashboard displays these; defaults are substituted into program commands via
 | `required`  | boolean | no       | Informational — whether the program needs the flag. |
 | `description` | string | no      | Shown in the dashboard. |
 
-#### `instance` (optional)
-
-Object. **Its presence is what makes a module instanceable** — modules without
-it run exactly one implicit instance and behave exactly as before. The key
-names the command-line argument that identifies a unique copy of the module,
-and eventide runs one copy of the module's programs per distinct value of that
-argument (see [Instanceable modules](#instanceable-modules-instance)).
-
-| Field      | Type   | Required | Description |
-| ---------- | ------ | -------- | ----------- |
-| `argument` | string | yes      | Name of an entry in `arguments` (type `str` or `int`) whose value identifies an instance — e.g. the serial port. The instance's value is substituted for `{arg:<name>}` when that instance's programs are rendered. |
-| `label`    | string | no       | Display label for the value in the dashboard (e.g. `"Serial port"`). |
-
-```json
-"instance": { "argument": "port", "label": "Serial port" },
-"arguments": [
-  { "name": "port", "flag": "--port", "type": "str", "default": "/dev/ttyS1" }
-]
-```
-
-Installing an instanceable module auto-creates the first instance from the
-argument's `default`; the operator adds/removes further instances from the
-MODULES tab.
-
 #### `sockets` (optional)
 
 Network/IPC endpoints the module exposes. The backend uses them to wire up
 network locations: any HTTP service behind a TCP socket is reachable through
 the backend's generic proxy at `/proxy/<module>/<socket>/<upstream path>`
-(instanceable modules: `/proxy/<module>/inst/<iid>/<socket>/<upstream path>`),
-and program commands reference them with the `{socket:<name>}` placeholder.
+(copies of copyable programs: `/proxy/<module>/copy/<cid>/<socket>/<upstream
+path>`), and program commands reference them with the `{socket:<name>}`
+placeholder.
 
 | Field         | Type   | Required | Description |
 | ------------- | ------ | -------- | ----------- |
-| `name`        | string | yes      | Socket identifier, unique within the module. The name `inst` is reserved. |
+| `name`        | string | yes      | Socket identifier, unique within the module. The name `copy` is reserved. |
 | `type`        | string | yes      | `"tcp"` or `"unix"`. |
-| `port`        | int    | no       | TCP port (1–65535). **Normally omitted — eventide allocates a free port from its pool (`--port-pool`, default 8100–8199): at install time for ordinary modules, per instance (at instance creation) for instanceable modules.** Only set this to request a specific port; it must not collide with a socket of another installed module. |
-| `path`        | string | no       | Filesystem path of the UNIX socket. **Normally omitted — eventide generates one** (`/tmp/eventide-<module>[-<iid>]-<name>.sock`). Explicit paths are honoured for non-instanceable modules (parent directory created at install time) but are **rejected for instanceable modules** — per-instance copies would collide. |
+| `port`        | int    | no       | TCP port (1–65535). **Normally omitted — eventide allocates a free port from its pool (`--port-pool`, default 8100–8199) at install time.** Only set this to request a specific port for the base programs; it must not collide with a socket of another installed module. Copies of copyable programs always get pool-allocated ports of their own. |
+| `path`        | string | no       | Filesystem path of the UNIX socket (parent directory created at install time). **May be omitted — eventide generates one** (`/tmp/eventide-<module>-<name>.sock`). Copies of copyable programs always get generated per-copy paths (`/tmp/eventide-<module>-<cid>-<name>.sock`). |
 | `description` | string | no       | What the socket is for (e.g. `"MJPEG live stream"`). |
 
 The allocated (or declared) port is stored in the registry and shown in the
@@ -225,6 +203,13 @@ example, typically declares two: a datalogger and an MJPEG server.
 | `startretries` | int     | `10000`                     | Start attempts before giving up. |
 | `priority`     | int     | `10`                        | supervisord start/stop ordering. |
 | `user`         | string  | `"root"`                    | User the program runs as. |
+| `instance`     | object  | —                           | Optional. **Its presence makes the program copyable** (see [Program copies](#program-copies-instance)): `{"argument": "<arg-name>", "label"?: "..."}`, where `argument` names a `str`/`int` entry in `arguments` whose value identifies a copy — e.g. the serial port. The base program runs with the argument's default; the operator adds copies from the MODULES tab. |
+
+```json
+{ "name": "serial_daemon",
+  "command": "{venv_python} {module_dir}/daemon.py --port {arg:port}",
+  "instance": { "argument": "port", "label": "Serial port" } }
+```
 
 ### Command placeholders
 
@@ -245,62 +230,69 @@ Placeholders are expanded at install time — in `dependencies.commands` and
 | `{arg:<name>}`       | The argument's default value (string form)   |
 | `{socket:<name>}`    | The socket's port (tcp) or path (unix)       |
 
-For instanceable modules every placeholder resolves **per instance**: each
-instance's programs are rendered with that instance's argument values,
-allocated ports, generated unix paths, and recordings directory.
+For copies of copyable programs every placeholder resolves **per copy**: the
+copy's program block is rendered with that copy's argument values, allocated
+ports, generated unix paths, and recordings directory.
 
 ---
 
-## Instanceable modules (`instance`)
+## Program copies (`instance`)
 
-A module whose manifest declares [`instance`](#instance-optional) is
-**instanceable**: eventide runs one independent copy of its programs per
-*instance value* — the value of the CLI argument the key names. The canonical
-example is a serial-device logger: one instance per port (`/dev/ttyS1`,
-`/dev/ttyS2`, …).
+A program whose manifest entry declares
+[`instance`](#programs-required-1) is **copyable**. The module installs and
+behaves exactly like any other module — the *base program* runs once with the
+argument's default — but the operator can then add **copies** of just that
+program from the MODULES tab, one per *copy value* (the value of the CLI
+argument the key names). The canonical example is a serial-device daemon: the
+base program drives `/dev/ttyS1`, copies drive `/dev/ttyS2`, `/dev/ttyUSB0`, …,
+while the module's other programs (a shared API, an MJPEG server) keep running
+once, untouched.
 
-An instance is identified in two forms:
+A copy is identified in two forms:
 
-- the **value** (`/dev/ttyS1`) — passed to the program via `{arg:<instance argument>}`;
-- the **instance id (iid)** — a slug derived from the value (lowercase,
-  non-`[a-z0-9]` runs → `-`, trimmed; `/dev/ttyS1` → `dev-ttys1`), used in
+- the **value** (`/dev/ttyS2`) — passed to the copied program via
+  `{arg:<instance argument>}`;
+- the **copy id (cid)** — a slug derived from the value (lowercase,
+  non-`[a-z0-9]` runs → `-`, trimmed; `/dev/ttyS2` → `dev-ttys2`), used in
   program names, file names, URLs, and the API. Values that slugify to an
-  empty string, or duplicate an existing value/slug within the module, are
+  empty string, or duplicate an existing value/slug for that program, are
   rejected.
 
-For each instance, eventide generates at creation time:
+The base program is completely unaffected by copies. For each copy, eventide
+generates at copy-creation time:
 
 | What | Shape |
 | ---- | ----- |
-| supervisor programs | `<program>-<iid>` (all of the module's programs, started/stopped independently) |
-| supervisor conf | `/etc/supervisor/conf.d/module-<name>-<iid>.conf` |
-| TCP ports | allocated from `--port-pool`, one per declared tcp socket (explicit `port` requests honoured when free) |
-| UNIX socket paths | `/tmp/eventide-<name>-<iid>-<socket>.sock` |
-| recordings dir | `<recordings_dir>/<recordings_subdir>-<iid>` (when `recordings_subdir` is declared) |
+| supervisor program | `<program>-<cid>`, rendered into the module's single conf file |
+| TCP ports | one fresh pool port per tcp socket **the program's command references** (explicit `port` values belong to the base program) |
+| UNIX socket paths | `/tmp/eventide-<module>-<cid>-<socket>.sock`, per unix socket the program references |
+| recordings dir | `<recordings_dir>/<recordings_subdir>-<cid>`, only when the program's command references `{recordings_subdir}` |
 
-Everything else behaves like a normal module: `{arg:...}` / `{socket:...}` /
-`{recordings_subdir}` placeholders resolve per instance, each instance's
-arguments are independently editable (except the instance argument itself —
-remove and re-add the instance to change that), and supervisor settings
-(`autostart`/`autorestart`/`startretries`/`priority`) remain template-level:
-editing them on any instance re-renders every instance's conf.
+Everything else behaves like the base program: `{arg:...}` / `{socket:...}` /
+`{recordings_subdir}` placeholders resolve per copy; each copy's argument
+values are independently editable (except the instance argument itself —
+remove and re-add the copy to change that); and supervisor settings
+(`autostart`/`autorestart`/`startretries`/`priority`) are shared with the
+base program — editing them via the module's args form re-renders base and
+copies alike. Note that only sockets **the copyable program's own command
+references** are resolved per copy: a sibling program keeps talking to the
+base program's sockets, so copies are self-contained by construction.
 
-**Dashboard.** The MODULES tab shows an INSTANCES section inside the module
-card — one sub-panel per instance (value, sockets, service rows, EDIT /
-REMOVE) plus an ADD INSTANCE row. Each instance gets its own copy of the
-module's [`ui` components](#dashboard-ui-components-ui): the palette groups
-them per instance (`module · iid`), placed widgets are titled `TITLE · iid`,
-and their traffic is proxied per instance at
-`/proxy/<module>/inst/<iid>/<socket>/<path>`. `default: true` components
-auto-place when an instance is added; removing an instance merely hides its
-widgets (re-adding restores them in place). The PLAYBACK tab gets one inner
-tab per instance's recordings directory.
+**Dashboard.** The MODULES tab shows a COPIES section under each copyable
+program in the module card — one sub-panel per copy (value, sockets, service
+row, EDIT / REMOVE) plus an ADD COPY row. Copies of programs that own a
+socket referenced by a [`ui` component](#dashboard-ui-components-ui) also get
+their own copy of that component: the palette groups them per copy
+(`module · cid`), placed widgets are titled `TITLE · cid`, and their traffic
+is proxied per copy at `/proxy/<module>/copy/<cid>/<socket>/<path>`.
+`default: true` components auto-place when a copy is added; removing a copy
+merely hides its widgets (re-adding restores them in place). The PLAYBACK tab
+gets one inner tab per recording copy.
 
-**Install-time behaviour.** Installing an instanceable module auto-creates
-the first instance from the instance argument's default value, so a fresh
-install comes up running exactly like a non-instanceable module (wrong
-default? adjust from the MODULES tab). Uninstalling removes every instance's
-programs and conf files.
+**Install-time behaviour.** Install renders only the base programs (a fresh
+install has no copies) and behaves exactly as it always has — program names
+are unchanged, so existing manifests need no edits. Uninstalling stops and
+removes base programs and all copies. Reinstalling resets copies.
 
 ---
 
@@ -310,20 +302,20 @@ Nothing about a module's network presence is hardcoded outside its manifest:
 
 - **Ports are allocated by eventide.** A TCP socket without an explicit
   `port` gets one from the backend's pool (`--port-pool`, default
-  `8100-8199`) — at install time for ordinary modules, at instance-creation
-  time per instance for instanceable modules — the lowest port not used by
-  another installed module and not already bound on the device. The chosen
-  port is persisted in the registry (on the manifest, or on the instance for
-  instanceable modules) and shown in the MODULES tab. An explicit `port` is
-  still honoured when free (checked against other installed modules), so
-  older manifests keep working.
+  `8100-8199`) at install time — the lowest port not used by another
+  installed module and not already bound on the device. The chosen port is
+  persisted in the registry entry's manifest and shown in the MODULES tab.
+  An explicit `port` is still honoured when free (checked against other
+  installed modules), so older manifests keep working. Copies of copyable
+  programs get their own pool-allocated ports at copy-creation time, stored
+  on the copy.
 - **nginx has no per-module locations.** `config/eventide.nginx` only fronts
   `eventide.py` (`location /`) and the base playback server (`/playback/`).
   Every HTTP service a module exposes is proxied by the backend itself:
 
   ```
   /proxy/<module>/<socket>/<upstream path>          →  http://127.0.0.1:<port>/<upstream path>
-  /proxy/<module>/inst/<iid>/<socket>/<upstream…>   →  same, for one instance of an instanceable module
+  /proxy/<module>/copy/<cid>/<socket>/<upstream…>   →  same, for one copy of a copyable program
   ```
 
   Responses are streamed, so MJPEG works through it. Examples: a camera
@@ -462,10 +454,9 @@ themselves always fail the job.
 
 The base config `/etc/supervisor/conf.d/00-eventide-base.conf` (installed by
 `install.sh`) holds only `[supervisord]` and `[inet_http_server]`. Each module
-gets its own generated file, `/etc/supervisor/conf.d/module-<name>.conf`
-(instanceable modules: one per instance,
-`/etc/supervisor/conf.d/module-<name>-<iid>.conf`, with program names
-`<program>-<iid>`):
+gets its own generated file, `/etc/supervisor/conf.d/module-<name>.conf`,
+holding the base programs plus any copies of copyable programs (named
+`<program>-<cid>`, rendered right after their base program):
 
 ```ini
 ; Generated by eventide module manager from <repo url> — do not edit by hand.
@@ -508,35 +499,25 @@ List installed modules, merged with live supervisor status.
       "repo_url": "https://github.com/you/hello-module",
       "installed_at": "2026-07-24T12:00:00+00:00",
       "recordings_subdir": null,
-      "instance": null,
-      "instances": [
-        {"id": "default", "value": null, "args": {"interval": 5},
-         "sockets": [], "recordings_subdir": null,
-         "programs": [
-           {"name": "hello_module", "status": "RUNNING",
-            "status_detail": "pid 1234, uptime 0:03:12",
-            "autostart": true, "autorestart": true,
-            "startretries": 10000, "priority": 10}
-         ]}
-      ],
       "arguments": [ … ],
       "sockets":   [ … ],
       "programs": [
-        {"name": "hello_module", "status": "RUNNING", "description": "pid 1234, uptime 0:03:12"}
+        {"name": "hello_module", "status": "RUNNING",
+         "status_detail": "pid 1234, uptime 0:03:12",
+         "autostart": true, "autorestart": true,
+         "startretries": 10000, "priority": 10,
+         "instance": null, "copies": []}
       ]
     }
   ]
 }
 ```
 
-`instance` is the manifest's instance spec (`{"argument": "…", "label": "…"}`)
-or `null` for non-instanceable modules. `instances` lists every instance of
-the module — exactly one `default` instance for non-instanceable modules —
-with its argument values, resolved sockets (allocated ports / generated unix
-paths), per-instance recordings subdir, and programs (with live status and
-their template's supervisor settings). The top-level `programs` array is the
-flattened union across instances (for non-instanceable modules, exactly the
-manifest's programs, as before).
+Each program carries its `instance` spec (`{"argument": "…", "label": "…"}`
+or `null` for non-copyable programs) and its live `copies` — each with its
+id, value, per-copy argument values, resolved sockets (allocated ports /
+generated unix paths), recordings subdir, and its supervisor program
+(`<program>-<cid>`) with live status.
 
 ### `GET /api/modules/<name>`
 
@@ -605,62 +586,57 @@ restart with the new settings). This is what the MODULES tab's EDIT form posts.
 `args` maps declared argument names to values (type-checked); `programs` maps
 program names to any subset of `autostart`/`autorestart` (booleans) and
 `startretries`/`priority` (non-negative ints). Unknown names or wrong types
-return `400` with every problem listed. For instanceable modules this endpoint
-returns `400` — edit per instance instead (below).
+return `400` with every problem listed. The conf is re-rendered including
+every copy of copyable programs (copies share their base program's settings).
 
-### `POST /api/modules/<name>/instances`
+### `POST /api/modules/<name>/programs/<prog>/copies`
 
-Creates (and starts) an instance of an **instanceable** module:
+Creates (and starts) a copy of a **copyable** program (one whose manifest
+entry declares `instance`):
 
 ```json
 { "value": "/dev/ttyS2", "args": { "baud": 115200 } }
 ```
 
-`value` (required, string or int) is the instance identifier — substituted
-into the instance argument and slugified into the instance id; `args`
-(optional) overrides other argument defaults for this instance only. TCP ports
-are allocated and unix socket paths generated at this point; the instance's
-conf is rendered and supervisor reloaded.
+`value` (required, string or int) is the copy identifier — substituted into
+the program's instance argument and slugified into the copy id; `args`
+(optional) overrides other argument defaults for this copy only. Per-copy TCP
+ports are allocated and unix socket paths generated at this point; the module
+conf is re-rendered with the copy added and supervisor reloaded.
 
-- `201 Created` → `{"ok": true, "instance": { … }}`
+- `201 Created` → `{"ok": true, "copy": { … }, "name": "serial_daemon-dev-ttys2"}`
 - `400` missing/empty/duplicate value, value slug collides with an existing
-  instance, invalid `args`, no free port in the pool, program-name collision,
-  or the module is not instanceable · `404` module not installed
+  copy of that program, invalid `args`, no free port in the pool, program-name
+  collision, or the program is not copyable · `404` module or program not found
 
-### `DELETE /api/modules/<name>/instances/<iid>`
+### `DELETE /api/modules/<name>/programs/<prog>/copies/<cid>`
 
-Stops the instance's programs (best-effort), deletes its conf file, reloads
-supervisor, and drops it from the registry. Deleting the last instance is
-allowed — the module stays installed, just running nothing, until an instance
-is added again. `404` unknown module or instance id.
+Stops the copy's program (best-effort), re-renders the module conf without
+it, reloads supervisor, and drops it from the registry. The base program and
+other copies are unaffected. `404` unknown module, program, or copy id.
 
-### `POST /api/modules/<name>/instances/<iid>/args`
+### `POST /api/modules/<name>/programs/<prog>/copies/<cid>/args`
 
-Per-instance equivalent of `POST /api/modules/<name>/args`, same body:
+Updates one copy's argument values and reloads the supervisor config:
 
 ```json
-{
-  "args":     {"baud": 115200},
-  "programs": {"serial_daemon-dev-ttys1": {"priority": 5}}
-}
+{ "args": { "baud": 115200 } }
 ```
 
-Argument updates are stored on the instance and only its conf re-renders;
-program settings live on the shared program templates, so `programs` updates
-re-render **every** instance's conf (program names may be given as template
-names or this instance's suffixed names). The instance argument itself is
-pinned — changing it returns `400` (remove and re-add the instance instead).
+The copy's instance argument is pinned — changing it returns `400` (remove
+and re-add the copy instead). Supervisor settings are not per-copy; they are
+shared with the base program and edited via `POST /api/modules/<name>/args`.
 
 ### `GET /api/recordings`
 
 Lists the **recording sources** — one per installed module that declares
-`recordings_subdir` (instanceable modules: one per instance, named
-`<subdir>-<iid>`):
+`recordings_subdir`, plus one per copy of a copyable program whose command
+uses the recordings dir (named `<subdir>-<cid>`):
 
 ```json
 {"sources": [{"name": "evk", "module": "evk-datalogger"},
              {"name": "picam", "module": "picam-datalogger"},
-             {"name": "serial-dev-ttys1", "module": "serial-logger (dev-ttys1)"}]}
+             {"name": "serial-dev-ttys2", "module": "serial-hub (serial_daemon/dev-ttys2)"}]}
 ```
 
 `GET /api/recordings/<source>` lists that source's files;
@@ -677,9 +653,9 @@ socket isn't installed, `502` when the module's server is down. This is how
 the dashboard reaches camera streams, per-camera settings, and the gimbal
 API — nginx carries no per-module locations.
 
-Instanceable modules are proxied **per instance** instead:
-`/proxy/<module>/inst/<iid>/<socket>/<upstream path>`, resolved from that
-instance's allocated ports (the plain form returns `404` for them).
+Instanceable programs' copies are proxied **per copy**:
+`/proxy/<module>/copy/<cid>/<socket>/<upstream path>`, resolved from that
+copy's allocated ports. The plain form always reaches the base program.
 
 ---
 
@@ -783,42 +759,43 @@ into the corresponding module manifests, not the base install.
 
 ---
 
-## Migrating a manifest to instanceable
+## Making a program copyable
 
-Turning an existing module into an instanceable one is a small manifest edit
-plus a reinstall. Non-instanceable manifests need **no changes at all** — they
-keep working unchanged.
+Making an existing program copyable is a small manifest edit plus a
+reinstall. Modules with no `instance` keys need **no changes at all** — they
+keep working unchanged, and even for the module you change, the **base
+program keeps its exact name and behaviour** (copies are added on top).
 
-1. **Add the `instance` key** naming the argument that identifies a copy, and
-   make sure that argument exists in `arguments` (type `str` or `int`). Its
-   `default` becomes the first instance created at install time:
+1. **Add the `instance` key to the program entry** naming the argument that
+   identifies a copy, and make sure that argument exists in `arguments`
+   (type `str` or `int`). Its `default` is what the base program runs with:
 
    ```json
-   "instance": { "argument": "port", "label": "Serial port" },
-   "arguments": [
-     { "name": "port", "flag": "--port", "type": "str", "default": "/dev/ttyS1" }
+   "programs": [
+     { "name": "serial_daemon",
+       "command": "{venv_python} {module_dir}/daemon.py --port {arg:port}",
+       "instance": { "argument": "port", "label": "Serial port" } }
    ]
    ```
 
-2. **Delete `path` from every UNIX socket.** Instanceable modules must not
-   pin socket paths — eventide generates one per instance
-   (`/tmp/eventide-<name>-<iid>-<socket>.sock`). Programs keep referencing
-   `{socket:<name>}`, so no command changes are needed.
-3. **Omit `port` from TCP sockets** (recommended, already the convention) so
-   each instance gets its own pool-allocated port. An explicit `port` is still
-   honoured but then only one instance can exist at a time.
+2. **Omit `port` from TCP sockets the program references** (already the
+   convention) so each copy gets its own pool-allocated port. An explicit
+   `port` is honoured for the base program only; copies always allocate.
+3. **Unix sockets need no changes**: the base program keeps the declared (or
+   generated) path, and copies always get their own generated paths
+   (`/tmp/eventide-<module>-<cid>-<socket>.sock`). Programs keep referencing
+   `{socket:<name>}` either way.
 4. **Keep the placeholders as they are** — `{arg:...}`, `{socket:...}`,
-   `{recordings_subdir}` all resolve per instance. If the module declares
-   `recordings_subdir`, expect per-instance directories
-   `<subdir>-<iid>` (and one PLAYBACK inner tab per instance).
-5. **Uninstall and reinstall the module** from the MODULES tab. Program names
-   become `<program>-<iid>` in supervisor, so update anything external that
-   references the old bare names (scripts, `supervisorctl` invocations, log
-   paths) or the old recordings source name.
+   `{recordings_subdir}` all resolve per copy. If the program's command uses
+   `{recordings_subdir}`, each copy records to `<subdir>-<cid>` (with one
+   PLAYBACK inner tab per copy).
+5. **Uninstall and reinstall the module** from the MODULES tab. The base
+   program name is unchanged, so nothing external needs to move; new copies
+   appear as `<program>-<cid>` in supervisor (and their logs at
+   `/var/log/supervisor/<program>-<cid>.log`).
 
-Validation will tell you if something's off: an `instance.argument` that isn't
-a declared `str`/`int` argument, or a pinned unix `path`, fails the install
-with a clear message.
+Validation will tell you if something's off: an `instance.argument` that
+isn't a declared `str`/`int` argument fails the install with a clear message.
 
 ---
 

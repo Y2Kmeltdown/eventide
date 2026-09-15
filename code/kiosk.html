@@ -26,6 +26,7 @@
   --r:          4px;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{width:100%;height:100%;overflow:hidden;background:#000;color:var(--text);font-family:var(--mono);
   user-select:none;-webkit-user-select:none;touch-action:manipulation}
 button{font-family:var(--mono);-webkit-user-select:none}
@@ -50,25 +51,33 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .feed-wrap.pip .rec-dot{width:7px;height:7px;top:6px;right:6px}
 
 /* ── record button ───────────────────────────────────────────────────── */
-.record-btn{position:fixed;top:20px;right:20px;z-index:40;min-width:130px;height:64px;padding:0 20px;
-  border-radius:32px;background:rgba(8,15,22,.8);border:2px solid var(--warn);color:var(--warn);
-  font-family:var(--display);font-weight:600;font-size:16px;letter-spacing:.06em;
+.record-btn{position:fixed;top:20px;right:20px;z-index:40;min-width:200px;height:64px;padding:0 22px;
+  border-radius:32px;background:var(--surface2);border:2px solid var(--border2);color:var(--accent);
+  font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.06em;
   display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer}
-.record-btn .dot{width:14px;height:14px;border-radius:50%;background:var(--warn);flex-shrink:0}
+.record-btn .dot{width:14px;height:14px;border-radius:50%;background:var(--accent);flex-shrink:0}
 .record-btn .rec-time{font-size:12px;color:var(--text-mid);font-family:var(--mono);margin-left:2px}
-.record-btn.recording{background:rgba(255,91,107,.22);animation:recpulse 1.4s infinite}
-.record-btn.recording .dot{border-radius:3px}
+.record-btn.recording{background:rgba(255,91,107,.22);border-color:var(--warn);color:var(--warn);animation:recpulse 1.4s infinite}
+.record-btn.recording .dot{background:var(--warn);border-radius:3px}
 .record-btn:disabled{opacity:.5;cursor:default}
 @keyframes recpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,91,107,.45)}50%{box-shadow:0 0 0 16px rgba(255,91,107,0)}}
 
-/* ── edge tabs ────────────────────────────────────────────────────────── */
-.edge-tab{position:fixed;z-index:60;background:var(--surface2);border:1px solid var(--border2);
+/* ── edge tabs ────────────────────────────────────────────────────────────
+   Each tab is a child of its drawer, positioned just outside the drawer's
+   own box (negative offset). Since the drawer is what actually translates
+   open/closed, the tab — anchored to the drawer's edge, not the viewport —
+   rides along with it: sitting at the screen edge (poking out) while
+   closed, and at the drawer's new edge (not overlapping its content) once
+   open, with no separate open/closed positioning rules needed. */
+.edge-tab{position:absolute;z-index:1;background:var(--surface2);border:1px solid var(--border2);
   color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;
   font-size:15px;line-height:1}
-.edge-tab-bottom{left:50%;transform:translateX(-50%);bottom:0;width:72px;height:30px;
+.edge-tab-bottom{left:50%;top:-30px;transform:translateX(-50%);width:72px;height:30px;
   border-bottom:none;border-top-left-radius:8px;border-top-right-radius:8px}
-.edge-tab-right{right:0;top:50%;transform:translateY(-50%);width:30px;height:72px;
+.edge-tab-right{left:-30px;top:50%;transform:translateY(-50%);width:30px;height:72px;
   border-right:none;border-top-left-radius:8px;border-bottom-left-radius:8px}
+.edge-tab-left{right:-30px;top:50%;transform:translateY(-50%);width:30px;height:72px;
+  border-left:none;border-top-right-radius:8px;border-bottom-right-radius:8px}
 
 /* ── drawers ──────────────────────────────────────────────────────────── */
 .drawer{position:fixed;background:var(--surface);border:1px solid var(--border2);z-index:50;
@@ -79,6 +88,9 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .drawer-right{top:0;right:0;bottom:0;width:300px;border-top:none;border-right:none;border-bottom:none;
   transform:translateX(100%)}
 .drawer-right.open{transform:translateX(0)}
+.drawer-left{top:0;left:0;bottom:0;width:300px;border-top:none;border-left:none;border-bottom:none;
+  transform:translateX(-100%)}
+.drawer-left.open{transform:translateX(0)}
 
 .rec-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
 .rec-tab{flex:1;padding:14px 0;background:none;border:none;border-bottom:2px solid transparent;
@@ -95,16 +107,41 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .rec-icon-btn.del{color:var(--warn);border-color:var(--warn)}
 .rec-empty{padding:30px 10px;text-align:center;color:var(--text-dim);font-size:12px}
 
-.settings-body{padding:20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
-.duration-label{font-size:10px;letter-spacing:.15em;color:var(--text-dim)}
+.settings-body{padding:20px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;overflow-x:hidden}
+.section-title{font-size:10px;letter-spacing:.15em;color:var(--text-dim);margin-top:8px;padding-top:12px;
+  border-top:1px solid var(--border)}
+.section-title:first-child{margin-top:0;padding-top:0;border-top:none}
 .duration-readout{font-family:var(--display);font-weight:600;font-size:40px;color:var(--accent);text-align:center;
   padding:14px 0;background:var(--surface2);border-radius:var(--r);border:1px solid var(--border)}
 .stepper-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .stepper-btn{height:56px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
   color:var(--accent);font-size:15px;cursor:pointer}
-.stepper-btn:active{background:var(--accent-dim)}
+.stepper-btn:active,.mini-stepper:active{background:var(--accent-dim)}
+.stepper-btn:disabled,.mini-stepper:disabled{opacity:.4;cursor:default;background:var(--surface2)}
 .keypad-toggle-btn{height:48px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
   color:var(--text);font-size:12px;letter-spacing:.1em;cursor:pointer}
+
+/* ── generic numeric field row (camera settings drawer) ──────────────────── */
+.field-row{display:flex;align-items:center;gap:6px}
+.field-label{flex:1;font-size:11px;color:var(--text);min-width:0}
+.field-value{width:60px;text-align:center;font-family:var(--display);font-weight:600;font-size:13px;
+  color:var(--accent);background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);
+  padding:8px 2px;cursor:pointer;flex-shrink:0}
+.mini-stepper{width:34px;height:34px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
+  color:var(--accent);font-size:14px;cursor:pointer;flex-shrink:0}
+
+/* ── schedule builder (right drawer) ──────────────────────────────────────── */
+.day-row{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.day-chip{height:36px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
+  color:var(--text-mid);font-size:10px;cursor:pointer}
+.day-chip.on{color:var(--accent);border-color:var(--accent);background:var(--accent-dim)}
+.add-schedule-btn{height:48px;border-radius:var(--r);border:1px solid var(--accent);background:var(--accent-dim);
+  color:var(--accent);font-size:11px;letter-spacing:.06em;cursor:pointer}
+.sched-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto}
+.sched-item{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:var(--r)}
+.sched-item .sched-info{flex:1;min-width:0}
+.sched-item .sched-time{font-size:12px;color:var(--text)}
+.sched-item .sched-days{font-size:9px;color:var(--text-dim);margin-top:2px}
 
 .keypad-overlay{position:fixed;inset:0;background:rgba(2,6,10,.85);z-index:80;
   display:flex;align-items:center;justify-content:center}
@@ -145,14 +182,12 @@ button{font-family:var(--mono);-webkit-user-select:none}
 
   <button class="record-btn" id="record-btn" disabled>
     <span class="dot" id="record-dot"></span>
-    <span id="record-label">REC</span>
+    <span id="record-label">START RECORDING</span>
     <span class="rec-time" id="record-time"></span>
   </button>
 
-  <button class="edge-tab edge-tab-bottom" id="tab-recordings">▲</button>
-  <button class="edge-tab edge-tab-right" id="tab-settings">◀</button>
-
   <div class="drawer drawer-bottom" id="drawer-recordings">
+    <button class="edge-tab edge-tab-bottom" id="tab-recordings">▲</button>
     <div class="rec-tabs">
       <button class="rec-tab" data-src="evk">EVK4</button>
       <button class="rec-tab" data-src="basler">BASLER</button>
@@ -161,17 +196,36 @@ button{font-family:var(--mono);-webkit-user-select:none}
   </div>
 
   <div class="drawer drawer-right" id="drawer-settings">
+    <button class="edge-tab edge-tab-right" id="tab-settings">◀</button>
     <div class="settings-body">
-      <div class="duration-label">AUTO-STOP RECORDING AFTER</div>
+      <div class="section-title">AUTO-STOP RECORDING AFTER</div>
       <div class="duration-readout" id="duration-readout">30s</div>
-      <div class="stepper-row">
+      <div class="stepper-row" id="duration-steppers">
         <button class="stepper-btn" data-delta="-10">−10</button>
         <button class="stepper-btn" data-delta="-1">−1</button>
         <button class="stepper-btn" data-delta="1">+1</button>
         <button class="stepper-btn" data-delta="10">+10</button>
       </div>
       <button class="keypad-toggle-btn" id="keypad-open">123 · ENTER EXACT VALUE</button>
+
+      <div class="section-title">SCHEDULED RECORDING</div>
+      <div class="duration-readout" id="sched-time-readout">06:00</div>
+      <button class="keypad-toggle-btn" id="sched-hourly-toggle">REPEAT EVERY HOUR: OFF</button>
+      <div class="stepper-row" id="sched-time-steppers">
+        <button class="stepper-btn" data-sched-stepper="hour" data-delta="-1">HR −</button>
+        <button class="stepper-btn" data-sched-stepper="hour" data-delta="1">HR +</button>
+        <button class="stepper-btn" data-sched-stepper="minute" data-delta="-5">MIN −</button>
+        <button class="stepper-btn" data-sched-stepper="minute" data-delta="5">MIN +</button>
+      </div>
+      <div class="day-row" id="sched-days"></div>
+      <button class="add-schedule-btn" id="sched-add">+ ADD SCHEDULE (USES DURATION ABOVE)</button>
+      <div class="sched-list" id="sched-list"><div class="rec-empty">Loading…</div></div>
     </div>
+  </div>
+
+  <div class="drawer drawer-left" id="drawer-camera">
+    <button class="edge-tab edge-tab-left" id="tab-camera">▶</button>
+    <div class="settings-body" id="camera-fields"><div class="rec-empty">Loading…</div></div>
   </div>
 
   <div class="keypad-overlay" id="keypad-overlay" hidden>
@@ -233,6 +287,11 @@ async function loadModules() {
       if (!m) { camInfo[camId] = null; continue; }
       const mjpeg = (m.ui || []).find(c => c.type === 'mjpeg');
       const rec   = (m.ui || []).find(c => c.type === 'recording');
+      // The one 'form' component this kiosk cares about per module: EVK's
+      // "biases" (diff_on/diff_off) and Basler's "camera-settings" (exposure
+      // etc.) — both identified by manifest id, same contract as the main
+      // dashboard's generic form widget (docs/MODULES.md).
+      const settingsForm = (m.ui || []).find(c => c.type === 'form' && (c.id === 'biases' || c.id === 'camera-settings'));
       camInfo[camId] = {
         mod: m.name,
         streamUrl: mjpeg ? proxyUrl(m.name, mjpeg.socket, mjpeg.path || '/') : null,
@@ -241,6 +300,10 @@ async function loadModules() {
           key: rec.key || 'recording',
           controlKey: rec.control_key || 'recording_control',
           fileKey: rec.file_key || 'current_file',
+        } : null,
+        settingsForm: settingsForm ? {
+          socket: settingsForm.socket, get: settingsForm.get, put: settingsForm.put,
+          method: settingsForm.method || 'PUT',
         } : null,
       };
     }
@@ -278,6 +341,85 @@ function setFeed(imgEl, offEl, info) {
 function applyFeeds() {
   setFeed(document.getElementById('feed-evk'),    document.getElementById('off-evk'),    camInfo.evk);
   setFeed(document.getElementById('feed-basler'), document.getElementById('off-basler'), camInfo.basler);
+}
+
+// ── Camera settings (left drawer) — EVK biases + Basler camera settings ────
+// Field bounds/steps are fixed to match each module's manifest (evk_datalogger
+// and basler_eric eventide-module.json field definitions) — this kiosk is
+// hard-wired to exactly these two modules, so there's no need to discover
+// field lists dynamically the way the generic dashboard form widget does.
+const CAMERA_FIELDS = [
+  { group: 'EVK4 BIASES',      cam: 'evk',    key: 'diff_on',       label: 'Diff ON',           min: 0, max: 255,    step: 5,   decimals: 0 },
+  { group: 'EVK4 BIASES',      cam: 'evk',    key: 'diff_off',      label: 'Diff OFF',          min: 0, max: 255,    step: 5,   decimals: 0 },
+  { group: 'BASLER SETTINGS',  cam: 'basler', key: 'exposure_us',   label: 'Exposure (µs)',     min: 0, max: 1000000, step: 100, decimals: 0 },
+  { group: 'BASLER SETTINGS',  cam: 'basler', key: 'gain',          label: 'Gain (dB)',         min: 0, max: 48,     step: 0.5, decimals: 1 },
+  { group: 'BASLER SETTINGS',  cam: 'basler', key: 'frame_rate_hz', label: 'Frame rate (Hz)',   min: 0, max: 500,    step: 5,   decimals: 0 },
+  { group: 'BASLER SETTINGS',  cam: 'basler', key: 'black_level',   label: 'Black level',       min: 0, max: 255,    step: 1,   decimals: 0 },
+  { group: 'BASLER SETTINGS',  cam: 'basler', key: 'gamma',         label: 'Gamma',             min: 0, max: 4,      step: 0.1, decimals: 2 },
+];
+const cameraFieldValues = {};   // "cam.key" -> current numeric value
+
+function fieldValueId(f) { return `${f.cam}.${f.key}`; }
+function fmtFieldValue(f, v) { return v == null ? '—' : v.toFixed(f.decimals); }
+
+function renderCameraFieldRows() {
+  const container = document.getElementById('camera-fields');
+  let html = '', lastGroup = null;
+  for (const f of CAMERA_FIELDS) {
+    if (f.group !== lastGroup) { html += `<div class="section-title">${f.group}</div>`; lastGroup = f.group; }
+    lastGroup = f.group;
+    const id = fieldValueId(f);
+    html += `
+      <div class="field-row">
+        <span class="field-label">${f.label}</span>
+        <button class="mini-stepper" data-field="${id}" data-delta="${-f.step}">−</button>
+        <span class="field-value" id="fv-${id}" data-field="${id}">${fmtFieldValue(f, cameraFieldValues[id])}</span>
+        <button class="mini-stepper" data-field="${id}" data-delta="${f.step}">+</button>
+      </div>`;
+  }
+  container.innerHTML = html;
+
+  container.querySelectorAll('.mini-stepper').forEach(btn => {
+    const f = CAMERA_FIELDS.find(f => fieldValueId(f) === btn.dataset.field);
+    attachStepper(btn, parseFloat(btn.dataset.delta), () => cameraFieldValues[fieldValueId(f)] ?? f.min, v => setCameraField(f, v));
+  });
+  container.querySelectorAll('.field-value').forEach(el => {
+    const f = CAMERA_FIELDS.find(f => fieldValueId(f) === el.dataset.field);
+    el.addEventListener('click', () => openKeypadFor(f.min, f.max, v => setCameraField(f, v)));
+  });
+}
+
+async function loadCameraFields() {
+  for (const camId of ['evk', 'basler']) {
+    const info = camInfo[camId];
+    if (!info || !info.settingsForm) continue;
+    try {
+      const r = await fetch(proxyUrl(info.mod, info.settingsForm.socket, info.settingsForm.get));
+      if (!r.ok) continue;
+      const data = await r.json();
+      for (const f of CAMERA_FIELDS.filter(f => f.cam === camId)) {
+        if (data[f.key] != null) cameraFieldValues[fieldValueId(f)] = Number(data[f.key]);
+      }
+    } catch { /* leave whatever was last known */ }
+  }
+  renderCameraFieldRows();
+}
+
+async function setCameraField(f, rawValue) {
+  const id = fieldValueId(f);
+  const v = Math.max(f.min, Math.min(f.max, +rawValue.toFixed(f.decimals)));
+  cameraFieldValues[id] = v;
+  const el = document.getElementById('fv-' + id);
+  if (el) el.textContent = fmtFieldValue(f, v);
+  const info = camInfo[f.cam];
+  if (!info || !info.settingsForm) return;
+  try {
+    const r = await fetch(proxyUrl(info.mod, info.settingsForm.socket, info.settingsForm.put), {
+      method: info.settingsForm.method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [f.key]: v }),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+  } catch (e) { toast(`${f.label} failed: ${e.message}`); }
 }
 
 // ── Main / PiP swap — tapping the PiP box itself is the toggle ─────────────
@@ -337,7 +479,7 @@ function renderRecordButton() {
 
   btn.disabled = !live.length || !anyControllable || btn.dataset.busy === '1';
   btn.classList.toggle('recording', anyRecording);
-  label.textContent = anyRecording ? 'STOP' : 'REC';
+  label.textContent = anyRecording ? 'STOP RECORDING' : 'START RECORDING';
 
   if (anyRecording) {
     if (recordStartedAt == null) recordStartedAt = Date.now();
@@ -390,6 +532,40 @@ function fmtSize(b) {
   return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB';
 }
 
+// Same filename convention/formatting as the main dashboard (dashboard.html
+// fmtName()) — recording filenames are timestamp-prefixed, so this also
+// doubles as the sort key for "most recent first".
+function fmtName(name) {
+  const nf = name.match(/^(\d{4}[-]?\d{2}[-]?\d{2})[T_](\d{2}[:]?\d{2}[:]?\d{2})Z?_([^.]+)\.[^.]+$/i);
+  if (nf) {
+    const d = nf[1].replace(/-/g, ''), t = nf[2].replace(/:/g, '');
+    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)} ${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)} · ${nf[3].toUpperCase()}`;
+  }
+  const lg = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.[^.]+$/);
+  if (lg) return `${lg[1]}-${lg[2]}-${lg[3]} ${lg[4]}:${lg[5]}:${lg[6]}`;
+  return name;
+}
+
+// Sortable "YYYYMMDDHHMMSS" string parsed from the same two filename
+// patterns fmtName() recognizes, or null if the name doesn't match either.
+function recTimeKey(name) {
+  const nf = name.match(/^(\d{4}[-]?\d{2}[-]?\d{2})[T_](\d{2}[:]?\d{2}[:]?\d{2})Z?_[^.]+\.[^.]+$/i);
+  if (nf) return nf[1].replace(/-/g, '') + nf[2].replace(/:/g, '');
+  const lg = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.[^.]+$/);
+  if (lg) return lg[1] + lg[2] + lg[3] + lg[4] + lg[5] + lg[6];
+  return null;
+}
+
+function sortRecordingsByRecency(files) {
+  return [...files].sort((a, b) => {
+    const ka = recTimeKey(a.name), kb = recTimeKey(b.name);
+    if (ka && kb) return kb.localeCompare(ka);   // newest first
+    if (ka) return -1;                           // timestamped names before unparseable ones
+    if (kb) return 1;
+    return b.name.localeCompare(a.name);         // best-effort fallback
+  });
+}
+
 async function loadRecList() {
   // Capture which tab this call is for — a fast double-tap between tabs
   // can leave an older fetch still in flight; if it resolves after the
@@ -406,11 +582,11 @@ async function loadRecList() {
     const r = await fetch('/api/recordings/' + encodeURIComponent(src));
     const data = await r.json();
     if (requestedTab !== activeRecTab) return;
-    const files = data.files || [];
+    const files = sortRecordingsByRecency(data.files || []);
     if (!files.length) { list.innerHTML = '<div class="rec-empty">No recordings.</div>'; return; }
     list.innerHTML = files.map(f => `
       <div class="rec-item">
-        <span class="rec-name" title="${f.name}">${f.name}</span>
+        <span class="rec-name" title="${f.name}">${fmtName(f.name)}</span>
         <span class="rec-size">${fmtSize(f.size)}</span>
         <button class="rec-icon-btn fav ${f.favorited ? 'on' : ''}" data-act="fav" data-name="${encodeURIComponent(f.name)}">${f.favorited ? '★' : '☆'}</button>
         <button class="rec-icon-btn del" data-act="del" data-name="${encodeURIComponent(f.name)}">🗑</button>
@@ -449,25 +625,41 @@ document.querySelectorAll('.rec-tab').forEach(tab => tab.addEventListener('click
 }));
 document.querySelector('.rec-tab[data-src="evk"]').classList.add('active');
 
-// ── Drawer open/close (edge tabs) ───────────────────────────────────────────
-function toggleDrawer(drawerEl, tabEl, glyphOpen, glyphClosed, onOpen) {
-  const isOpen = drawerEl.classList.toggle('open');
-  tabEl.textContent = isOpen ? glyphOpen : glyphClosed;
-  if (isOpen && onOpen) onOpen();
+// ── Drawer open/close (edge tabs) — three drawers, mutually exclusive ──────
+const drawers = {
+  recordings: { el: document.getElementById('drawer-recordings'), tab: document.getElementById('tab-recordings'), openGlyph: '▼', closedGlyph: '▲', onOpen: loadRecList },
+  settings:   { el: document.getElementById('drawer-settings'),   tab: document.getElementById('tab-settings'),   openGlyph: '▶', closedGlyph: '◀', onOpen: loadSchedules },
+  camera:     { el: document.getElementById('drawer-camera'),     tab: document.getElementById('tab-camera'),     openGlyph: '◀', closedGlyph: '▶', onOpen: loadCameraFields },
+};
+function closeDrawer(d) { d.el.classList.remove('open'); d.tab.textContent = d.closedGlyph; }
+function toggleDrawer(name) {
+  const target = drawers[name];
+  const wasOpen = target.el.classList.contains('open');
+  Object.values(drawers).forEach(closeDrawer);
+  if (!wasOpen) {
+    target.el.classList.add('open');
+    target.tab.textContent = target.openGlyph;
+    if (target.onOpen) target.onOpen();
+  }
 }
-const drawerRecordings = document.getElementById('drawer-recordings');
-const drawerSettings   = document.getElementById('drawer-settings');
-const tabRecordings    = document.getElementById('tab-recordings');
-const tabSettings      = document.getElementById('tab-settings');
+drawers.recordings.tab.addEventListener('click', () => toggleDrawer('recordings'));
+drawers.settings.tab.addEventListener('click', () => toggleDrawer('settings'));
+drawers.camera.tab.addEventListener('click', () => toggleDrawer('camera'));
 
-tabRecordings.addEventListener('click', () => {
-  if (drawerSettings.classList.contains('open')) toggleDrawer(drawerSettings, tabSettings, '◀', '◀');
-  toggleDrawer(drawerRecordings, tabRecordings, '▼', '▲', loadRecList);
-});
-tabSettings.addEventListener('click', () => {
-  if (drawerRecordings.classList.contains('open')) toggleDrawer(drawerRecordings, tabRecordings, '▼', '▲');
-  toggleDrawer(drawerSettings, tabSettings, '▶', '◀');
-});
+// ── Reusable hold-to-repeat stepper ─────────────────────────────────────────
+function attachStepper(btn, delta, getVal, setVal) {
+  let holdTimer = null, holdInterval = null;
+  const step = () => setVal(getVal() + delta);
+  const start = (ev) => {
+    ev.preventDefault();
+    step();
+    holdTimer = setTimeout(() => { holdInterval = setInterval(step, 120); }, 500);
+  };
+  const stop = () => { clearTimeout(holdTimer); clearInterval(holdInterval); };
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('touchstart', start, { passive: false });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(evt => btn.addEventListener(evt, stop));
+}
 
 // ── Duration: stepper + keypad ──────────────────────────────────────────────
 function renderDuration() {
@@ -478,41 +670,32 @@ function setDuration(v) {
   duration = Math.max(0, Math.min(3600, Math.round(v)));
   renderDuration();
 }
+document.querySelectorAll('#duration-steppers .stepper-btn').forEach(btn =>
+  attachStepper(btn, parseInt(btn.dataset.delta, 10), () => duration, setDuration));
 
-document.querySelectorAll('.stepper-btn').forEach(btn => {
-  let holdTimer = null, holdInterval = null;
-  const delta = parseInt(btn.dataset.delta, 10);
-  const step = () => setDuration(duration + delta);
-  const start = (ev) => {
-    ev.preventDefault();
-    step();
-    holdTimer = setTimeout(() => { holdInterval = setInterval(step, 120); }, 500);
-  };
-  const stop = () => { clearTimeout(holdTimer); clearInterval(holdInterval); };
-  btn.addEventListener('mousedown', start);
-  btn.addEventListener('touchstart', start, { passive: false });
-  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(evt => btn.addEventListener(evt, stop));
-});
-
-// Keypad overlay
+// Keypad overlay — reused for any numeric field (duration, camera settings):
+// openKeypadFor(min, max, onCommit) sets the target; DONE clamps the typed
+// value and hands it to onCommit. Always starts blank, never pre-filled —
+// this is for typing a whole new exact number, like a PIN pad; each field's
+// stepper handles nudging the existing value instead.
 const keypadOverlay = document.getElementById('keypad-overlay');
 const keypadDisplay = document.getElementById('keypad-display');
 let keypadValue = '';
+let keypadMin = 0, keypadMax = 0, keypadOnCommit = null;
 
-function openKeypad() {
-  // Always starts blank (not pre-filled with the current value) — this is
-  // for typing a whole new exact number, like a PIN pad; the stepper next
-  // to it already handles nudging the existing value.
+function openKeypadFor(min, max, onCommit) {
+  keypadMin = min; keypadMax = max; keypadOnCommit = onCommit;
   keypadValue = '';
   keypadDisplay.textContent = '0';
   keypadOverlay.hidden = false;
 }
-function closeKeypad() { keypadOverlay.hidden = true; }
+function closeKeypad() { keypadOverlay.hidden = true; keypadOnCommit = null; }
 
-document.getElementById('keypad-open').addEventListener('click', openKeypad);
+document.getElementById('keypad-open').addEventListener('click', () => openKeypadFor(0, 3600, setDuration));
 document.getElementById('keypad-cancel').addEventListener('click', closeKeypad);
 document.getElementById('keypad-done').addEventListener('click', () => {
-  setDuration(keypadValue ? parseInt(keypadValue, 10) : 0);
+  const v = Math.max(keypadMin, Math.min(keypadMax, keypadValue ? parseInt(keypadValue, 10) : 0));
+  if (keypadOnCommit) keypadOnCommit(v);
   closeKeypad();
 });
 document.querySelectorAll('.keypad-grid button').forEach(btn => btn.addEventListener('click', () => {
@@ -524,6 +707,140 @@ document.querySelectorAll('.keypad-grid button').forEach(btn => btn.addEventList
 }));
 
 renderDuration();
+
+// ── Scheduled recording (right drawer) — talks to the eventide-core
+// scheduler module's API (modules/eventide-core/scheduler.py) via the same
+// proxy scheme as everything else here. Time is built from touch-friendly
+// hour/minute steppers + day-of-week chips rather than a raw cron text
+// field, then assembled into a standard 5-field cron expression.
+const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const DAY_CRON_NUM = [1, 2, 3, 4, 5, 6, 0];   // cron dow: 0=Sunday..6=Saturday
+let schedHour = 6, schedMinute = 0, schedHourly = false;
+let schedDaysOn = DAY_LABELS.map(() => true);   // default: every day
+
+function renderSchedTime() {
+  const readout = document.getElementById('sched-time-readout');
+  readout.textContent = schedHourly
+    ? `:${String(schedMinute).padStart(2, '0')} · hourly`
+    : `${String(schedHour).padStart(2, '0')}:${String(schedMinute).padStart(2, '0')}`;
+  document.querySelectorAll('[data-sched-stepper="hour"]').forEach(btn => btn.disabled = schedHourly);
+}
+function setSchedHour(v)   { schedHour = ((Math.round(v) % 24) + 24) % 24; renderSchedTime(); }
+function setSchedMinute(v) { schedMinute = ((Math.round(v) % 60) + 60) % 60; renderSchedTime(); }
+document.querySelectorAll('[data-sched-stepper="hour"]').forEach(btn =>
+  attachStepper(btn, parseInt(btn.dataset.delta, 10), () => schedHour, setSchedHour));
+document.querySelectorAll('[data-sched-stepper="minute"]').forEach(btn =>
+  attachStepper(btn, parseInt(btn.dataset.delta, 10), () => schedMinute, setSchedMinute));
+
+document.getElementById('sched-hourly-toggle').addEventListener('click', () => {
+  schedHourly = !schedHourly;
+  document.getElementById('sched-hourly-toggle').textContent = `REPEAT EVERY HOUR: ${schedHourly ? 'ON' : 'OFF'}`;
+  renderSchedTime();
+});
+renderSchedTime();
+
+function renderDayChips() {
+  const el = document.getElementById('sched-days');
+  el.innerHTML = DAY_LABELS.map((d, i) => `<button class="day-chip ${schedDaysOn[i] ? 'on' : ''}" data-day="${i}">${d}</button>`).join('');
+  el.querySelectorAll('.day-chip').forEach(btn => btn.addEventListener('click', () => {
+    const i = +btn.dataset.day;
+    schedDaysOn[i] = !schedDaysOn[i];
+    btn.classList.toggle('on', schedDaysOn[i]);
+  }));
+}
+renderDayChips();
+
+function cronFromSched() {
+  const dow = schedDaysOn.every(Boolean) ? '*' : schedDaysOn.map((on, i) => on ? DAY_CRON_NUM[i] : null).filter(v => v !== null).sort().join(',');
+  const hourField = schedHourly ? '*' : schedHour;
+  return `${schedMinute} ${hourField} * * ${dow || '*'}`;
+}
+// Best-effort reverse of cronFromSched(), for displaying schedules created
+// here (or elsewhere, if the pattern matches) in human terms; anything more
+// complex than "minute hour * * dow-list" just falls back to the raw string.
+function cronToHuman(cron) {
+  const parts = (cron || '').trim().split(/\s+/);
+  if (parts.length !== 5) return cron;
+  const [min, hour, dom, mon, dow] = parts;
+  if (dom !== '*' || mon !== '*' || !/^\d+$/.test(min)) return cron;
+  if (hour !== '*' && !/^\d+$/.test(hour)) return cron;
+  const time = hour === '*' ? `:${min.padStart(2, '0')} (hourly)` : `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  if (dow === '*') return { time, days: 'Every day' };
+  const nums = dow.split(',').map(s => parseInt(s, 10));
+  if (nums.some(Number.isNaN)) return { time, days: dow };
+  const days = DAY_CRON_NUM.map((n, i) => nums.includes(n) ? DAY_LABELS[i] : null).filter(Boolean).join(' ');
+  return { time, days: days || dow };
+}
+
+document.getElementById('sched-add').addEventListener('click', async () => {
+  const btn = document.getElementById('sched-add');
+  btn.disabled = true;
+  try {
+    const body = { cron: cronFromSched(), duration_seconds: duration };
+    const r = await fetch(proxyUrl('eventide-core', 'scheduler_api', '/api/schedules'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    toast('Schedule added');
+    loadSchedules();
+  } catch (e) {
+    toast('Add schedule failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function loadSchedules() {
+  const list = document.getElementById('sched-list');
+  try {
+    const r = await fetch(proxyUrl('eventide-core', 'scheduler_api', '/api/schedules'));
+    const data = await r.json();
+    const items = data.items || [];
+    if (!items.length) { list.innerHTML = '<div class="rec-empty">No schedules.</div>'; return; }
+    list.innerHTML = items.map(it => {
+      const h = cronToHuman(it.cron);
+      const timeDays = typeof h === 'string' ? h : `${h.time} · ${h.days}`;
+      const dur = it.duration_seconds ? `${it.duration_seconds}s` : 'until stopped';
+      return `
+        <div class="sched-item">
+          <div class="sched-info">
+            <div class="sched-time">${timeDays}</div>
+            <div class="sched-days">${dur}${it.last_result ? ' · ' + it.last_result : ''}</div>
+          </div>
+          <input type="checkbox" data-sched-id="${it.id}" data-act="toggle" ${it.enabled ? 'checked' : ''}>
+          <button class="rec-icon-btn del" data-sched-id="${it.id}" data-act="del">🗑</button>
+        </div>`;
+    }).join('');
+    list.querySelectorAll('[data-act="toggle"]').forEach(cb => cb.addEventListener('change', () => toggleSchedule(cb.dataset.schedId, cb.checked, cb)));
+    list.querySelectorAll('[data-act="del"]').forEach(btn => btn.addEventListener('click', () => deleteSchedule(btn.dataset.schedId)));
+  } catch {
+    list.innerHTML = '<div class="rec-empty">Error loading schedules.</div>';
+  }
+}
+
+async function toggleSchedule(id, enabled, cb) {
+  cb.disabled = true;
+  try {
+    const r = await fetch(proxyUrl('eventide-core', 'scheduler_api', '/api/schedules/' + encodeURIComponent(id)), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+    });
+    if (!r.ok) throw new Error(r.statusText);
+  } catch (e) {
+    toast('Update failed: ' + e.message);
+    cb.checked = !enabled;
+  } finally {
+    cb.disabled = false;
+  }
+}
+
+async function deleteSchedule(id) {
+  try {
+    const r = await fetch(proxyUrl('eventide-core', 'scheduler_api', '/api/schedules/' + encodeURIComponent(id)), { method: 'DELETE' });
+    if (!r.ok) throw new Error(r.statusText);
+    loadSchedules();
+  } catch (e) { toast('Delete failed: ' + e.message); }
+}
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 // The first poll round must wait for module discovery to resolve at least

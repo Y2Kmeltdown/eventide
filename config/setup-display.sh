@@ -2,35 +2,52 @@
 set -e
 
 # ============================================================
-# Waveshare 2.8" HDMI LCD (H) Kiosk Setup Script
-# For Armbian on Radxa Cubie A7Z (or similar minimal Debian-based SBC install)
+# Eventide Touchscreen Kiosk Setup Script
+# For Armbian (or similar minimal Debian/Ubuntu-based SBC install)
 #
 # Boots straight into a full-screen Chromium kiosk showing a single
-# webpage, with the Waveshare panel's buggy EDID range worked around,
-# console autologin, and rotated touch input matching a rotated display.
+# webpage, with console autologin on tty1 and (optionally) rotated touch
+# input matching a rotated display. The two device-specific workarounds
+# below (FORCE_MODELINE, TOUCH_DEVICE) are opt-in — leave them unset for a
+# normal, well-behaved display with no touchscreen.
 #
 # USAGE:
 #   1. Edit the CONFIGURATION block below for your setup.
 #   2. Run as the target user (the script uses sudo internally where needed):
-#        chmod +x setup-kiosk.sh
-#        ./setup-kiosk.sh
+#        chmod +x setup-display.sh
+#        ./setup-display.sh
 #   3. Reboot: sudo reboot
 # ============================================================
 
 # ---- CONFIGURATION - edit these before running ----
 KIOSK_USER="eventide"                        # the user that will autologin and run the kiosk
-KIOSK_URL="http://localhost/kiosk"            # the webpage to display — /kiosk is the
-                                              # touchscreen-only digicam UI (EVK+Basler);
-                                              # use "http://localhost" for the full dashboard
+KIOSK_URL="http://localhost"                 # the webpage to display
 HDMI_OUTPUT="HDMI-1"                         # confirm with: xrandr --query (name can vary by board)
-ROTATION="left"                              # left | right | inverted | normal
-SCALE_FACTOR="0.5"                           # chromium zoom-out equivalent, e.g. 0.5 = 50%
-TOUCH_DEVICE="WaveShare WS170120 Touchscreen" # confirm with: DISPLAY=:0 xinput list
-WINDOW_SIZE="640,480"                        # resolution AFTER rotation (panel native is 480x640;
-                                              # left/right rotate makes it 640x480)
+ROTATION="normal"                            # left | right | inverted | normal
+SCALE_FACTOR="1"                             # chromium zoom-out equivalent, e.g. 0.5 = 50%
+                                              # (use <1 on a very small/high-DPI panel)
+WINDOW_SIZE="1024,768"                       # resolution AFTER rotation
+TOUCH_DEVICE=""                              # exact device name from `DISPLAY=:0 xinput list`;
+                                              # leave blank to skip touch setup entirely (no touchscreen,
+                                              # or the default orientation already matches)
+CHROMIUM_BIN="chromium"                      # binary launched in kiosk mode. Some Ubuntu/Debian images
+                                              # only ship a snap-backed "chromium-browser" wrapper with no
+                                              # usable local binary for --kiosk mode — if `apt install
+                                              # chromium` isn't available on your image, either enable a
+                                              # repo that provides it (e.g. Armbian's own repo does) or
+                                              # `sudo snap install chromium` and set this to
+                                              # /snap/bin/chromium (and drop "chromium" from the apt
+                                              # install list below, since that package won't exist there)
+FORCE_MODELINE=""                            # leave blank for a normal display (EDID auto-detected).
+                                              # Only set this if Xorg fails to start with "no screens
+                                              # found" — some small panels (e.g. certain Waveshare HDMI
+                                              # LCDs) report a preferred timing that violates their own
+                                              # declared sync range. Format: "<mode-name> <modeline
+                                              # params>", e.g.
+                                              # "480x640_60 32.00 480 490 500 570 640 660 680 760 -hsync -vsync"
 # ---- end configuration ----
 
-# Coordinate Transformation Matrix per rotation direction (must match ROTATION)
+# Coordinate Transformation Matrix per rotation direction (only used if TOUCH_DEVICE is set)
 case "$ROTATION" in
   left)     TOUCH_MATRIX="0 -1 1 1 0 0 0 0 1" ;;
   right)    TOUCH_MATRIX="0 1 0 -1 0 1 0 0 1" ;;
@@ -39,31 +56,37 @@ case "$ROTATION" in
   *) echo "Unknown ROTATION value: $ROTATION"; exit 1 ;;
 esac
 
-echo "== Waveshare kiosk setup for user: $KIOSK_USER =="
+echo "== Eventide kiosk setup for user: $KIOSK_USER =="
 
 # ---- 1. Install required packages ----
 echo "-- Installing packages --"
 sudo apt update
-sudo apt install --no-install-recommends -y \
-  xserver-xorg xinit openbox chromium unclutter \
-  x11-xserver-utils xinput
+PKGS="xserver-xorg xinit openbox unclutter x11-xserver-utils xinput"
+if [ "$CHROMIUM_BIN" = "chromium" ]; then
+  PKGS="$PKGS chromium"
+fi
+sudo apt install --no-install-recommends -y $PKGS
 
-# ---- 2. Xorg monitor override ----
-# The Waveshare panel's own EDID reports a preferred timing that violates
-# its own declared sync range (its "preferred mode" needs ~56kHz hsync but
-# it declares a 28-40kHz valid range) causing Xorg to reject all modes and
-# fail to start ("no screens found"). This forces Xorg to use the correct
-# timing anyway and skip that broken range check.
-echo "-- Writing Xorg monitor override --"
-sudo mkdir -p /etc/X11/xorg.conf.d
-sudo tee /etc/X11/xorg.conf.d/10-monitor.conf > /dev/null << EOF
+# ---- 2. Xorg monitor override (opt-in) ----
+# Only needed for a panel whose EDID Xorg can't use as-is (see FORCE_MODELINE
+# above for the symptom). Skipped by default — a normal display is detected
+# and configured by Xorg automatically with no override file at all.
+if [ -n "$FORCE_MODELINE" ]; then
+  MODE_NAME=$(echo "$FORCE_MODELINE" | awk '{print $1}')
+  MODE_PARAMS=$(echo "$FORCE_MODELINE" | cut -d' ' -f2-)
+  echo "-- Writing Xorg monitor override ($MODE_NAME) --"
+  sudo mkdir -p /etc/X11/xorg.conf.d
+  sudo tee /etc/X11/xorg.conf.d/10-monitor.conf > /dev/null << EOF
 Section "Monitor"
     Identifier "$HDMI_OUTPUT"
-    Modeline "480x640_60" 32.00 480 490 500 570 640 660 680 760 -hsync -vsync
-    Option "PreferredMode" "480x640_60"
+    Modeline "$MODE_NAME" $MODE_PARAMS
+    Option "PreferredMode" "$MODE_NAME"
     Option "ModeValidation" "AllowNonEdidModes, NoHorizSyncCheck, NoVertRefreshCheck, NoMaxPClkCheck, NoEdidMaxPClkCheck"
 EndSection
 EOF
+else
+  echo "-- Skipping Xorg monitor override (FORCE_MODELINE not set; using normal EDID detection) --"
+fi
 
 # ---- 3. Console autologin on tty1 ----
 echo "-- Configuring autologin on tty1 --"
@@ -100,9 +123,15 @@ xset -dpms
 xset s noblank
 unclutter -idle 0.5 -root &
 xrandr --output $HDMI_OUTPUT --rotate $ROTATION
+EOF
+if [ -n "$TOUCH_DEVICE" ]; then
+cat >> "$USER_HOME/.xinitrc" << EOF
 xinput set-prop "$TOUCH_DEVICE" 'Coordinate Transformation Matrix' $TOUCH_MATRIX
+EOF
+fi
+cat >> "$USER_HOME/.xinitrc" << EOF
 openbox-session &
-chromium --noerrdialogs --disable-infobars --kiosk --no-first-run \\
+$CHROMIUM_BIN --noerrdialogs --disable-infobars --kiosk --no-first-run \\
   --force-device-scale-factor=$SCALE_FACTOR \\
   --window-size=$WINDOW_SIZE --window-position=0,0 --start-fullscreen \\
   $KIOSK_URL
@@ -118,3 +147,4 @@ echo "If the display or touch doesn't come up correctly after reboot, verify wit
 echo "  xrandr --query"
 echo "  DISPLAY=:0 xinput list"
 echo "and re-run this script with corrected values in the CONFIGURATION block."
+echo "(FORCE_MODELINE and TOUCH_DEVICE are opt-in — see the comments above each.)"

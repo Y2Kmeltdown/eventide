@@ -19,18 +19,20 @@ set -e
 #   3. Reboot: sudo reboot
 # ============================================================
 
-# ---- CONFIGURATION - edit these before running ----
-KIOSK_USER="eventide"                        # the user that will autologin and run the kiosk
-KIOSK_URL="http://localhost"                 # the webpage to display
-HDMI_OUTPUT="HDMI-1"                         # confirm with: xrandr --query (name can vary by board)
-ROTATION="normal"                            # left | right | inverted | normal
-SCALE_FACTOR="1"                             # chromium zoom-out equivalent, e.g. 0.5 = 50%
+# ---- CONFIGURATION - edit these before running, or override any of them
+#      as environment variables (e.g. from install.sh's optional
+#      SETUP_KIOSK_DISPLAY step) without touching this file ----
+KIOSK_USER="${KIOSK_USER:-eventide}"                # the user that will autologin and run the kiosk
+KIOSK_URL="${KIOSK_URL:-http://localhost}"          # the webpage to display
+HDMI_OUTPUT="${HDMI_OUTPUT:-HDMI-1}"                # confirm with: xrandr --query (name can vary by board)
+ROTATION="${ROTATION:-normal}"                      # left | right | inverted | normal
+SCALE_FACTOR="${SCALE_FACTOR:-1}"                   # chromium zoom-out equivalent, e.g. 0.5 = 50%
                                               # (use <1 on a very small/high-DPI panel)
-WINDOW_SIZE="1024,768"                       # resolution AFTER rotation
-TOUCH_DEVICE=""                              # exact device name from `DISPLAY=:0 xinput list`;
+WINDOW_SIZE="${WINDOW_SIZE:-1024,768}"       # resolution AFTER rotation
+TOUCH_DEVICE="${TOUCH_DEVICE:-}"             # exact device name from `DISPLAY=:0 xinput list`;
                                               # leave blank to skip touch setup entirely (no touchscreen,
                                               # or the default orientation already matches)
-CHROMIUM_BIN="chromium"                      # binary launched in kiosk mode. Some Ubuntu/Debian images
+CHROMIUM_BIN="${CHROMIUM_BIN:-chromium}"     # binary launched in kiosk mode. Some Ubuntu/Debian images
                                               # only ship a snap-backed "chromium-browser" wrapper with no
                                               # usable local binary for --kiosk mode — if `apt install
                                               # chromium` isn't available on your image, either enable a
@@ -38,7 +40,7 @@ CHROMIUM_BIN="chromium"                      # binary launched in kiosk mode. So
                                               # `sudo snap install chromium` and set this to
                                               # /snap/bin/chromium (and drop "chromium" from the apt
                                               # install list below, since that package won't exist there)
-FORCE_MODELINE=""                            # leave blank for a normal display (EDID auto-detected).
+FORCE_MODELINE="${FORCE_MODELINE:-}"         # leave blank for a normal display (EDID auto-detected).
                                               # Only set this if Xorg fails to start with "no screens
                                               # found" — some small panels (e.g. certain Waveshare HDMI
                                               # LCDs) report a preferred timing that violates their own

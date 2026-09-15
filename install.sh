@@ -25,6 +25,27 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 EVENTIDE_USER="${SUDO_USER:-$USER}"
 
+# Optional: auto-mount a dedicated recordings SD card by filesystem label
+# (not by /dev/mmcblkN or /dev/sdN — those aren't guaranteed stable across
+# reboots or reader swaps). Leave RECORDINGS_SD_LABEL empty to skip this
+# entirely — most installs just record to main storage. Format the card
+# once yourself first: sudo mkfs.ext4 -L "$RECORDINGS_SD_LABEL" /dev/<part>
+# then set the label below and re-run (or run just this installer again).
+RECORDINGS_SD_LABEL="${RECORDINGS_SD_LABEL:-}"
+RECORDINGS_SD_MOUNTPOINT="${RECORDINGS_SD_MOUNTPOINT:-/media/eventide}"
+
+# Optional: set up a local touchscreen kiosk (config/setup-display.sh) as
+# part of this install — boots straight into full-screen Chromium showing
+# the dashboard (or /kiosk, the touchscreen-specific UI) instead of a login
+# prompt. Leave SETUP_KIOSK_DISPLAY unset/empty to skip (most installs are
+# headless or only ever accessed remotely). When set, config/setup-display.sh
+# runs with its own defaults (see that file's CONFIGURATION block) — override
+# any of KIOSK_URL, HDMI_OUTPUT, ROTATION, SCALE_FACTOR, WINDOW_SIZE,
+# TOUCH_DEVICE, CHROMIUM_BIN, FORCE_MODELINE the same way, as environment
+# variables set before running this installer, e.g.:
+#   SETUP_KIOSK_DISPLAY=1 KIOSK_URL=http://localhost/kiosk TOUCH_DEVICE="wch.cn USB2IIC_CTP_CONTROL" ./install.sh
+SETUP_KIOSK_DISPLAY="${SETUP_KIOSK_DISPLAY:-}"
+
 step() { echo; echo "==> $*"; }
 fail() { echo; echo "[FAIL] $*" >&2; echo "[FAIL] full log: $LOG_FILE" >&2; exit 1; }
 trap 'fail "installation aborted at line $LINENO (command: $BASH_COMMAND)"' ERR
@@ -277,6 +298,40 @@ sudo apt install -y \
 step "OS-specific packages ($OS)"
 run_os_hook packages
 
+## RECORDINGS SD CARD (optional, generic — not an OS-specific hook; the
+## same labeled-mount approach works identically on any board)
+step "Recordings SD card auto-mount"
+if [ -z "$RECORDINGS_SD_LABEL" ]; then
+    echo "[INFO] RECORDINGS_SD_LABEL not set — skipping SD card auto-mount setup"
+else
+    # Never format automatically — the card may already hold data from a
+    # previous use. Require it to already exist and be labeled.
+    if ! sudo blkid -L "$RECORDINGS_SD_LABEL" > /dev/null 2>&1; then
+        fail "no filesystem labeled '$RECORDINGS_SD_LABEL' found. Format the card first, e.g.: sudo mkfs.ext4 -L $RECORDINGS_SD_LABEL /dev/<the card's partition> — then re-run this installer."
+    fi
+    sudo tee "/etc/systemd/system/media-eventide.mount" > /dev/null << EOF
+[Unit]
+Description=Eventide recordings SD card
+
+[Mount]
+What=LABEL=$RECORDINGS_SD_LABEL
+Where=$RECORDINGS_SD_MOUNTPOINT
+Options=defaults,nofail,x-systemd.device-timeout=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable media-eventide.mount
+    # Best-effort: nofail already means boot/install must not block on the
+    # card being present, so a failure here is a warning, not a fail().
+    if sudo systemctl start media-eventide.mount; then
+        echo "[OK] SD card mounted at $RECORDINGS_SD_MOUNTPOINT"
+    else
+        echo "[WARN] media-eventide.mount enabled but did not mount now — check the card is inserted; it will retry on next boot/access"
+    fi
+fi
+
 ## RUST TOOLCHAIN (kept in the base install so Rust modules build on-device)
 step "Rust toolchain"
 if [ -x "$EVENTIDE_HOME/.cargo/bin/cargo" ]; then
@@ -363,6 +418,17 @@ echo "[OK] supervisord installed"
 echo "[OK] rust toolchain working"
 run_os_hook verify
 
+## TOUCHSCREEN KIOSK DISPLAY (optional, generic — config/setup-display.sh
+## manages its own packages/autologin/.xinitrc; nothing else in this
+## installer depends on it, and it depends only on the base platform
+## already being up, hence running last)
+step "Touchscreen kiosk display"
+if [ -z "$SETUP_KIOSK_DISPLAY" ]; then
+    echo "[INFO] SETUP_KIOSK_DISPLAY not set — skipping kiosk display setup (run config/setup-display.sh manually any time)"
+else
+    bash /usr/local/eventide/config/setup-display.sh
+fi
+
 ## DONE
 step "Eventide base platform installed successfully"
 sudo chmod -R 777 "$EVENTIDE_DIR"
@@ -370,6 +436,12 @@ echo "Detected OS: $OS"
 echo "Base config: /etc/supervisor/conf.d/00-eventide-base.conf"
 echo "To view running processes visit http://$HOSTNAME.local or run: supervisorctl status"
 echo "Install modules (cameras, gimbal, ...) from the dashboard MODULES tab — see docs/MODULES.md."
+if [ -n "$RECORDINGS_SD_LABEL" ]; then
+    echo "SD card mounted at $RECORDINGS_SD_MOUNTPOINT — set this as the Recordings directory in the dashboard SETTINGS tab to actually use it."
+fi
+if [ -n "$SETUP_KIOSK_DISPLAY" ]; then
+    echo "Touchscreen kiosk configured — will boot straight into it after this reboot. Re-run config/setup-display.sh any time to adjust display/touch settings."
+fi
 echo "Rebooting in 10 seconds (Ctrl-C to cancel)."
 sleep 10
 sudo reboot

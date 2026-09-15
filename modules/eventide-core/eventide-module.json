@@ -1,7 +1,7 @@
 {
   "name": "eventide-core",
   "version": "1.0.0",
-  "description": "Core Eventide services: playback server and master recording control.",
+  "description": "Core Eventide services: playback server, master recording control, and scheduled (cron) recording.",
   "author": "Eventide",
   "install": {
     "commands": ["cd playback && cargo build --release"],
@@ -9,8 +9,19 @@
       "playback/target/release/playback": "{install_dir}/playback"
     }
   },
+  "arguments": [
+    {
+      "name": "backend_url",
+      "flag": "--backend-url",
+      "type": "str",
+      "default": "http://127.0.0.1:5000",
+      "required": false,
+      "description": "Base URL of the eventide backend (eventide.py), used by the scheduler to call /api/recording/trigger when a schedule fires."
+    }
+  ],
   "sockets": [
-    { "name": "playback", "type": "tcp", "port": 8084, "description": "MJPEG playback server" }
+    { "name": "playback", "type": "tcp", "port": 8084, "description": "MJPEG playback server" },
+    { "name": "scheduler_api", "type": "tcp", "description": "Scheduled-recording CRUD API (GET/POST /api/schedules, PATCH/DELETE /api/schedules/<id>). Port allocated by eventide at install time." }
   ],
   "programs": [
     {
@@ -22,9 +33,45 @@
       "startretries": 10000,
       "priority": 2,
       "user": "root"
+    },
+    {
+      "name": "recording_scheduler",
+      "command": "{venv_python} {module_dir}/scheduler.py --port {socket:scheduler_api} --data-file {module_dir}/data/schedules.json --backend-url {arg:backend_url}",
+      "directory": "{module_dir}",
+      "autostart": true,
+      "autorestart": true,
+      "startretries": 10000,
+      "priority": 3,
+      "user": "root"
     }
   ],
   "ui": [
-    { "id": "master-record", "type": "master-record", "title": "RECORDING", "region": "sidebar", "default": true }
+    { "id": "master-record", "type": "master-record", "title": "RECORDING", "region": "sidebar", "default": true },
+    {
+      "id": "schedule-form",
+      "type": "form",
+      "title": "SCHEDULE RECORDING",
+      "region": "sidebar",
+      "default": true,
+      "socket": "scheduler_api",
+      "put": "/api/schedules",
+      "method": "POST",
+      "submit_label": "+ ADD SCHEDULE",
+      "fields": [
+        {"key": "label", "label": "Label", "kind": "text"},
+        {"key": "cron", "label": "Cron (m h dom mon dow)", "kind": "text"},
+        {"key": "duration_seconds", "label": "Duration (s, 0 = until stopped)", "kind": "number", "min": 0}
+      ]
+    },
+    {
+      "id": "schedule-table",
+      "type": "schedule-table",
+      "title": "SCHEDULED RECORDINGS",
+      "region": "sidebar",
+      "default": true,
+      "socket": "scheduler_api",
+      "get": "/api/schedules",
+      "interval": 5000
+    }
   ]
 }

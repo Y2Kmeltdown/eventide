@@ -1976,6 +1976,85 @@ const WIDGET_RENDERERS = {
     return { destroy() { dead = true; clearInterval(timer); } };
   },
 
+  // Scheduled-recording jobs (sidebar) — cron-triggered recording jobs
+  // managed by the eventide-core scheduler module. A dedicated widget
+  // rather than the generic `table`: each row is independently
+  // enabled/disabled and deletable, server-tracked state, which doesn't fit
+  // `table`'s single-globally-active-row row_action/stop_action pattern
+  // (built for e.g. the ADS-B track/stop button).
+  'schedule-table'(bodyEl, comp) {
+    let dead = false;
+    bodyEl.innerHTML = `<div class="ui-table-wrap"><div class="empty" style="padding:8px 0">Waiting for data…</div></div>`;
+    const wrap = bodyEl.firstChild;
+
+    async function poll() {
+      if (dead) return;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        if (!r.ok) return;
+        const data = await r.json();
+        render(Array.isArray(data) ? data : (data.items || []));
+      } catch { /* module offline */ }
+    }
+
+    function render(items) {
+      if (!items.length) {
+        wrap.innerHTML = `<div class="empty" style="padding:8px 0">No scheduled recordings.</div>`;
+        refitWidget(bodyEl);
+        return;
+      }
+      wrap.innerHTML = `<table class="adsb-table"><thead><tr>
+          <th>Label</th><th>Cron</th><th>Dur (s)</th><th>Last run</th><th>On</th><th></th>
+        </tr></thead><tbody>
+          ${items.map((it, ri) => `<tr>
+            <td>${escHtml(it.label || '')}</td>
+            <td>${escHtml(it.cron || '')}</td>
+            <td>${escHtml(it.duration_seconds ? String(it.duration_seconds) : '∞')}</td>
+            <td title="${escHtml(it.last_result || '')}">${escHtml(it.last_run ? new Date(it.last_run).toLocaleString() : '—')}</td>
+            <td><input type="checkbox" data-en="${ri}" ${it.enabled ? 'checked' : ''}></td>
+            <td><button class="adsb-track-btn" data-del="${ri}" title="Delete">×</button></td>
+          </tr>`).join('')}</tbody></table>`;
+      wrap.querySelectorAll('[data-en]').forEach(cb =>
+        cb.addEventListener('change', () => onToggle(items[+cb.dataset.en], cb)));
+      wrap.querySelectorAll('[data-del]').forEach(btn =>
+        btn.addEventListener('click', () => onDelete(items[+btn.dataset.del])));
+      refitWidget(bodyEl);
+    }
+
+    async function onToggle(item, cb) {
+      cb.disabled = true;
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, `${comp.get}/${encodeURIComponent(item.id)}`), {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: cb.checked }),
+        });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+      } catch (e) {
+        toast(`Schedule update failed: ${e.message}`, 'err');
+        cb.checked = !cb.checked;
+      } finally {
+        cb.disabled = false;
+        poll();
+      }
+    }
+
+    async function onDelete(item) {
+      try {
+        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, `${comp.get}/${encodeURIComponent(item.id)}`), { method: 'DELETE' });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+        toast(`Deleted "${item.label || item.id}"`, 'ok');
+      } catch (e) {
+        toast(`Delete failed: ${e.message}`, 'err');
+      } finally {
+        poll();
+      }
+    }
+
+    poll();
+    const timer = setInterval(poll, comp.interval || 5000);
+    return { destroy() { dead = true; clearInterval(timer); } };
+  },
+
   // Two-axis RC pad with telemetry-seeded baseline (sidebar)
   joystick(bodyEl, comp) {
     const fx = comp.fields?.x || 'pan', fy = comp.fields?.y || 'tilt';
@@ -2564,10 +2643,31 @@ const WIDGET_RENDERERS = {
     rows.forEach(r => list.appendChild(r.el));
     updateAllBtn(rows);
 
-    allBtn.addEventListener('click', () => {
+    // RECORD ALL / STOP ALL now fires one server-side fan-out (POST
+    // /api/recording/trigger, code/eventide.py) instead of looping N
+    // client-side PUTs — this is what lets the eventide-core scheduler
+    // module trigger the same fan-out from a cron job with no browser open.
+    // Auto-stop-after-duration is likewise enforced server-side now.
+    allBtn.addEventListener('click', async () => {
       const controllable = rows.filter(r => !r.state.offline && r.state.control);
       const target = !controllable.some(r => r.state.recording);
-      controllable.forEach(r => { if (r.state.recording !== target) r.setRecording(target); });
+      const body = { recording: target };
+      if (target) { const secs = getTimeoutSeconds(); if (secs > 0) body.duration_seconds = secs; }
+      allBtn.disabled = true;
+      try {
+        const r = await fetch(`${getBase()}/api/recording/trigger`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || r.statusText);
+        toast(target ? 'Recording started' : 'Recording stopped', 'ok');
+      } catch (e) {
+        toast(`Record all failed: ${e.message}`, 'err');
+      } finally {
+        allBtn.disabled = false;
+        await Promise.all(rows.map(r => r.poll()));
+      }
     });
 
     return { destroy() { rows.forEach(r => r.destroy()); } };
@@ -2679,7 +2779,7 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
   poll();
   const timer = setInterval(poll, c.interval || 3000);
   return {
-    el, state, setRecording,
+    el, state, setRecording, poll,
     destroy() { state.dead = true; clearInterval(timer); clearAutoStop(); },
   };
 }

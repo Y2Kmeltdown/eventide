@@ -505,6 +505,87 @@ def module_copy_socket_proxy(module, cid, socket_name, rest):
         return _proxy_options_response()
     return _proxy_to_port(port, rest, f"{module}/{cid}/{socket_name}")
 
+# ── Global recording trigger ───────────────────────────────────────────────────
+# Headless fan-out to every installed module's `recording`-type UI component —
+# the server-side counterpart of the dashboard's master-record widget, which
+# used to do this as N independent fetch() PUTs from browser JS (see
+# dashboard.html buildRecordingRow()/WIDGET_RENDERERS['master-record']) and so
+# only ever ran while a tab was open. This lives here (rather than in a
+# module) because it needs load_registry()/port-resolution access. The
+# eventide-core module's scheduler program calls this over loopback when a
+# cron job fires.
+
+def _recording_components() -> list[dict]:
+    """Server-side mirror of the frontend's collectUiComponents() (see
+    dashboard.html), filtered to type == "recording": every installed
+    module's recording component, expanded once per program copy that binds
+    the component's socket (docs/MODULES.md "Program copies")."""
+    out = []
+    registry = load_registry()
+    for name, entry in registry.get("modules", {}).items():
+        m = entry.get("manifest", {})
+        copies_by_prog = entry.get("copies") or {}
+        # socket name -> copy ids whose program-copy binds it
+        copy_ids_by_socket: dict[str, set] = {}
+        for prog_copies in copies_by_prog.values():
+            for copy in (prog_copies or {}).values():
+                for s in (copy or {}).get("sockets", []):
+                    if isinstance(s, dict) and s.get("name"):
+                        copy_ids_by_socket.setdefault(s["name"], set()).add(copy.get("id"))
+        for c in m.get("ui", []):
+            if not isinstance(c, dict) or c.get("type") != "recording":
+                continue
+            sock = c.get("socket")
+            if not sock or not c.get("put"):
+                continue
+            out.append({"mod": name, "copy": None, **c})
+            for cid in sorted(copy_ids_by_socket.get(sock, ())):
+                out.append({"mod": name, "copy": cid, **c})
+    return out
+
+
+def _trigger_recording(want: bool, duration: float | None = None) -> list[dict]:
+    """PUT {"<key>": want} to every recording component from
+    _recording_components(). When starting with a duration, schedules a stop
+    fan-out after `duration` seconds — a server-side replacement for
+    buildRecordingRow's client-side scheduleAutoStop() setTimeout, so it
+    still fires with no browser open. Returns a per-source result list."""
+    results = []
+    for comp in _recording_components():
+        key = comp.get("key") or "recording"
+        port = (_copy_tcp_port(comp["mod"], comp["copy"], comp["socket"])
+                if comp.get("copy") else _module_tcp_port(comp["mod"], comp["socket"]))
+        entry = {"mod": comp["mod"], "copy": comp.get("copy")}
+        if port is None:
+            entry.update(ok=False, error="offline")
+            results.append(entry)
+            continue
+        body = {key: want}
+        if want and duration:
+            dur_key = (comp.get("duration") or {}).get("key") or "duration_seconds"
+            body[dur_key] = duration
+        try:
+            r = _http.put(f"http://127.0.0.1:{port}{comp['put']}", json=body, timeout=5)
+            entry.update(ok=r.ok, status=r.status_code)
+        except _http.exceptions.RequestException as exc:
+            entry.update(ok=False, error=str(exc))
+        results.append(entry)
+
+    if want and duration:
+        threading.Timer(duration, _trigger_recording, kwargs={"want": False}).start()
+    return results
+
+
+@app.route("/api/recording/trigger", methods=["POST"])
+def api_recording_trigger():
+    data = request.get_json(silent=True) or {}
+    want = bool(data.get("recording", True))
+    duration = data.get("duration_seconds")
+    duration = float(duration) if isinstance(duration, (int, float)) and duration > 0 else None
+    results = _trigger_recording(want, duration)
+    return jsonify({"ok": True, "count": len(results), "results": results})
+
+
 # ── Viewfinder API ────────────────────────────────────────────────────────────
 
 @app.route("/api/viewfinder/<mode>/start", methods=["POST"])
@@ -781,7 +862,7 @@ _PROGRAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _ARG_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 _ARG_TYPES = ("str", "int", "float")
 _UI_COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording", "orientation3d", "features", "master-record")
+_UI_TYPES = ("mjpeg", "form", "telemetry", "joystick", "table", "map", "recording", "orientation3d", "features", "master-record", "schedule-table")
 _UI_REGIONS = ("sidebar", "center")
 _UI_FIELD_KINDS = ("number", "slider", "toggle", "text", "select", "nudge")
 _KNOWN_PLACEHOLDERS = (

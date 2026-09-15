@@ -375,7 +375,8 @@ Every component's traffic goes through the backend proxy —
 
 | Type          | Region   | Description |
 | ------------- | -------- | ----------- |
-| `master-record` | `sidebar` | Aggregates every installed module's `recording`-type component into one panel with per-source rows and a RECORD ALL / STOP ALL button. Provided by the built-in `eventide-core` module; no other module should declare it. |
+| `master-record` | `sidebar` | Aggregates every installed module's `recording`-type component into one panel with per-source rows and a RECORD ALL / STOP ALL button. RECORD ALL / STOP ALL calls the base backend's `POST /api/recording/trigger` (body `{"recording": bool, "duration_seconds"?: number}`), which fans start/stop out to every recording source server-side (with server-side auto-stop after `duration_seconds`), so it also works with no browser open — that's what the `eventide-core` scheduler below uses. Provided by the built-in `eventide-core` module; no other module should declare it. |
+| `schedule-table` | `sidebar` | Lists cron-triggered recording jobs from a scheduler's CRUD API (`get` → `{"items": [{id, label, cron, duration_seconds, enabled, last_run, last_result}]}`), with a per-row enable/disable checkbox (`PATCH <get>/<id>` with `{"enabled": bool}`) and a delete button (`DELETE <get>/<id>`). A dedicated type rather than `table`, since `table`'s `row_action`/`stop_action` assumes a single globally-active row rather than N independently-toggleable, server-tracked ones. Paired with a plain `form` widget (`put` → `POST` to the same API, fields `label`/`cron`/`duration_seconds`) for creating jobs. Provided by the built-in `eventide-core` module's scheduler service. |
 
 ### Example (evk-datalogger)
 

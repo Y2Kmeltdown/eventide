@@ -1,49 +1,126 @@
 # Eventide
 
-## Quick Install
-
-Run the following command to install the eventide base platform on a raspberry pi with a clean install of raspbian lite 64-bit
-
-``` bash
-sudo apt update && sudo apt install -y git && git clone https://github.com/Y2Kmeltdown/eventide.git && cd eventide && sudo chmod +x install.sh && ./install.sh
-```
-
-The base install is intentionally minimal: OS configuration, the dashboard backend, supervisord, nginx, the watchdog/RTC/MAVProxy services, the playback server, and the Rust toolchain. It aborts with a clear error (logged to `/tmp/eventide-install.log`) if any step fails.
+Eventide turns a Single Board Computer into a self-contained camera
+recording payload: a Flask backend manages cameras, gimbals, and other
+hardware as installable **modules**, a web dashboard gives you a live,
+customisable control panel and a recordings browser, and everything runs
+under supervisord so it survives reboots and crashes unattended.
 
 ## Modules
 
-Cameras, gimbal control, and other components are **modules** installed from GitHub repositories via the dashboard's **MODULES** tab — they run as supervisord services and can be installed, inspected, and uninstalled without touching the base system.
+The base platform is intentionally minimal — cameras, gimbal control, and
+every other hardware component are **modules**, installed from GitHub
+repositories (or a zip upload) via the dashboard's **MODULES** tab. Each
+module declares what it needs and how it runs in an `eventide-module.json`
+manifest; the backend clones it, builds it, and runs it as one or more
+supervisord programs, all without touching the base system or any other
+installed module. Modules can be installed, edited, and uninstalled entirely
+from the dashboard — no SSH required for day-to-day use.
 
-- Module system documentation: [docs/MODULES.md](docs/MODULES.md)
+- Full module system documentation, including the manifest format, the
+  dashboard `ui` widget types, and the backend API: [docs/MODULES.md](docs/MODULES.md)
 - Template for writing your own module: [module-template/](module-template/)
-- Upgrading from a pre-module install: see "Migrating from a pre-module install" in the docs
+- Upgrading from a pre-module install: see "Migrating from a pre-module
+  install" in the docs
 
-## Payload Information
+## Installation
 
-### Power on procedure
-1. Connect all components
-2. Remove Lens caps
-3. Verify Gimbal is balanced. A balanced gimbal should maintain it's position when moved to any arbitrary position while powered off. A little bit of movement after releasing it is fine as long as it doesn't have clear unstable equlibrium
-4. Power on Ground station. You should see the screen go white and when finished booting you will begin seeing connected devices on the screen
-5. Power on Payload. A successful boot will start with the GPS flashing and the gimbal will begin homing it will move all motors indepently to rotate to it's home position. The gimbals home position is lined up exactly with the T symbol on the base connection and the payload should be facing directly forward. After it is homed it will immediately start calibrating gimbal movement relative to the Flight Controllers Bearing. It will jitter and slowly rotate. It will do a massive jump to a specific cardinal direction. Once eventide has initialised on the payload the gimbal control through the pi will activate and the gimbal should do one final movement in which the controller will make the gimbal face true north. If this doesn't happen and on the ground station eventide is showing as offline than the pi didn't boot correctly.
-6. Access the web interface. Connect your laptop to one of the black ethernet ports on the ground station and when connected to the network type the address `192.168.30.7` into your web browser. This will take you to the ground control web interface.
-7. Connect the ground station to the payload. In the top right of the interface there will be a tex box which will accept another IP address. Put in the IP address of the payload which is `192.168.30.2`. Once entered and the payload is connected you should begin to see the camera feed map position and telemetry data.
+Run the following on a clean Raspberry Pi OS Lite (64-bit) or Armbian/Orange
+Pi install:
 
-## Troubleshooting
+```bash
+sudo apt update && sudo apt install -y git && git clone https://github.com/Y2Kmeltdown/eventide.git && cd eventide && sudo chmod +x install.sh && ./install.sh
+```
 
-- If the system has been on for a long period of time. If you power it off the eventide system likely won't power on again. The system will need some time to cool down before it can boot again. I believe this is some quirk with the SSD we use in that it fails to boot if it is too warm.
-- If the gimbal controller isn't connecting and you cannot see any map positions the MAVProxy service may have failed to start up. The best fix is to SSH into the tripwire raspberry pi and reboot it using `sudo reboot`. If this isn't possible restart the whole payload.
-- If the ground station doesn't power on. It is likely due to a connector coming loose inside. You may need to open the ground station and inspect all of the power connectors.
-- If you power on the system and the gimbal goes limp during power on. The internal gimbal controller may have experienced a fault and disabled the motors for safety. Restart the whole system.
-- If one of the sensors isn't showing any data. You can check the supervisor tab to identify if it is failing to start. Some of the sensors will show logs in that tab if you click on them. If they don't show logs more detailed logs can be found at `192.168.30.2:8080` in the error and output links for the specific sensor.
+This installs the base platform only: OS configuration, the dashboard
+backend, supervisord, nginx, the watchdog/RTC services, the playback server,
+and the Rust toolchain (so Rust modules can build on-device). It aborts with
+a clear error (logged to `/tmp/eventide-install.log`) if any step fails, and
+reboots automatically once it finishes. Cameras, gimbal control, and other
+hardware are installed afterwards as modules from the dashboard — see
+[Modules](#modules) above.
 
-| Name | IP Address | Username | Password |
-| :--- | :--- | :--- | :--- |
-| Wifi | | groundstation | groundstation |
-| Router | 192.168.30.1 | | Groundstation |
-| Tripwire | 192.168.30.2 | highwire | highwire |
-| IR Camera | 192.168.30.3 | | |
-| BluSDR_Base | 192.168.30.4 | | Tripwire |
-| BluSDR_Vehicle | 192.168.30.5 | | Tripwire |
-| ADSB Pi | 192.168.30.6 | pi | flightaware |
-| Ground Control Pi | 192.168.30.7 | groundcontrol | groundcontrol |
+By default recordings are written to `~/recordings` on the device's main
+storage, and the timezone is set to `Australia/Sydney`. The recording
+directory can also be overridden with a positional argument
+(`./install.sh /path/to/dir`), and can be changed later at any time from the
+dashboard's SETTINGS tab.
+
+A few extra install steps are optional and off by default, controlled by
+environment variables set before running the script:
+
+- **Recordings directory / SD card** — pass a directory as the first
+  argument, or set `RECORDINGS_SD_LABEL` to have `install.sh` set up a
+  dedicated recordings SD card instead, mounted by filesystem label (not
+  `/dev/mmcblkN`, which isn't stable across reboots or reader swaps). Format
+  and label the card yourself first (`sudo mkfs.ext4 -L mylabel /dev/...`),
+  then run:
+
+  ```bash
+  RECORDINGS_SD_LABEL=mylabel ./install.sh
+  ```
+
+  This writes a `nofail` systemd `.mount` unit so a missing/removed card
+  never blocks boot. It only sets up the mount — you still need to point the
+  dashboard's SETTINGS tab at the mountpoint (`/media/eventide` by default,
+  override with `RECORDINGS_SD_MOUNTPOINT`) to actually record there.
+- **Touchscreen kiosk display** — set `SETUP_KIOSK_DISPLAY=1` to configure
+  the device to boot straight into a full-screen Chromium kiosk (either the
+  full dashboard or the touchscreen-optimised `/kiosk` UI) instead of a login
+  prompt, via `config/setup-display.sh`. Override any of its display/touch
+  settings (`KIOSK_URL`, `HDMI_OUTPUT`, `ROTATION`, `SCALE_FACTOR`,
+  `WINDOW_SIZE`, `TOUCH_DEVICE`, `CHROMIUM_BIN`, `FORCE_MODELINE`) the same
+  way, e.g.:
+
+  ```bash
+  SETUP_KIOSK_DISPLAY=1 KIOSK_URL=http://localhost/kiosk TOUCH_DEVICE="wch.cn USB2IIC_CTP_CONTROL" ./install.sh
+  ```
+
+  Leave it unset for a headless install or one only ever accessed remotely —
+  `config/setup-display.sh` can always be run on its own later.
+- **Timezone** — set `INSTALL_TIMEZONE` (an IANA name, e.g.
+  `America/New_York`) to override the `Australia/Sydney` default. Like the
+  recordings directory, this can also be changed later from the dashboard
+  without re-running the installer.
+
+## The modular control panel
+
+The dashboard's **MAIN** tab is a customisable workspace rather than a fixed
+layout: a left sidebar, a right sidebar, and a tabbed centre area that you
+build up out of **components** — live camera feeds, control forms,
+telemetry readouts, maps, and more — contributed by whatever modules are
+installed. Open the **＋ COMPONENTS** palette to see every component every
+installed module offers, add or remove them, and drag them between regions;
+the layout is saved per backend host so it persists across reloads. A module
+can mark a component `default: true` so it appears automatically as soon as
+the module is installed, but nothing is fixed — the same evk-datalogger
+install might show a live feed and bias controls on one payload and be
+hidden entirely on another.
+
+Because the panel is driven entirely by module manifests, a new camera or
+sensor module lights up its own live view and controls the moment it's
+installed, with no dashboard code changes required. See "Dashboard UI
+components (`ui`)" in [docs/MODULES.md](docs/MODULES.md#dashboard-ui-components-ui)
+for the full list of widget types (`mjpeg`, `form`, `telemetry`, `features`,
+`recording`, `joystick`, `table`, `map`, `orientation3d`, and the built-in
+`master-record`/`schedule-table` components) if you're building a module of
+your own.
+
+## Playback
+
+The **PLAYBACK** tab is the recordings browser. It gets one inner tab per
+**recording source** — automatically, for every installed module that
+declares a `recordings_subdir` (and one more per copy, for modules with
+copyable per-instance programs, e.g. multiple serial devices) — with no
+manual configuration. Each tab lists that source's recorded files, showing
+size and file type, with per-file controls to favourite, download, or
+permanently delete a recording.
+
+Selecting a playable recording (video/raw formats the base platform's
+playback server can decode) streams it back as MJPEG through that same
+server, with a playback speed control and live-adjustable stream quality,
+resolution, and frame rate — the same playback pipeline used for live camera
+feeds elsewhere in the dashboard, just pointed at a file instead of a
+camera. Favourited recordings are flagged across the dashboard (including
+being exempt from the optional automatic retention policy in SETTINGS) so
+you can protect specific clips from cleanup or an SD card swap.

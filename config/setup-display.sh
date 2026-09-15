@@ -19,7 +19,9 @@ set -e
 
 # ---- CONFIGURATION - edit these before running ----
 KIOSK_USER="eventide"                        # the user that will autologin and run the kiosk
-KIOSK_URL="http://localhost"                 # the webpage to display
+KIOSK_URL="http://localhost/kiosk"            # the webpage to display — /kiosk is the
+                                              # touchscreen-only digicam UI (EVK+Basler);
+                                              # use "http://localhost" for the full dashboard
 HDMI_OUTPUT="HDMI-1"                         # confirm with: xrandr --query (name can vary by board)
 ROTATION="left"                              # left | right | inverted | normal
 SCALE_FACTOR="0.5"                           # chromium zoom-out equivalent, e.g. 0.5 = 50%

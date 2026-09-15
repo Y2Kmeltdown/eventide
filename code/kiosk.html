@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=1024, initial-scale=1.0, user-scalable=no"/>
+<title>Eventide Kiosk</title>
+<style>
+:root {
+  --bg:         #040a0f;
+  --surface:    #080f16;
+  --surface2:   #0d1822;
+  --surface3:   #111f2e;
+  --border:     #1a2d3f;
+  --border2:    #234059;
+  --accent:     #00cfff;
+  --accent-dim: #00cfff18;
+  --green:      #00e89d;
+  --warn:       #ff5b6b;
+  --warn-dim:   #ff5b6b18;
+  --amber:      #ffb830;
+  --text:       #c8dce8;
+  --text-dim:   #3e6070;
+  --text-mid:   #6a8fa3;
+  --mono:       ui-monospace, "SFMono-Regular", "DejaVu Sans Mono", Consolas, monospace;
+  --display:    "Segoe UI", system-ui, sans-serif;
+  --r:          4px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;color:var(--text);font-family:var(--mono);
+  user-select:none;-webkit-user-select:none;touch-action:manipulation}
+button{font-family:var(--mono);-webkit-user-select:none}
+
+#stage{position:fixed;inset:0;background:#000}
+
+/* ── camera feeds ────────────────────────────────────────────────────── */
+.feed-wrap{position:absolute;overflow:hidden;background:#000;transition:all .2s ease}
+.feed-wrap.main{inset:0;z-index:1;border-radius:0}
+.feed-wrap.pip{left:16px;bottom:16px;width:224px;height:168px;z-index:20;
+  border:2px solid var(--accent);border-radius:var(--r);box-shadow:0 4px 18px rgba(0,0,0,.6);cursor:pointer}
+.feed-img{width:100%;height:100%;object-fit:cover;display:block}
+.feed-offline{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  flex-direction:column;gap:6px;background:var(--surface);color:var(--text-dim);font-size:11px;letter-spacing:.1em}
+.feed-wrap.pip .feed-offline{font-size:9px}
+.feed-tag{position:absolute;top:8px;left:10px;font-family:var(--display);font-weight:600;font-size:11px;
+  letter-spacing:.15em;color:var(--text);text-shadow:0 1px 4px rgba(0,0,0,.9);z-index:2;pointer-events:none}
+.feed-wrap.pip .feed-tag{font-size:9px;top:5px;left:6px}
+.rec-dot{position:absolute;top:9px;right:10px;width:9px;height:9px;border-radius:50%;
+  background:var(--text-dim);box-shadow:0 0 6px rgba(0,0,0,.8);z-index:2;pointer-events:none}
+.rec-dot.on{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.feed-wrap.pip .rec-dot{width:7px;height:7px;top:6px;right:6px}
+
+/* ── record button ───────────────────────────────────────────────────── */
+.record-btn{position:fixed;top:20px;right:20px;z-index:40;min-width:130px;height:64px;padding:0 20px;
+  border-radius:32px;background:rgba(8,15,22,.8);border:2px solid var(--warn);color:var(--warn);
+  font-family:var(--display);font-weight:600;font-size:16px;letter-spacing:.06em;
+  display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer}
+.record-btn .dot{width:14px;height:14px;border-radius:50%;background:var(--warn);flex-shrink:0}
+.record-btn .rec-time{font-size:12px;color:var(--text-mid);font-family:var(--mono);margin-left:2px}
+.record-btn.recording{background:rgba(255,91,107,.22);animation:recpulse 1.4s infinite}
+.record-btn.recording .dot{border-radius:3px}
+.record-btn:disabled{opacity:.5;cursor:default}
+@keyframes recpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,91,107,.45)}50%{box-shadow:0 0 0 16px rgba(255,91,107,0)}}
+
+/* ── edge tabs ────────────────────────────────────────────────────────── */
+.edge-tab{position:fixed;z-index:60;background:var(--surface2);border:1px solid var(--border2);
+  color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:15px;line-height:1}
+.edge-tab-bottom{left:50%;transform:translateX(-50%);bottom:0;width:72px;height:30px;
+  border-bottom:none;border-top-left-radius:8px;border-top-right-radius:8px}
+.edge-tab-right{right:0;top:50%;transform:translateY(-50%);width:30px;height:72px;
+  border-right:none;border-top-left-radius:8px;border-bottom-left-radius:8px}
+
+/* ── drawers ──────────────────────────────────────────────────────────── */
+.drawer{position:fixed;background:var(--surface);border:1px solid var(--border2);z-index:50;
+  transition:transform .25s ease;display:flex;flex-direction:column}
+.drawer-bottom{left:0;right:0;bottom:0;height:44%;border-left:none;border-right:none;border-bottom:none;
+  transform:translateY(100%)}
+.drawer-bottom.open{transform:translateY(0)}
+.drawer-right{top:0;right:0;bottom:0;width:300px;border-top:none;border-right:none;border-bottom:none;
+  transform:translateX(100%)}
+.drawer-right.open{transform:translateX(0)}
+
+.rec-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.rec-tab{flex:1;padding:14px 0;background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--text-dim);font-size:13px;letter-spacing:.12em;cursor:pointer}
+.rec-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.rec-list{flex:1;overflow-y:auto;padding:8px}
+.rec-item{display:flex;align-items:center;gap:10px;padding:12px 10px;border-bottom:1px solid var(--border)}
+.rec-item .rec-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.rec-item .rec-size{font-size:10px;color:var(--text-dim);flex-shrink:0;margin-right:6px}
+.rec-icon-btn{width:44px;height:44px;flex-shrink:0;border-radius:var(--r);border:1px solid var(--border2);
+  background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer;display:flex;
+  align-items:center;justify-content:center}
+.rec-icon-btn.fav.on{color:var(--amber);border-color:var(--amber)}
+.rec-icon-btn.del{color:var(--warn);border-color:var(--warn)}
+.rec-empty{padding:30px 10px;text-align:center;color:var(--text-dim);font-size:12px}
+
+.settings-body{padding:20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
+.duration-label{font-size:10px;letter-spacing:.15em;color:var(--text-dim)}
+.duration-readout{font-family:var(--display);font-weight:600;font-size:40px;color:var(--accent);text-align:center;
+  padding:14px 0;background:var(--surface2);border-radius:var(--r);border:1px solid var(--border)}
+.stepper-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.stepper-btn{height:56px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
+  color:var(--accent);font-size:15px;cursor:pointer}
+.stepper-btn:active{background:var(--accent-dim)}
+.keypad-toggle-btn{height:48px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
+  color:var(--text);font-size:12px;letter-spacing:.1em;cursor:pointer}
+
+.keypad-overlay{position:fixed;inset:0;background:rgba(2,6,10,.85);z-index:80;
+  display:flex;align-items:center;justify-content:center}
+.keypad-overlay[hidden]{display:none}
+.keypad-box{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);padding:18px;
+  width:280px;display:flex;flex-direction:column;gap:12px}
+.keypad-display{font-family:var(--display);font-weight:600;font-size:34px;color:var(--accent);
+  text-align:center;padding:10px 0;background:var(--surface2);border-radius:var(--r)}
+.keypad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.keypad-grid button{height:52px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
+  color:var(--text);font-size:18px;cursor:pointer}
+.keypad-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.keypad-actions button{height:46px;border-radius:var(--r);border:1px solid var(--border2);font-size:12px;
+  letter-spacing:.1em;cursor:pointer}
+#keypad-cancel{background:var(--surface2);color:var(--text-mid)}
+#keypad-done{background:var(--accent-dim);color:var(--accent);border-color:var(--accent)}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface2);
+  border:1px solid var(--border2);border-radius:var(--r);padding:10px 18px;font-size:11px;color:var(--text);
+  z-index:100;opacity:0;pointer-events:none;transition:opacity .2s ease}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="feed-wrap main" id="wrap-evk" data-cam="evk">
+    <img class="feed-img" id="feed-evk" hidden/>
+    <div class="feed-offline" id="off-evk"><span>EVK4</span><span>OFFLINE</span></div>
+    <div class="feed-tag">EVK4</div>
+    <div class="rec-dot" id="dot-evk"></div>
+  </div>
+  <div class="feed-wrap pip" id="wrap-basler" data-cam="basler">
+    <img class="feed-img" id="feed-basler" hidden/>
+    <div class="feed-offline" id="off-basler"><span>BASLER</span><span>OFFLINE</span></div>
+    <div class="feed-tag">BASLER</div>
+    <div class="rec-dot" id="dot-basler"></div>
+  </div>
+
+  <button class="record-btn" id="record-btn" disabled>
+    <span class="dot" id="record-dot"></span>
+    <span id="record-label">REC</span>
+    <span class="rec-time" id="record-time"></span>
+  </button>
+
+  <button class="edge-tab edge-tab-bottom" id="tab-recordings">▲</button>
+  <button class="edge-tab edge-tab-right" id="tab-settings">◀</button>
+
+  <div class="drawer drawer-bottom" id="drawer-recordings">
+    <div class="rec-tabs">
+      <button class="rec-tab" data-src="evk">EVK4</button>
+      <button class="rec-tab" data-src="basler">BASLER</button>
+    </div>
+    <div class="rec-list" id="rec-list"><div class="rec-empty">Loading…</div></div>
+  </div>
+
+  <div class="drawer drawer-right" id="drawer-settings">
+    <div class="settings-body">
+      <div class="duration-label">AUTO-STOP RECORDING AFTER</div>
+      <div class="duration-readout" id="duration-readout">30s</div>
+      <div class="stepper-row">
+        <button class="stepper-btn" data-delta="-10">−10</button>
+        <button class="stepper-btn" data-delta="-1">−1</button>
+        <button class="stepper-btn" data-delta="1">+1</button>
+        <button class="stepper-btn" data-delta="10">+10</button>
+      </div>
+      <button class="keypad-toggle-btn" id="keypad-open">123 · ENTER EXACT VALUE</button>
+    </div>
+  </div>
+
+  <div class="keypad-overlay" id="keypad-overlay" hidden>
+    <div class="keypad-box">
+      <div class="keypad-display" id="keypad-display">0</div>
+      <div class="keypad-grid">
+        <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+        <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+        <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+        <button data-k="clear">C</button><button data-k="0">0</button><button data-k="back">⌫</button>
+      </div>
+      <div class="keypad-actions">
+        <button id="keypad-cancel">CANCEL</button>
+        <button id="keypad-done">DONE</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+// ── Config: the two modules this kiosk is hard-wired to ────────────────────
+const CAMS = {
+  evk:    { module: 'evk-datalogger', label: 'EVK4' },
+  basler: { module: 'basler-camera',  label: 'BASLER' },
+};
+
+let camInfo  = { evk: null, basler: null };   // camId -> {mod, streamUrl, rec:{socket,get,put,key,controlKey,fileKey}}
+let camState = {                              // camId -> live polled recording state
+  evk:    { recording: false, control: true, offline: true },
+  basler: { recording: false, control: true, offline: true },
+};
+let recSources = {};   // camId -> recordings-API source name (e.g. "evk", "basler")
+let recordStartedAt = null;
+
+let duration = parseInt(localStorage.getItem('eventide-kiosk-duration') || '30', 10);
+if (!Number.isFinite(duration) || duration < 0) duration = 30;
+
+function proxyUrl(mod, socket, path) { return `/proxy/${mod}/${socket}${path}`; }
+function dotPath(obj, path) { return String(path).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj); }
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ── Module discovery ─────────────────────────────────────────────────────
+async function loadModules() {
+  try {
+    const r = await fetch('/api/modules');
+    const data = await r.json();
+    const modules = data.modules || [];
+    for (const camId of Object.keys(CAMS)) {
+      const m = modules.find(mm => mm.name === CAMS[camId].module);
+      if (!m) { camInfo[camId] = null; continue; }
+      const mjpeg = (m.ui || []).find(c => c.type === 'mjpeg');
+      const rec   = (m.ui || []).find(c => c.type === 'recording');
+      camInfo[camId] = {
+        mod: m.name,
+        streamUrl: mjpeg ? proxyUrl(m.name, mjpeg.socket, mjpeg.path || '/') : null,
+        rec: rec ? {
+          socket: rec.socket, get: rec.get, put: rec.put,
+          key: rec.key || 'recording',
+          controlKey: rec.control_key || 'recording_control',
+          fileKey: rec.file_key || 'current_file',
+        } : null,
+      };
+    }
+  } catch { /* keep last-known camInfo; retry on next poll */ }
+  applyFeeds();
+
+  try {
+    const r = await fetch('/api/recordings');
+    const data = await r.json();
+    const sources = data.sources || [];
+    for (const camId of Object.keys(CAMS)) {
+      const mod = CAMS[camId].module;
+      const s = sources.find(s => s.module === mod);
+      recSources[camId] = s ? s.name : null;
+    }
+  } catch { /* keep last-known */ }
+}
+
+function setFeed(imgEl, offEl, info) {
+  if (info && info.streamUrl) {
+    if (imgEl.dataset.src !== info.streamUrl) {
+      imgEl.src = info.streamUrl;
+      imgEl.dataset.src = info.streamUrl;
+    }
+    imgEl.hidden = false;
+    offEl.hidden = true;
+  } else {
+    imgEl.hidden = true;
+    offEl.hidden = false;
+    imgEl.removeAttribute('src');
+    delete imgEl.dataset.src;
+  }
+}
+
+function applyFeeds() {
+  setFeed(document.getElementById('feed-evk'),    document.getElementById('off-evk'),    camInfo.evk);
+  setFeed(document.getElementById('feed-basler'), document.getElementById('off-basler'), camInfo.basler);
+}
+
+// ── Main / PiP swap — tapping the PiP box itself is the toggle ─────────────
+function swapMain(el) {
+  if (!el.classList.contains('pip')) return;
+  document.querySelectorAll('.feed-wrap').forEach(w => {
+    w.classList.toggle('main');
+    w.classList.toggle('pip');
+  });
+  const mainCam = document.querySelector('.feed-wrap.main').dataset.cam;
+  localStorage.setItem('eventide-kiosk-main', mainCam);
+}
+document.getElementById('wrap-evk').addEventListener('click', function () { swapMain(this); });
+document.getElementById('wrap-basler').addEventListener('click', function () { swapMain(this); });
+
+(function restoreMain() {
+  const saved = localStorage.getItem('eventide-kiosk-main');
+  if (saved && saved !== 'evk') {
+    document.querySelectorAll('.feed-wrap').forEach(w => { w.classList.toggle('main'); w.classList.toggle('pip'); });
+  }
+})();
+
+// ── Recording status polling + the record button ────────────────────────────
+async function pollCam(camId) {
+  const info = camInfo[camId];
+  const state = camState[camId];
+  if (!info || !info.rec) { state.offline = true; renderCamState(camId); return; }
+  try {
+    const r = await fetch(proxyUrl(info.mod, info.rec.socket, info.rec.get), { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) throw new Error('offline');
+    const d = await r.json();
+    state.offline = false;
+    const v = dotPath(d, info.rec.key);
+    if (typeof v === 'boolean') state.recording = v;
+    const cc = dotPath(d, info.rec.controlKey);
+    state.control = (typeof cc === 'boolean') ? cc : true;
+  } catch {
+    state.offline = true;
+  }
+  renderCamState(camId);
+}
+
+function renderCamState(camId) {
+  const dot = document.getElementById('dot-' + camId);
+  const state = camState[camId];
+  dot.classList.toggle('on', state.recording && !state.offline);
+  renderRecordButton();
+}
+
+function renderRecordButton() {
+  const btn   = document.getElementById('record-btn');
+  const label = document.getElementById('record-label');
+  const timeEl = document.getElementById('record-time');
+  const live = Object.values(camState).filter(s => !s.offline);
+  const anyRecording = live.some(s => s.recording);
+  const anyControllable = live.some(s => s.control);
+
+  btn.disabled = !live.length || !anyControllable || btn.dataset.busy === '1';
+  btn.classList.toggle('recording', anyRecording);
+  label.textContent = anyRecording ? 'STOP' : 'REC';
+
+  if (anyRecording) {
+    if (recordStartedAt == null) recordStartedAt = Date.now();
+    const secs = Math.floor((Date.now() - recordStartedAt) / 1000);
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    const ss = String(secs % 60).padStart(2, '0');
+    timeEl.textContent = `${mm}:${ss}`;
+  } else {
+    recordStartedAt = null;
+    timeEl.textContent = '';
+  }
+}
+
+async function onRecordPress() {
+  const btn = document.getElementById('record-btn');
+  const live = Object.values(camState).filter(s => !s.offline);
+  const target = !live.some(s => s.recording);
+  btn.dataset.busy = '1';
+  renderRecordButton();
+  try {
+    const body = { recording: target };
+    if (target && duration > 0) body.duration_seconds = duration;
+    const r = await fetch('/api/recording/trigger', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    toast(target ? 'Recording started' : 'Recording stopped');
+  } catch (e) {
+    toast('Record failed: ' + e.message);
+  } finally {
+    btn.dataset.busy = '0';
+    await Promise.all(Object.keys(CAMS).map(pollCam));
+  }
+}
+document.getElementById('record-btn').addEventListener('click', onRecordPress);
+
+// Live recording-time readout needs its own tick independent of the 3s poll.
+setInterval(renderRecordButton, 1000);
+
+// ── Recordings drawer ───────────────────────────────────────────────────────
+let activeRecTab = 'evk';
+
+function fmtSize(b) {
+  if (b == null) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB';
+  return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+async function loadRecList() {
+  // Capture which tab this call is for — a fast double-tap between tabs
+  // can leave an older fetch still in flight; if it resolves after the
+  // user has since switched tabs, it must not clobber the newer tab's
+  // content.
+  const requestedTab = activeRecTab;
+  const list = document.getElementById('rec-list');
+  const src = recSources[requestedTab];
+  if (!src) {
+    if (requestedTab === activeRecTab) list.innerHTML = `<div class="rec-empty">${CAMS[requestedTab].label} module not installed.</div>`;
+    return;
+  }
+  try {
+    const r = await fetch('/api/recordings/' + encodeURIComponent(src));
+    const data = await r.json();
+    if (requestedTab !== activeRecTab) return;
+    const files = data.files || [];
+    if (!files.length) { list.innerHTML = '<div class="rec-empty">No recordings.</div>'; return; }
+    list.innerHTML = files.map(f => `
+      <div class="rec-item">
+        <span class="rec-name" title="${f.name}">${f.name}</span>
+        <span class="rec-size">${fmtSize(f.size)}</span>
+        <button class="rec-icon-btn fav ${f.favorited ? 'on' : ''}" data-act="fav" data-name="${encodeURIComponent(f.name)}">${f.favorited ? '★' : '☆'}</button>
+        <button class="rec-icon-btn del" data-act="del" data-name="${encodeURIComponent(f.name)}">🗑</button>
+      </div>`).join('');
+  } catch {
+    if (requestedTab === activeRecTab) list.innerHTML = '<div class="rec-empty">Error loading recordings.</div>';
+  }
+}
+
+document.getElementById('rec-list').addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const src = recSources[activeRecTab];
+  const filename = decodeURIComponent(btn.dataset.name);
+  if (btn.dataset.act === 'fav') {
+    try {
+      const r = await fetch(`/api/recordings/${encodeURIComponent(src)}/${encodeURIComponent(filename)}/favorite`, { method: 'POST' });
+      if (!r.ok) throw new Error(r.statusText);
+      loadRecList();
+    } catch (e) { toast('Favorite failed: ' + e.message); }
+  } else if (btn.dataset.act === 'del') {
+    if (!confirm(`Delete "${filename}"?`)) return;
+    try {
+      const r = await fetch(`/api/recordings/${encodeURIComponent(src)}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+      toast('Deleted');
+      loadRecList();
+    } catch (e) { toast('Delete failed: ' + e.message); }
+  }
+});
+
+document.querySelectorAll('.rec-tab').forEach(tab => tab.addEventListener('click', () => {
+  activeRecTab = tab.dataset.src;
+  document.querySelectorAll('.rec-tab').forEach(t => t.classList.toggle('active', t === tab));
+  loadRecList();
+}));
+document.querySelector('.rec-tab[data-src="evk"]').classList.add('active');
+
+// ── Drawer open/close (edge tabs) ───────────────────────────────────────────
+function toggleDrawer(drawerEl, tabEl, glyphOpen, glyphClosed, onOpen) {
+  const isOpen = drawerEl.classList.toggle('open');
+  tabEl.textContent = isOpen ? glyphOpen : glyphClosed;
+  if (isOpen && onOpen) onOpen();
+}
+const drawerRecordings = document.getElementById('drawer-recordings');
+const drawerSettings   = document.getElementById('drawer-settings');
+const tabRecordings    = document.getElementById('tab-recordings');
+const tabSettings      = document.getElementById('tab-settings');
+
+tabRecordings.addEventListener('click', () => {
+  if (drawerSettings.classList.contains('open')) toggleDrawer(drawerSettings, tabSettings, '◀', '◀');
+  toggleDrawer(drawerRecordings, tabRecordings, '▼', '▲', loadRecList);
+});
+tabSettings.addEventListener('click', () => {
+  if (drawerRecordings.classList.contains('open')) toggleDrawer(drawerRecordings, tabRecordings, '▼', '▲');
+  toggleDrawer(drawerSettings, tabSettings, '▶', '◀');
+});
+
+// ── Duration: stepper + keypad ──────────────────────────────────────────────
+function renderDuration() {
+  document.getElementById('duration-readout').textContent = duration > 0 ? duration + 's' : 'MANUAL STOP';
+  localStorage.setItem('eventide-kiosk-duration', String(duration));
+}
+function setDuration(v) {
+  duration = Math.max(0, Math.min(3600, Math.round(v)));
+  renderDuration();
+}
+
+document.querySelectorAll('.stepper-btn').forEach(btn => {
+  let holdTimer = null, holdInterval = null;
+  const delta = parseInt(btn.dataset.delta, 10);
+  const step = () => setDuration(duration + delta);
+  const start = (ev) => {
+    ev.preventDefault();
+    step();
+    holdTimer = setTimeout(() => { holdInterval = setInterval(step, 120); }, 500);
+  };
+  const stop = () => { clearTimeout(holdTimer); clearInterval(holdInterval); };
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('touchstart', start, { passive: false });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(evt => btn.addEventListener(evt, stop));
+});
+
+// Keypad overlay
+const keypadOverlay = document.getElementById('keypad-overlay');
+const keypadDisplay = document.getElementById('keypad-display');
+let keypadValue = '';
+
+function openKeypad() {
+  // Always starts blank (not pre-filled with the current value) — this is
+  // for typing a whole new exact number, like a PIN pad; the stepper next
+  // to it already handles nudging the existing value.
+  keypadValue = '';
+  keypadDisplay.textContent = '0';
+  keypadOverlay.hidden = false;
+}
+function closeKeypad() { keypadOverlay.hidden = true; }
+
+document.getElementById('keypad-open').addEventListener('click', openKeypad);
+document.getElementById('keypad-cancel').addEventListener('click', closeKeypad);
+document.getElementById('keypad-done').addEventListener('click', () => {
+  setDuration(keypadValue ? parseInt(keypadValue, 10) : 0);
+  closeKeypad();
+});
+document.querySelectorAll('.keypad-grid button').forEach(btn => btn.addEventListener('click', () => {
+  const k = btn.dataset.k;
+  if (k === 'back') keypadValue = keypadValue.slice(0, -1);
+  else if (k === 'clear') keypadValue = '';
+  else if (keypadValue.length < 4) keypadValue += k;
+  keypadDisplay.textContent = keypadValue || '0';
+}));
+
+renderDuration();
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+// The first poll round must wait for module discovery to resolve at least
+// once — otherwise pollCam() races ahead of loadModules() with camInfo still
+// null, marks both cameras offline, and (since nothing re-triggers it) the
+// record button stays incorrectly disabled until the next 3s interval tick.
+(async function bootstrap() {
+  await loadModules();
+  await Promise.all(Object.keys(CAMS).map(pollCam));
+})();
+setInterval(loadModules, 10000);
+setInterval(() => Object.keys(CAMS).forEach(pollCam), 3000);
+</script>
+</body>
+</html>

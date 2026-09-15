@@ -108,6 +108,21 @@ def index():
     return send_file(html_path, mimetype="text/html")
 
 
+# Standalone touchscreen kiosk UI — a separate, purpose-built page for the
+# local digicam-style display (see config/setup-display.sh), hard-wired to
+# the evk-datalogger and basler-camera modules. Does not replace / is not
+# linked from the main dashboard; served independently at its own path.
+@app.route("/kiosk")
+def kiosk_page():
+    html_path = Path(cfg.get("kiosk_html_file", "kiosk.html")).resolve()
+    if not html_path.exists():
+        return (
+            "kiosk.html not found. "
+            "Pass --kiosk-html-file or place it alongside eventide.py."
+        ), 404
+    return send_file(html_path, mimetype="text/html")
+
+
 # In-memory tile cache: (z, x, y) → bytes.  Fine for a single-user dashboard.
 _tile_cache: dict[tuple, bytes] = {}
 _tile_lock  = threading.Lock()
@@ -2782,6 +2797,9 @@ def main():
     parser.add_argument("--html-file",             default=str(Path(__file__).resolve().with_name("dashboard.html")),
                         help="Path to the dashboard HTML file served at / "
                              "(default: dashboard.html alongside this script)")
+    parser.add_argument("--kiosk-html-file",       default=str(Path(__file__).resolve().with_name("kiosk.html")),
+                        help="Path to the touchscreen kiosk HTML file served at /kiosk "
+                             "(default: kiosk.html alongside this script)")
     parser.add_argument("--settings-file",         default="/usr/local/eventide/data/settings.json",
                         help="Path to persisted system settings JSON")
     parser.add_argument("--install-local",         default=None, metavar="PATH",
@@ -2822,6 +2840,7 @@ def main():
     print(f"[backend]  Module port pool:  {args.port_pool}")
     print(f"[backend]  CORS origin:       {_ALLOWED_ORIGIN}")
     print(f"[backend]  Dashboard HTML:    {args.html_file}  (served at /)")
+    print(f"[backend]  Kiosk HTML:        {args.kiosk_html_file}  (served at /kiosk)")
     print(f"[backend]  Tile proxy:        /tiles/<z>/<x>/<y>.png  →  {_OSM_BASE}")
     print(f"[backend]  API at:            http://{args.host}:{args.port}")
 

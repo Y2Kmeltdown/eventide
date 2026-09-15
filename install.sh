@@ -25,6 +25,11 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 EVENTIDE_USER="${SUDO_USER:-$USER}"
 
+# System timezone (IANA name, e.g. Australia/Sydney, America/New_York, UTC).
+# Can also be changed later from the dashboard SETTINGS tab without
+# re-running this installer.
+INSTALL_TIMEZONE="${INSTALL_TIMEZONE:-Australia/Sydney}"
+
 # Optional: auto-mount a dedicated recordings SD card by filesystem label
 # (not by /dev/mmcblkN or /dev/sdN — those aren't guaranteed stable across
 # reboots or reader swaps). Leave RECORDINGS_SD_LABEL empty to skip this
@@ -248,7 +253,7 @@ fi
 
 ## GENERIC SYSTEM CONFIGURATION
 step "System configuration (generic)"
-sudo timedatectl set-timezone Australia/Sydney
+sudo timedatectl set-timezone "$INSTALL_TIMEZONE"
 sudo sed -i 's/#HandlePowerKey=poweroff/HandlePowerKey=ignore/g' /etc/systemd/logind.conf
 
 ## OS-SPECIFIC CONFIGURATION

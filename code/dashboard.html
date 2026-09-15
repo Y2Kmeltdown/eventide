@@ -808,8 +808,17 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
         <input class="form-input" type="number" name="default_playback_speed" min="0.1" max="4" step="0.1" value="1.0">
       </div>
       <div class="settings-row">
+        <label class="form-label">Hostname</label>
+        <input class="form-input" type="text" name="hostname" placeholder="eventide" pattern="[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]?">
+        <div class="settings-hint">Letters, digits and hyphens only. Applied immediately via hostnamectl — the
+          device may become unreachable at its old &lt;name&gt;.local address until you reconnect at the new one,
+          and some services (mDNS/avahi in particular) may need a reboot to fully pick it up.</div>
+      </div>
+      <div class="settings-row">
         <label class="form-label">Timezone</label>
-        <input class="form-input" type="text" name="timezone" value="UTC">
+        <input class="form-input" type="text" name="timezone" value="UTC" placeholder="Australia/Sydney">
+        <div class="settings-hint">IANA timezone name. Applied immediately via timedatectl — affects displayed
+          and logged timestamps system-wide.</div>
       </div>
       <div class="settings-row">
         <label class="form-label">Recordings directory
@@ -3107,6 +3116,15 @@ async function confirmRecordingsDirChange(newDir) {
   );
 }
 
+function confirmHostnameChange(newName) {
+  const current = _settingsOriginal.hostname || 'this device';
+  return confirm(
+    `Change the hostname from "${current}" to "${newName}"?\n\n`
+    + `This device may become unreachable at ${current}.local until you reconnect using the new address, `
+    + `and some services (mDNS/avahi in particular) may need a reboot to fully pick it up.`
+  );
+}
+
 async function applySettings() {
   const form = document.getElementById('settings-form');
   const status = document.getElementById('settings-status');
@@ -3131,12 +3149,20 @@ async function applySettings() {
       delete updates.recordings_dir;
       const input = form.querySelector('input[name="recordings_dir"]');
       if (input) input.value = _settingsOriginal.recordings_dir || '';
-      if (!Object.keys(updates).length) {
-        status.textContent = 'no changes';
-        status.style.color = 'var(--text-dim)';
-        return;
-      }
     }
+  }
+  if ('hostname' in updates) {
+    const ok = confirmHostnameChange(updates.hostname);
+    if (!ok) {
+      delete updates.hostname;
+      const input = form.querySelector('input[name="hostname"]');
+      if (input) input.value = _settingsOriginal.hostname || '';
+    }
+  }
+  if (!Object.keys(updates).length) {
+    status.textContent = 'no changes';
+    status.style.color = 'var(--text-dim)';
+    return;
   }
 
   try {
@@ -3156,6 +3182,7 @@ async function applySettings() {
     } else {
       toast('Settings saved', 'ok');
     }
+    (data._warnings || []).forEach(w => toast(w, 'err'));
   } catch (e) {
     status.textContent = 'save failed';
     status.style.color = 'var(--warn)';

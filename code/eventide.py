@@ -46,6 +46,7 @@ import threading
 import time
 import uuid
 import zipfile
+import zoneinfo
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -198,7 +199,12 @@ cfg: dict = {}
 DEFAULT_SETTINGS = {
     "ui_refresh_interval_ms": 5000,
     "default_playback_speed": 1.0,
-    "timezone": "UTC",
+    # timezone and hostname are NOT stored here — the OS (timedatectl /
+    # hostnamectl) is the single source of truth, so GET /api/settings
+    # reports them live (current_timezone()/current_hostname()) and POST
+    # applies changes directly via those tools instead of persisting a
+    # value that could drift from whatever the system actually has. See
+    # _set_timezone()/_set_hostname() below.
     # None = no override, use the --recordings-dir the backend was started
     # with (cfg["recordings_dir"]). See current_recordings_dir().
     "recordings_dir": None,
@@ -307,6 +313,106 @@ def _redirect_modules_to(new_dir: str) -> list[str]:
         if err:
             raise OSError(err)
     return redirected
+
+
+# ── Hostname / timezone ────────────────────────────────────────────────────────
+# Both hook into systemd tools (hostnamectl/timedatectl) rather than being
+# stored settings — the OS is the single source of truth, so GET always
+# reports live values and POST applies changes directly, the same "OS state,
+# not a settings.json value" shape as current_recordings_dir() above.
+
+_HOSTNAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
+
+
+def current_hostname() -> str:
+    try:
+        name = Path("/etc/hostname").read_text().strip()
+        if name:
+            return name
+    except OSError:
+        pass
+    return socket.gethostname()
+
+
+def _validate_hostname(value) -> str | None:
+    if not isinstance(value, str) or not value:
+        return "hostname must be a non-empty string"
+    if len(value) > 63:
+        return "hostname must be 63 characters or fewer"
+    if not _HOSTNAME_RE.match(value):
+        return "hostname may only contain letters, digits and hyphens, and can't start or end with a hyphen"
+    return None
+
+
+def _set_hostname(new_name: str) -> tuple[bool, str | None]:
+    """Apply a new static hostname via hostnamectl, and best-effort fix up
+    the 127.0.1.1 line in /etc/hosts — hostnamectl doesn't touch it, but a
+    stale entry there is a classic cause of a slow/broken `sudo` on
+    Debian-family systems afterward. Returns (True, None) on full success,
+    (True, warning) if the hostname changed but the /etc/hosts tidy-up
+    failed, or (False, error) if hostnamectl itself failed."""
+    if not shutil.which("hostnamectl"):
+        return False, "hostnamectl not found — is this a systemd-based OS?"
+    old_name = current_hostname()
+    try:
+        subprocess.run(["hostnamectl", "set-hostname", new_name],
+                        check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        return False, f"hostnamectl failed: {(exc.stderr or '').strip() or exc}"
+
+    try:
+        hosts_path = Path("/etc/hosts")
+        if hosts_path.exists() and old_name:
+            lines = hosts_path.read_text().splitlines()
+            changed = False
+            for i, line in enumerate(lines):
+                parts = line.split()
+                if parts and parts[0] == "127.0.1.1" and old_name in parts:
+                    lines[i] = " ".join(new_name if p == old_name else p for p in parts)
+                    changed = True
+            if changed:
+                _atomic_write(hosts_path, "\n".join(lines) + "\n")
+    except OSError as exc:
+        return True, f"hostname changed, but failed to update /etc/hosts (may need a manual fix): {exc}"
+    return True, None
+
+
+def current_timezone() -> str:
+    try:
+        tz = Path("/etc/timezone").read_text().strip()
+        if tz:
+            return tz
+    except OSError:
+        pass
+    try:
+        link = Path("/etc/localtime").resolve()
+        zoneinfo_root = Path("/usr/share/zoneinfo").resolve()
+        return str(link.relative_to(zoneinfo_root))
+    except (OSError, ValueError):
+        return "UTC"
+
+
+def _validate_timezone(value) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return "timezone must be a non-empty string"
+    try:
+        known = zoneinfo.available_timezones()
+    except Exception:
+        known = None  # tzdata not available for some reason — don't hard-block
+    if known and value not in known:
+        return f"unknown timezone: {value} (expected an IANA name, e.g. Australia/Sydney)"
+    return None
+
+
+def _set_timezone(new_tz: str) -> tuple[bool, str | None]:
+    if not shutil.which("timedatectl"):
+        return False, "timedatectl not found — is this a systemd-based OS?"
+    try:
+        subprocess.run(["timedatectl", "set-timezone", new_tz],
+                        check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        return False, f"timedatectl failed: {(exc.stderr or '').strip() or exc}"
+    return True, None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -782,6 +888,8 @@ def api_settings_get():
         and isinstance(warn_pct, (int, float))
         and resp["recordings_dir_free_pct"] < warn_pct
     )
+    resp["hostname"] = current_hostname()
+    resp["timezone"] = current_timezone()
     return jsonify(resp)
 
 
@@ -792,6 +900,21 @@ def api_settings_post():
     if not isinstance(data, dict):
         return jsonify({"error": "settings body must be a JSON object"}), 400
 
+    # hostname/timezone are OS state, not persisted settings.json values —
+    # pulled out of data before the generic merge below (see current_
+    # hostname()/current_timezone()) and applied directly via systemd tools.
+    new_hostname = data.pop("hostname", None)
+    if new_hostname is not None:
+        err = _validate_hostname(new_hostname)
+        if err:
+            return jsonify({"error": err}), 400
+
+    new_timezone = data.pop("timezone", None)
+    if new_timezone is not None:
+        err = _validate_timezone(new_timezone)
+        if err:
+            return jsonify({"error": err}), 400
+
     if "recordings_dir" in data:
         err = _validate_recordings_dir(data["recordings_dir"])
         if err:
@@ -801,6 +924,21 @@ def api_settings_post():
         days = data["retention_days"]
         if not isinstance(days, (int, float)) or isinstance(days, bool) or days <= 0:
             return jsonify({"error": "retention_days must be a positive number, or null to disable"}), 400
+
+    warnings: list[str] = []
+    if new_hostname is not None and new_hostname != current_hostname():
+        ok, msg = _set_hostname(new_hostname)
+        if not ok:
+            return jsonify({"error": msg}), 500
+        if msg:
+            warnings.append(msg)
+
+    if new_timezone is not None and new_timezone != current_timezone():
+        ok, msg = _set_timezone(new_timezone)
+        if not ok:
+            return jsonify({"error": msg}), 500
+        if msg:
+            warnings.append(msg)
 
     with _settings_lock:
         _settings = load_settings()
@@ -819,6 +957,10 @@ def api_settings_post():
 
         resp = dict(_settings)
         resp["_modules_redirected"] = redirected
+        resp["hostname"] = current_hostname()
+        resp["timezone"] = current_timezone()
+        if warnings:
+            resp["_warnings"] = warnings
         return jsonify(resp)
 
 

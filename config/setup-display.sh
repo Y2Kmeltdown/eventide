@@ -23,7 +23,7 @@ set -e
 #      as environment variables (e.g. from install.sh's optional
 #      SETUP_KIOSK_DISPLAY step) without touching this file ----
 KIOSK_USER="${KIOSK_USER:-eventide}"                # the user that will autologin and run the kiosk
-KIOSK_URL="${KIOSK_URL:-http://localhost}"          # the webpage to display
+KIOSK_URL="${KIOSK_URL:-http://localhost/kiosk}"          # the webpage to display
 HDMI_OUTPUT="${HDMI_OUTPUT:-HDMI-1}"                # confirm with: xrandr --query (name can vary by board)
 ROTATION="${ROTATION:-normal}"                      # left | right | inverted | normal
 SCALE_FACTOR="${SCALE_FACTOR:-1}"                   # chromium zoom-out equivalent, e.g. 0.5 = 50%

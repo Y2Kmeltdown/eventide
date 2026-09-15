@@ -3266,10 +3266,9 @@ function switchInnerTab(cam) {
 //  GitHub module installs run on the backend (eventide.py) as
 //  background jobs; this tab polls job status, lists the
 //  installed-module registry, and merges in live supervisord
-//  process info (via XML-RPC) so every service — installed-module
-//  programs and preinstalled "base" services — is controllable
-//  from one list.  The right-hand log panel is shared between
-//  install-job output and per-service stdout tails.
+//  process info (via XML-RPC) so every installed-module program
+//  is controllable from one list. The right-hand log panel is
+//  shared between install-job output and per-service stdout tails.
 // ═══════════════════════════════════════════════════════════
 let modJobId     = null;
 let modJobTimer  = null;
@@ -3326,20 +3325,12 @@ function renderModules(modules) {
   const list = document.getElementById('mod-list');
   const procByName = {};
   (superProcs || []).forEach(p => { procByName[p.name] = p; });
-  const claimed = new Set(modules.flatMap(m =>
-    (m.programs || []).flatMap(p => [p.name, ...(p.copies || []).map(c => c.name)])));
 
-  // Base "module": every supervisor service not owned by an installed module.
-  let html = svcCardHtml({
-    title: 'BASE',
-    version: 'core',
-    desc: 'Preinstalled services running on this device.',
-    services: (superProcs || []).filter(p => !claimed.has(p.name)).map(p => p.name),
-    procByName,
-    fallbackStatus: {},
-    metaHtml: '',
-    uninstallable: false,
-  });
+  // Every base-platform service (playback server, master-record, ...) is
+  // now owned by the eventide-core module, so there's no separate "BASE"
+  // pseudo-module to render — every supervisor program belongs to some
+  // installed module's card below.
+  let html = '';
 
   // Per-copyable-program COPIES section: one sub-panel per copy (own sockets,
   // service row, EDIT/REMOVE) plus an ADD COPY row.

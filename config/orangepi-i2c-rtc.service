@@ -1,0 +1,11 @@
+[Unit]
+Description=Bind the DS1307-compatible RTC on i2c-2 (Orange Pi — no device-tree auto-binding)
+Before=rtc.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo ds1307 0x68 > /sys/class/i2c-dev/i2c-2/device/new_device'
+
+[Install]
+WantedBy=multi-user.target

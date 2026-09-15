@@ -121,15 +121,87 @@ os_configure_raspbian() {
 
 os_services_raspbian() {
     # Hardware-specific services: Pi watchdog + DS3231 I2C RTC.
+    # watchdog.service always execs code/watchdog.py — select the Pi's
+    # gpiozero-based implementation before installing it (see
+    # code/watchdog_raspbian.py).
+    cp /usr/local/eventide/code/watchdog_raspbian.py /usr/local/eventide/code/watchdog.py
     install_service watchdog
     install_service rtc
 }
 
-# ── Example for future OSes ─────────────────────────────────────────────────
-# os_configure_orangepi() {
-#     echo "[INFO] configuring orange pi"
-#     # e.g. enable overlays via /boot/orangepiEnv.txt, different serial device…
-# }
+# ── Orange Pi (edge kernel, e.g. Orange Pi 5 Max) ───────────────────────────
+# The watchdog IC and RTC live on the same I2C bus as the Pi builds (same
+# addresses, 0x67 and 0x68), but this board's newer/edge kernel doesn't
+# expose i2c2 or the watchdog's GPIO feed pin the same way a Pi does:
+#   - i2c2 needs an explicit device-tree overlay (not enabled by default).
+#   - gpiozero's default pin factory doesn't support this board at all —
+#     the watchdog feed uses libgpiod (python3 'gpiod' package) instead.
+#   - the RTC isn't auto-registered by a device-tree overlay like the Pi's
+#     `dtoverlay=i2c-rtc,ds3231`, so it needs an explicit driver bind at boot.
+# Bus/chip/line numbers below are confirmed on the current Orange Pi 5 Max
+# deployment (`i2cdetect -y 2` finds the watchdog at 0x67, RTC at 0x68) —
+# reconfirm on any new/different board before trusting them.
+os_configure_orangepi() {
+    echo "[INFO] enabling i2c2 device-tree overlay (rockchip,rk3588 i2c2m0)"
+    local dts=/tmp/rk3588-i2c2-m0-upstream.dts
+    cat << 'DTS' > "$dts"
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "rockchip,rk3588";
+
+    fragment@0 {
+        target = <&i2c2>;
+        __overlay__ {
+            status = "okay";
+            #address-cells = <1>;
+            #size-cells = <0>;
+            pinctrl-names = "default";
+            pinctrl-0 = <&i2c2m0_xfer>;
+        };
+    };
+};
+DTS
+    sudo mkdir -p /boot/overlay-user
+    sudo dtc -@ -I dts -O dtb -o /boot/overlay-user/i2c2-m0-upstream.dtbo "$dts"
+    rm -f "$dts"
+
+    local env_file=/boot/armbianEnv.txt
+    if [ -f "$env_file" ]; then
+        if grep -q "user_overlays=" "$env_file"; then
+            grep -q "i2c2-m0-upstream" "$env_file" || \
+                sudo sed -i 's/user_overlays=/user_overlays=i2c2-m0-upstream /' "$env_file"
+        else
+            echo "user_overlays=i2c2-m0-upstream" | sudo tee -a "$env_file" > /dev/null
+        fi
+    else
+        echo "[WARN] no $env_file found — add 'user_overlays=i2c2-m0-upstream' to your board's boot env manually"
+    fi
+
+    sudo modprobe i2c-dev
+    grep -q "^i2c-dev$" /etc/modules 2> /dev/null || echo "i2c-dev" | sudo tee -a /etc/modules > /dev/null
+    echo "[INFO] i2c2 overlay installed — takes effect after reboot"
+}
+
+os_packages_orangepi() {
+    sudo apt-get install -y gpiod libgpiod-dev python3-dev
+    sudo pip3 install gpiod smbus2 --break-system-packages
+}
+
+os_services_orangepi() {
+    # watchdog.service always execs code/watchdog.py — select the Orange
+    # Pi's libgpiod-based implementation before installing it (see
+    # code/watchdog_orangepi.py).
+    cp /usr/local/eventide/code/watchdog_orangepi.py /usr/local/eventide/code/watchdog.py
+    install_service watchdog
+
+    # The RTC (DS1307-compatible, 0x68 on i2c-2) isn't bound by a
+    # device-tree overlay like the Pi's, so bind it explicitly before the
+    # generic rtc.service (hwclock -s -f /dev/rtc1) can find it.
+    install_service orangepi-i2c-rtc
+    install_service rtc
+}
 
 ## PREFLIGHT
 step "Preflight checks"

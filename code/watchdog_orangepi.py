@@ -1,6 +1,7 @@
-import gpiozero
+import gpiod
 import smbus2
 import time
+from gpiod.line import Direction, Value
 
 addr = 0x67
 WATCH_ON_OFF      = 0x01
@@ -19,52 +20,70 @@ WATCH_ON_LED = 0x10
 WATCH_OFF_LED = 0x00
 
 WATCH_version = 0x01
+WATCH_TIME_Restart = 5
 
-WATCH_TIME_Restart = 8 
+# Orange Pi 5 Max (edge kernel): the watchdog IC sits on i2c bus 2 (confirmed
+# live via `i2cdetect -y 2`, address 0x67) rather than bus 1, and gpiozero's
+# default pin factory doesn't work on this board's GPIO — this uses the
+# generic libgpiod v2 character-device interface instead. GPIO1_A7 (chip 1,
+# line 7) is the feed pin; both the bus number and the chip/line MUST be
+# reconfirmed on any new board before this is trusted (see IIC_BUS / CHIP_PATH
+# / LINE_OFFSET below).
+IIC_BUS = 2
+CHIP_PATH = "/dev/gpiochip1"
+LINE_OFFSET = 7
 
-Feed_dogs = 4
 try:
-    bus = smbus2.SMBus(1)
-    Feed_dogs = gpiozero.DigitalOutputDevice(Feed_dogs,active_high = True,initial_value =False)
+    bus = smbus2.SMBus(IIC_BUS)
 
-    def read(address):
-        data = bus.read_i2c_block_data(addr, address, 1)
-        return data[0]
+    # Request line with context manager for perfect cleanup safety
+    with gpiod.request_lines(
+        CHIP_PATH,
+        consumer="Watchdog_Feeder",
+        config={
+            LINE_OFFSET: gpiod.LineSettings(
+                direction=Direction.OUTPUT,
+                output_value=Value.INACTIVE
+            )
+        }
+    ) as request:
 
-    def read_word(address):
-        data = bus.read_i2c_block_data(addr, address, 2)
-        return ((data[1] * 256 ) + data[0])
+        def read(address):
+            data = bus.read_i2c_block_data(addr, address, 1)
+            return data[0]
 
-    def write(address,data):
-        temp = [0]
-        temp[0] = data & 0xFF
-        bus.write_i2c_block_data(addr,address,temp)
+        def read_word(address):
+            data = bus.read_i2c_block_data(addr, address, 2)
+            return ((data[1] * 256 ) + data[0])
 
-    def write_word(address,data):
-        temp = [0,0]
-        temp[0] = data & 0xFF
-        temp[1] =(data & 0xFF00) >> 8
-        bus.write_i2c_block_data(addr,address,temp)
+        def write(address,data):
+            temp = [0]
+            temp[0] = data & 0xFF
+            bus.write_i2c_block_data(addr,address,temp)
 
+        def write_word(address,data):
+            temp = [0,0]
+            temp[0] = data & 0xFF
+            temp[1] =(data & 0xFF00) >> 8
+            bus.write_i2c_block_data(addr,address,temp)
 
-    if read(WATCH_FwVersion) == WATCH_version: #Access version number
-        print("init succeed")
-        write(WATCH_ON_OFF,WATCH_ON)#Enable watchdog function
-        time.sleep(0.5)
-        write(WATCH_STATE,WATCH_ON_LED | WATCH_NO_Timeout)  #Turn on the LED status indicator and clear the timeout flag
-                                                            #
-        write_word(WATCH_TIME,WATCH_TIME_Restart) #Set the timeout, currently 60 seconds
+        # Access version checking
+        if read(WATCH_FwVersion) == WATCH_version:
+            print("init succeed")
+            write(WATCH_ON_OFF, WATCH_ON)
+            time.sleep(0.5)
+            write(WATCH_STATE, WATCH_ON_LED | WATCH_NO_Timeout)
+            write_word(WATCH_TIME, WATCH_TIME_Restart)
+        else:
+            print("init fail")
 
-    else:
-        print("init fail")
+        print(f"Entering main loop. Feeding dog on {CHIP_PATH} line {LINE_OFFSET} every 0.8s. Ctrl+C to stop.")
+        while True:
+            request.set_value(LINE_OFFSET, Value.ACTIVE)   # Drive pin High (3.3V)
+            time.sleep(0.8)
+            request.set_value(LINE_OFFSET, Value.INACTIVE) # Drive pin Low (0V)
+            time.sleep(0.8)
 
-    while True:
-        #Feed the dog every 0.8 seconds
-        Feed_dogs.on()
-        time.sleep(0.8)
-        Feed_dogs.off()
-        time.sleep(0.8)
-    
-except KeyboardInterrupt: 
-    print("ctrl + c:")
+except KeyboardInterrupt:
+    print("\nctrl + c: Process terminated safely. Pin state dropped.")
     exit()

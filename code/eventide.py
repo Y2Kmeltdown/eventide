@@ -199,6 +199,9 @@ DEFAULT_SETTINGS = {
     "ui_refresh_interval_ms": 5000,
     "default_playback_speed": 1.0,
     "timezone": "UTC",
+    # None = no override, use the --recordings-dir the backend was started
+    # with (cfg["recordings_dir"]). See current_recordings_dir().
+    "recordings_dir": None,
 }
 
 _settings: dict = {}
@@ -228,6 +231,72 @@ def save_settings(data: dict) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(path, json.dumps(data, indent=2) + "\n")
+
+
+def current_recordings_dir() -> str:
+    """The effective recordings root: the user's saved override if one is
+    set, else the --recordings-dir this process was started with. Read this
+    (not cfg["recordings_dir"] directly) anywhere recordings actually get
+    written or listed, so a settings change takes effect without a backend
+    restart."""
+    override = (_settings or {}).get("recordings_dir")
+    return override if isinstance(override, str) and override else cfg["recordings_dir"]
+
+
+def _validate_recordings_dir(value) -> str | None:
+    """None if `value` is a usable recordings directory, else an error
+    message. Deliberately strict (must already exist and be writable) —
+    see the SETTINGS tab: refusing an unmounted/typo'd path here is safer
+    than silently creating it wherever the path happens to resolve."""
+    if not isinstance(value, str) or not value.strip():
+        return "recordings_dir must be a non-empty path"
+    p = Path(value)
+    if not p.is_absolute():
+        return "recordings_dir must be an absolute path"
+    if not p.is_dir():
+        return f"directory does not exist: {value}"
+    if not os.access(p, os.W_OK):
+        return f"directory is not writable: {value}"
+    return None
+
+
+def _redirect_modules_to(new_dir: str) -> list[str]:
+    """After the recordings directory changes: create every installed
+    module's recordings subdirectory under the new root, re-render each
+    module's supervisor conf (so its program command line picks up the new
+    path — see render_placeholders()), and reapply once. Mirrors the
+    save+re-render+reapply sequence /api/modules/<name>/args already uses.
+    Returns the names of modules whose conf was rewritten."""
+    registry = load_registry()
+    redirected: list[str] = []
+    for name, entry in registry.get("modules", {}).items():
+        manifest = entry.get("manifest", {})
+        touched = False
+
+        sub = manifest.get("recordings_subdir")
+        if isinstance(sub, str) and sub:
+            (Path(new_dir) / sub).mkdir(parents=True, exist_ok=True)
+            touched = True
+
+        for p in manifest.get("programs", []):
+            if not isinstance(p, dict) or "name" not in p:
+                continue
+            for cid in ((entry.get("copies") or {}).get(p["name"])) or {}:
+                csub = _copy_recordings_subdir(manifest, p, cid)
+                if csub:
+                    (Path(new_dir) / csub).mkdir(parents=True, exist_ok=True)
+                    touched = True
+
+        if touched:
+            _render_module_conf(name, entry)
+            redirected.append(name)
+
+    if redirected:
+        save_registry(registry)
+        err = _supervisor_reread_update()
+        if err:
+            raise OSError(err)
+    return redirected
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -678,7 +747,15 @@ def api_settings_get():
     global _settings
     with _settings_lock:
         _settings = load_settings()
-        return jsonify(_settings)
+        resp = dict(_settings)
+    # Live-computed, not persisted: lets the dashboard show a health badge
+    # for the recordings directory (e.g. "card removed") without the user
+    # needing to touch the setting again to find out it's broken.
+    rd = current_recordings_dir()
+    resp["recordings_dir_effective"] = rd
+    resp["recordings_dir_exists"] = Path(rd).is_dir()
+    resp["recordings_dir_is_mount"] = os.path.ismount(rd) if resp["recordings_dir_exists"] else False
+    return jsonify(resp)
 
 
 @app.route("/api/settings", methods=["POST"])
@@ -687,11 +764,30 @@ def api_settings_post():
     data = request.get_json() or {}
     if not isinstance(data, dict):
         return jsonify({"error": "settings body must be a JSON object"}), 400
+
+    if "recordings_dir" in data:
+        err = _validate_recordings_dir(data["recordings_dir"])
+        if err:
+            return jsonify({"error": err}), 400
+
     with _settings_lock:
         _settings = load_settings()
+        old_dir = current_recordings_dir()
         _settings.update(data)
         save_settings(_settings)
-        return jsonify(_settings)
+
+        redirected: list[str] = []
+        if "recordings_dir" in data and data["recordings_dir"] != old_dir:
+            try:
+                redirected = _redirect_modules_to(data["recordings_dir"])
+            except OSError as exc:
+                resp = dict(_settings)
+                resp["error"] = f"settings saved, but failed to redirect modules: {exc}"
+                return jsonify(resp), 500
+
+        resp = dict(_settings)
+        resp["_modules_redirected"] = redirected
+        return jsonify(resp)
 
 
 # ── Recordings ────────────────────────────────────────────────────────────────
@@ -726,7 +822,7 @@ def _recording_sources() -> list[dict]:
 
 
 def _recordings_dir(source: str) -> Path:
-    return Path(cfg["recordings_dir"]) / source
+    return Path(current_recordings_dir()) / source
 
 
 def _favorites_path(source: str) -> Path:
@@ -1620,11 +1716,11 @@ def render_placeholders(text: str, manifest: dict, module_name: str) -> str:
     out = out.replace("{install_dir}", MODULE_INSTALL_DIR)
     out = out.replace("{config_dir}", MODULE_CONFIG_DIR)
     out = out.replace("{module_dir}", str(Path(cfg["packages_dir"]) / module_name))
-    out = out.replace("{recordings_dir}", cfg["recordings_dir"])
+    out = out.replace("{recordings_dir}", current_recordings_dir())
     sub = manifest.get("recordings_subdir")
     if isinstance(sub, str) and sub:
         out = out.replace(
-            "{recordings_subdir}", str(Path(cfg["recordings_dir"]) / sub)
+            "{recordings_subdir}", str(Path(current_recordings_dir()) / sub)
         )
     out = out.replace("{venv_dir}", str(venv_dir))
     out = out.replace("{venv_python}", str(venv_dir / "bin" / "python3"))
@@ -2024,7 +2120,7 @@ def _run_install_job(job: dict) -> None:
             _job_log(job, f"copied {src} → {dst_path}")
         sub = manifest.get("recordings_subdir")
         if sub:
-            rec_dir = Path(cfg["recordings_dir"]) / sub
+            rec_dir = Path(current_recordings_dir()) / sub
             rec_dir.mkdir(parents=True, exist_ok=True)
             _job_log(job, f"created recordings dir {rec_dir}")
         for s in manifest.get("sockets", []):
@@ -2546,7 +2642,7 @@ def api_copies_create(name, pname):
         rec_sub = _copy_recordings_subdir(manifest, prog, copy["id"])
         if rec_sub:
             try:
-                (Path(cfg["recordings_dir"]) / rec_sub).mkdir(
+                (Path(current_recordings_dir()) / rec_sub).mkdir(
                     parents=True, exist_ok=True
                 )
             except OSError as exc:

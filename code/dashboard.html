@@ -515,6 +515,11 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .settings-row .form-label{margin:0}
 .settings-actions{display:flex;gap:10px;margin-top:10px}
 .settings-status{font-size:9px;color:var(--text-dim);margin-left:auto;align-self:center}
+.settings-hint{font-size:9px;color:var(--text-dim);line-height:1.5}
+.settings-recdir-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:8px;letter-spacing:.1em;
+  border:1px solid var(--border2);color:var(--text-dim);margin-left:8px;vertical-align:middle}
+.settings-recdir-badge.ok{border-color:var(--green);color:var(--green)}
+.settings-recdir-badge.warn{border-color:var(--warn);color:var(--warn)}
 
 /* Copy sub-panels (copies of copyable programs) */
 .copy-panel{border:1px solid var(--border);border-radius:var(--r);background:var(--surface2);padding:8px 10px;margin-top:8px}
@@ -798,6 +803,15 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
       <div class="settings-row">
         <label class="form-label">Timezone</label>
         <input class="form-input" type="text" name="timezone" value="UTC">
+      </div>
+      <div class="settings-row">
+        <label class="form-label">Recordings directory
+          <span class="settings-recdir-badge" id="recdir-badge"></span>
+        </label>
+        <input class="form-input" type="text" name="recordings_dir" placeholder="/usr/local/eventide/recordings">
+        <div class="settings-hint">Where all installed modules write recordings (e.g. a mounted SD card).
+          Changing this restarts any already-installed modules so they pick up the new path — recordings
+          already at the old location are left in place, just no longer shown here.</div>
       </div>
       <div class="settings-actions">
         <button type="submit" class="apply-btn">↺ APPLY</button>
@@ -2948,7 +2962,13 @@ function switchTab(tab) {
     clearInterval(modPollTimer);
     modPollTimer = null;
   }
-  if (tab === 'settings') loadSettings();
+  if (tab === 'settings') {
+    loadSettings();
+    if (!settingsHealthTimer) settingsHealthTimer = setInterval(refreshRecdirHealth, 15000);
+  } else {
+    clearInterval(settingsHealthTimer);
+    settingsHealthTimer = null;
+  }
   // Leaflet maps need a resize nudge when the main tab becomes visible.
   if (tab === 'main') {
     // If the initial /api/modules fetch failed, retry so the workspace
@@ -2973,18 +2993,75 @@ async function loadSettings() {
     const r = await fetch(apiUrl('/settings'), { signal: timeoutSignal(5000) });
     if (!r.ok) throw new Error(r.statusText);
     const data = await r.json();
-    _settingsOriginal = { ...data };
+    // recordings_dir may be null (no override saved yet) — track/display the
+    // live effective path instead so "no changes" comparisons and the input
+    // itself both work off a real string.
+    _settingsOriginal = { ...data, recordings_dir: data.recordings_dir_effective || '' };
     form.querySelectorAll('input[name]').forEach(input => {
-      if (input.name in data) {
+      if (input.name === 'recordings_dir') {
+        input.value = data.recordings_dir_effective || '';
+      } else if (input.name in data) {
         input.value = data[input.name];
       }
     });
+    renderRecdirHealth(data);
     status.textContent = 'loaded';
     status.style.color = 'var(--text-dim)';
   } catch (e) {
     status.textContent = 'load failed';
     status.style.color = 'var(--warn)';
   }
+}
+
+// Live health badge for the recordings-directory field — also refreshed on
+// its own light interval (see switchTab()) so a card pulled out mid-session
+// shows up without the user needing to reload the tab.
+function renderRecdirHealth(data) {
+  const badge = document.getElementById('recdir-badge');
+  if (!badge) return;
+  if (!data.recordings_dir_exists) {
+    badge.textContent = 'MISSING';
+    badge.className = 'settings-recdir-badge warn';
+  } else if (!data.recordings_dir_is_mount) {
+    badge.textContent = 'OK';
+    badge.className = 'settings-recdir-badge ok';
+  } else {
+    badge.textContent = 'OK · MOUNTED';
+    badge.className = 'settings-recdir-badge ok';
+  }
+}
+
+async function refreshRecdirHealth() {
+  try {
+    const r = await fetch(apiUrl('/settings'), { signal: timeoutSignal(5000) });
+    if (r.ok) renderRecdirHealth(await r.json());
+  } catch { /* stale badge until the next successful poll */ }
+}
+
+// Recordings at the old location are never moved/deleted automatically —
+// summarize what's there today so the user knows they'll stop appearing in
+// the dashboard (not that they're being destroyed) before committing.
+async function confirmRecordingsDirChange(newDir) {
+  let summary = '';
+  try {
+    const sr = await fetch(apiUrl('/recordings'));
+    const sources = (await sr.json()).sources || [];
+    let count = 0, bytes = 0;
+    for (const s of sources) {
+      const fr = await fetch(apiUrl('/recordings/' + encodeURIComponent(s.name)));
+      const files = (await fr.json()).files || [];
+      count += files.length;
+      bytes += files.reduce((sum, f) => sum + (f.size || 0), 0);
+    }
+    if (count) {
+      summary = `${count} recording(s) (${fmtSize(bytes)}) at the current location will no longer `
+              + `be shown here — they are NOT moved or deleted, just left where they are.\n\n`;
+    }
+  } catch { /* best-effort summary; proceed without it if it fails */ }
+  return confirm(
+    `Change the recordings directory to "${newDir}"?\n\n${summary}`
+    + `Every installed module will be redirected to the new path and restarted.`
+  );
 }
 
 async function applySettings() {
@@ -3004,18 +3081,38 @@ async function applySettings() {
     status.style.color = 'var(--text-dim)';
     return;
   }
+
+  if ('recordings_dir' in updates) {
+    const ok = await confirmRecordingsDirChange(updates.recordings_dir);
+    if (!ok) {
+      delete updates.recordings_dir;
+      const input = form.querySelector('input[name="recordings_dir"]');
+      if (input) input.value = _settingsOriginal.recordings_dir || '';
+      if (!Object.keys(updates).length) {
+        status.textContent = 'no changes';
+        status.style.color = 'var(--text-dim)';
+        return;
+      }
+    }
+  }
+
   try {
     const r = await fetch(apiUrl('/settings'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    if (!r.ok) throw new Error(r.statusText);
-    const data = await r.json();
-    _settingsOriginal = { ...data };
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _settingsOriginal = { ...data, recordings_dir: data.recordings_dir_effective || '' };
+    renderRecdirHealth(data);
     status.textContent = 'saved';
     status.style.color = 'var(--green)';
-    toast('Settings saved', 'ok');
+    if (data._modules_redirected && data._modules_redirected.length) {
+      toast(`Settings saved — restarted: ${data._modules_redirected.join(', ')}`, 'ok');
+    } else {
+      toast('Settings saved', 'ok');
+    }
   } catch (e) {
     status.textContent = 'save failed';
     status.style.color = 'var(--warn)';
@@ -3047,6 +3144,7 @@ function switchInnerTab(cam) {
 let modJobId     = null;
 let modJobTimer  = null;
 let modPollTimer = null;
+let settingsHealthTimer = null;
 let logMode      = null;   // 'job' (install log) | 'proc' (service log)
 let logStream    = 'stdout'; // 'stdout' | 'stderr' — which supervisord log to tail
 let superProcs   = null;   // live supervisor.getAllProcessInfo, null if RPC down

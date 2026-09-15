@@ -520,6 +520,13 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
   border:1px solid var(--border2);color:var(--text-dim);margin-left:8px;vertical-align:middle}
 .settings-recdir-badge.ok{border-color:var(--green);color:var(--green)}
 .settings-recdir-badge.warn{border-color:var(--warn);color:var(--warn)}
+.settings-recdir-badge.low{border-color:var(--amber);color:var(--amber)}
+.settings-retention-box{border:1px solid var(--border);border-radius:var(--r);padding:12px;gap:8px;background:var(--surface2)}
+.settings-checkbox-row{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text)}
+.settings-warn-text{color:var(--warn)}
+.retention-item{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);font-size:9px}
+.retention-item .ri-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.retention-list{max-height:160px;overflow-y:auto;margin-top:4px}
 
 /* Copy sub-panels (copies of copyable programs) */
 .copy-panel{border:1px solid var(--border);border-radius:var(--r);background:var(--surface2);padding:8px 10px;margin-top:8px}
@@ -809,9 +816,29 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
           <span class="settings-recdir-badge" id="recdir-badge"></span>
         </label>
         <input class="form-input" type="text" name="recordings_dir" placeholder="/usr/local/eventide/recordings">
+        <div class="settings-hint" id="recdir-space-readout"></div>
         <div class="settings-hint">Where all installed modules write recordings (e.g. a mounted SD card).
           Changing this restarts any already-installed modules so they pick up the new path — recordings
           already at the old location are left in place, just no longer shown here.</div>
+      </div>
+      <div class="settings-row">
+        <label class="form-label">Low disk warning threshold (% free)</label>
+        <input class="form-input" type="number" name="low_disk_warn_pct" min="1" max="50" step="1" value="10">
+      </div>
+      <div class="settings-row">
+        <label class="form-label">Retention — delete recordings older than (days)</label>
+        <input class="form-input" type="number" name="retention_days" min="1" step="1" placeholder="no cutoff">
+      </div>
+      <div class="settings-row settings-retention-box">
+        <button type="button" class="btn-sm" id="retention-preview-btn" onclick="previewRetention()">↻ PREVIEW WHAT WOULD BE DELETED</button>
+        <div class="settings-hint" id="retention-preview-result"></div>
+        <label class="settings-checkbox-row">
+          <input type="checkbox" name="retention_enabled" id="retention-enabled-input" disabled>
+          Automatically delete matching recordings (hourly sweep)
+        </label>
+        <div class="settings-hint settings-warn-text">Deletes matching recordings permanently — favorited recordings
+          are never deleted, but everything else past the cutoff is gone for good. Run a preview above (with your
+          current days value) before this checkbox unlocks.</div>
       </div>
       <div class="settings-actions">
         <button type="submit" class="apply-btn">↺ APPLY</button>
@@ -2998,13 +3025,19 @@ async function loadSettings() {
     // itself both work off a real string.
     _settingsOriginal = { ...data, recordings_dir: data.recordings_dir_effective || '' };
     form.querySelectorAll('input[name]').forEach(input => {
-      if (input.name === 'recordings_dir') {
+      if (input.type === 'checkbox') {
+        input.checked = !!data[input.name];
+      } else if (input.name === 'recordings_dir') {
         input.value = data.recordings_dir_effective || '';
       } else if (input.name in data) {
         input.value = data[input.name];
       }
     });
     renderRecdirHealth(data);
+    // A fresh load means no preview has run yet against whatever's now in
+    // the days field — require one again before automatic deletion unlocks.
+    document.getElementById('retention-enabled-input').disabled = true;
+    document.getElementById('retention-preview-result').textContent = '';
     status.textContent = 'loaded';
     status.style.color = 'var(--text-dim)';
   } catch (e) {
@@ -3018,16 +3051,26 @@ async function loadSettings() {
 // shows up without the user needing to reload the tab.
 function renderRecdirHealth(data) {
   const badge = document.getElementById('recdir-badge');
-  if (!badge) return;
-  if (!data.recordings_dir_exists) {
-    badge.textContent = 'MISSING';
-    badge.className = 'settings-recdir-badge warn';
-  } else if (!data.recordings_dir_is_mount) {
-    badge.textContent = 'OK';
-    badge.className = 'settings-recdir-badge ok';
-  } else {
-    badge.textContent = 'OK · MOUNTED';
-    badge.className = 'settings-recdir-badge ok';
+  const space = document.getElementById('recdir-space-readout');
+  if (badge) {
+    if (!data.recordings_dir_exists) {
+      badge.textContent = 'MISSING';
+      badge.className = 'settings-recdir-badge warn';
+    } else if (data.recordings_dir_low_disk) {
+      badge.textContent = 'LOW DISK';
+      badge.className = 'settings-recdir-badge low';
+    } else if (!data.recordings_dir_is_mount) {
+      badge.textContent = 'OK';
+      badge.className = 'settings-recdir-badge ok';
+    } else {
+      badge.textContent = 'OK · MOUNTED';
+      badge.className = 'settings-recdir-badge ok';
+    }
+  }
+  if (space) {
+    space.textContent = (data.recordings_dir_exists && data.recordings_dir_free_bytes != null)
+      ? `${fmtSize(data.recordings_dir_free_bytes)} free (${data.recordings_dir_free_pct}%)`
+      : '';
   }
 }
 
@@ -3069,7 +3112,7 @@ async function applySettings() {
   const status = document.getElementById('settings-status');
   const updates = {};
   form.querySelectorAll('input[name]').forEach(input => {
-    let v = input.value;
+    let v = input.type === 'checkbox' ? input.checked : input.value;
     if (input.type === 'number') v = parseFloat(v);
     const orig = _settingsOriginal[input.name];
     if (JSON.stringify(v) !== JSON.stringify(orig)) {
@@ -3119,6 +3162,66 @@ async function applySettings() {
     toast('Settings save failed: ' + e.message, 'err');
   }
 }
+
+// Retention dry-run — always available regardless of retention_enabled.
+// Successfully previewing the CURRENT days value is what unlocks the
+// enable-automatic-deletion checkbox (re-disabled below on any edit to the
+// days field, so a stale preview can never authorize a different cutoff).
+async function previewRetention() {
+  const form = document.getElementById('settings-form');
+  const daysInput = form.querySelector('input[name="retention_days"]');
+  const enableInput = document.getElementById('retention-enabled-input');
+  const result = document.getElementById('retention-preview-result');
+  const days = parseFloat(daysInput.value);
+  if (!days || days <= 0) {
+    result.textContent = 'Enter a positive number of days first.';
+    result.className = 'settings-hint settings-warn-text';
+    enableInput.disabled = true;
+    return;
+  }
+  result.textContent = 'Checking…';
+  result.className = 'settings-hint';
+  try {
+    const r = await fetch(apiUrl(`/retention/preview?days=${days}`));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    if (!data.count) {
+      result.innerHTML = `Nothing older than ${days} day(s) right now — favorited recordings are never included.`;
+      result.className = 'settings-hint';
+    } else {
+      const rows = data.items.slice(0, 50).map(it => `
+        <div class="retention-item">
+          <span class="ri-name" title="${it.source}/${it.name}">${it.source}/${it.name}</span>
+          <span>${it.age_days}d</span>
+          <span>${fmtSize(it.size)}</span>
+        </div>`).join('');
+      const more = data.count > 50 ? `<div class="settings-hint">…and ${data.count - 50} more</div>` : '';
+      result.innerHTML = `<strong>${data.count} recording(s), ${fmtSize(data.total_bytes)}</strong> would be deleted:`
+        + `<div class="retention-list">${rows}</div>${more}`;
+      result.className = 'settings-hint settings-warn-text';
+    }
+    enableInput.disabled = false;
+    enableInput.dataset.previewedDays = String(days);
+  } catch (e) {
+    result.textContent = 'Preview failed: ' + e.message;
+    result.className = 'settings-hint settings-warn-text';
+    enableInput.disabled = true;
+  }
+}
+
+(function wireRetentionDaysGate() {
+  const form = document.getElementById('settings-form');
+  const daysInput = form.querySelector('input[name="retention_days"]');
+  const enableInput = document.getElementById('retention-enabled-input');
+  daysInput.addEventListener('input', () => {
+    // A stale preview (for a different days value, or before this edit)
+    // must not stay authorizing automatic deletion.
+    if (enableInput.dataset.previewedDays !== daysInput.value) {
+      enableInput.disabled = true;
+      enableInput.checked = false;
+    }
+  });
+})();
 
 // ═══════════════════════════════════════════════════════════
 //  INNER TABS (Playback)

@@ -202,6 +202,16 @@ DEFAULT_SETTINGS = {
     # None = no override, use the --recordings-dir the backend was started
     # with (cfg["recordings_dir"]). See current_recordings_dir().
     "recordings_dir": None,
+    # Free-space percent below which GET /api/settings reports
+    # recordings_dir_low_disk: true.
+    "low_disk_warn_pct": 10,
+    # Age-based retention: recordings_days is the cutoff (None = no cutoff
+    # configured); retention_enabled is the separate, explicit opt-in that
+    # actually turns on automatic deletion — see retention_sweep_loop().
+    # GET /api/retention/preview works regardless of retention_enabled, so a
+    # dry run never requires opting in first.
+    "retention_days": None,
+    "retention_enabled": False,
 }
 
 _settings: dict = {}
@@ -755,6 +765,23 @@ def api_settings_get():
     resp["recordings_dir_effective"] = rd
     resp["recordings_dir_exists"] = Path(rd).is_dir()
     resp["recordings_dir_is_mount"] = os.path.ismount(rd) if resp["recordings_dir_exists"] else False
+    if resp["recordings_dir_exists"]:
+        try:
+            usage = shutil.disk_usage(rd)
+            resp["recordings_dir_free_bytes"] = usage.free
+            resp["recordings_dir_free_pct"] = round(usage.free / usage.total * 100, 1) if usage.total else 0
+        except OSError:
+            resp["recordings_dir_free_bytes"] = None
+            resp["recordings_dir_free_pct"] = None
+    else:
+        resp["recordings_dir_free_bytes"] = None
+        resp["recordings_dir_free_pct"] = None
+    warn_pct = resp.get("low_disk_warn_pct")
+    resp["recordings_dir_low_disk"] = (
+        resp["recordings_dir_free_pct"] is not None
+        and isinstance(warn_pct, (int, float))
+        and resp["recordings_dir_free_pct"] < warn_pct
+    )
     return jsonify(resp)
 
 
@@ -769,6 +796,11 @@ def api_settings_post():
         err = _validate_recordings_dir(data["recordings_dir"])
         if err:
             return jsonify({"error": err}), 400
+
+    if "retention_days" in data and data["retention_days"] is not None:
+        days = data["retention_days"]
+        if not isinstance(days, (int, float)) or isinstance(days, bool) or days <= 0:
+            return jsonify({"error": "retention_days must be a positive number, or null to disable"}), 400
 
     with _settings_lock:
         _settings = load_settings()
@@ -862,10 +894,13 @@ def list_recordings_source(source):
 
 RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264", "*.jsonl", "*.basler")
 
-def _list_recordings_for(source: str):
+def _scan_recordings(source: str) -> list[dict]:
+    """Every recording file for `source`: {name, size, ext, favorited,
+    mtime}. Shared by the file-list endpoint and retention (preview +
+    sweep) below, so both agree on exactly what counts as a recording."""
     recordings_dir = _recordings_dir(source)
     if not recordings_dir.exists():
-        return jsonify({"files": []})
+        return []
     favorites = _load_favorites(source)
     seen = set()
     entries = []
@@ -873,12 +908,19 @@ def _list_recordings_for(source: str):
         for f in recordings_dir.glob(pattern):
             if f.is_file() and f.name not in seen:
                 seen.add(f.name)
+                st = f.stat()
                 entries.append({
                     "name": f.name,
-                    "size": f.stat().st_size,
+                    "size": st.st_size,
                     "ext": f.suffix.lstrip("."),
                     "favorited": f.name in favorites,
+                    "mtime": st.st_mtime,
                 })
+    return entries
+
+
+def _list_recordings_for(source: str):
+    entries = _scan_recordings(source)
     # Favorites first, then newest-by-name descending.
     entries.sort(key=lambda x: (-int(x["favorited"]), x["name"]), reverse=False)
     return jsonify({"files": entries})
@@ -937,6 +979,69 @@ def delete_recording(source, filename):
         return jsonify({"ok": True})
     except OSError as exc:
         return jsonify({"error": f"delete failed: {exc}"}), 500
+
+
+# ── Retention ────────────────────────────────────────────────────────────────
+# Age-based pruning of old recordings. retention_days (the cutoff) and
+# retention_enabled (the actual-deletion opt-in) are separate settings on
+# purpose: /api/retention/preview always works off retention_days alone, so
+# the dashboard can show exactly what a cutoff would delete before the user
+# ever turns automatic deletion on. Favorited recordings are never touched.
+
+def _retention_candidates(days: float) -> list[dict]:
+    cutoff = time.time() - days * 86400
+    candidates = []
+    for source in _recording_sources():
+        for f in _scan_recordings(source["name"]):
+            if not f["favorited"] and f["mtime"] < cutoff:
+                candidates.append({
+                    "source": source["name"],
+                    "name": f["name"],
+                    "size": f["size"],
+                    "age_days": round((time.time() - f["mtime"]) / 86400, 1),
+                })
+    candidates.sort(key=lambda x: x["age_days"], reverse=True)
+    return candidates
+
+
+@app.route("/api/retention/preview")
+def api_retention_preview():
+    days = request.args.get("days", type=float)
+    if days is None:
+        days = _settings.get("retention_days")
+    if not isinstance(days, (int, float)) or days <= 0:
+        return jsonify({"error": "no retention_days configured or provided (?days=N)"}), 400
+    items = _retention_candidates(days)
+    return jsonify({
+        "days": days,
+        "count": len(items),
+        "total_bytes": sum(i["size"] for i in items),
+        "items": items,
+    })
+
+
+def retention_sweep_loop() -> None:
+    """Background sweep — checked hourly, only acts while retention_enabled
+    is on. Runs as a daemon thread started from main(); errors are logged
+    and never crash the loop, matching the eventide-core scheduler's own
+    firing-loop convention (modules/eventide-core/scheduler.py)."""
+    while True:
+        time.sleep(3600)
+        try:
+            with _settings_lock:
+                enabled = _settings.get("retention_enabled")
+                days = _settings.get("retention_days")
+            if not enabled or not isinstance(days, (int, float)) or days <= 0:
+                continue
+            for item in _retention_candidates(days):
+                try:
+                    (_recordings_dir(item["source"]) / item["name"]).unlink()
+                    print(f"[retention] deleted {item['source']}/{item['name']} "
+                          f"(age {item['age_days']}d, {item['size']} bytes)", flush=True)
+                except OSError as exc:
+                    print(f"[retention] failed to delete {item['source']}/{item['name']}: {exc}", flush=True)
+        except Exception as exc:  # keep the loop alive no matter what
+            print(f"[retention] sweep error: {exc}", flush=True)
 
 
 # ── Module asset files ────────────────────────────────────────────────────────
@@ -2947,6 +3052,8 @@ def main():
     else:
         viewfinders["live"] = proc
         print("[backend] Auto-started live viewfinder.")
+
+    threading.Thread(target=retention_sweep_loop, daemon=True).start()
 
     app.run(host=args.host, port=args.port, debug=False)
 

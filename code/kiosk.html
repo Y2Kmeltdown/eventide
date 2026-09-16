@@ -130,6 +130,12 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .mini-stepper{width:34px;height:34px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
   color:var(--accent);font-size:14px;cursor:pointer;flex-shrink:0}
 
+/* ── lens focus-mode selector (camera settings drawer) ───────────────────── */
+.mode-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.mode-chip{height:40px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
+  color:var(--text-mid);font-size:11px;letter-spacing:.06em;cursor:pointer}
+.mode-chip.on{color:var(--accent);border-color:var(--accent);background:var(--accent-dim)}
+
 /* ── schedule builder (right drawer) ──────────────────────────────────────── */
 .day-row{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .day-chip{height:36px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface2);
@@ -248,17 +254,22 @@ button{font-family:var(--mono);-webkit-user-select:none}
 </div>
 
 <script>
-// ── Config: the two modules this kiosk is hard-wired to ────────────────────
+// ── Config: the two camera modules this kiosk is hard-wired to (feed + PiP +
+//    record). motorized-lens is also hard-wired (left drawer LENS CONTROL
+//    section, see camInfo.lens below) but isn't a camera — no feed/record. ──
 const CAMS = {
   evk:    { module: 'evk-datalogger', label: 'EVK4' },
   basler: { module: 'basler-camera',  label: 'BASLER' },
 };
 
-let camInfo  = { evk: null, basler: null };   // camId -> {mod, streamUrl, rec:{socket,get,put,key,controlKey,fileKey}}
+let camInfo  = { evk: null, basler: null, lens: null };   // camId -> {mod, streamUrl, rec:{...}, settingsForm:{...}}
+                                               // ('lens' is not a camera — no feed/rec, just settingsForm)
 let camState = {                              // camId -> live polled recording state
   evk:    { recording: false, control: true, offline: true },
   basler: { recording: false, control: true, offline: true },
 };
+let lensState = { mode: null, iris: null, ircut: null };   // motorized-lens: non-numeric lens-control fields
+                                               // (zoom/focus are numeric — they live in cameraFieldValues below)
 let recSources = {};   // camId -> recordings-API source name (e.g. "evk", "basler")
 let recordStartedAt = null;
 
@@ -307,6 +318,16 @@ async function loadModules() {
         } : null,
       };
     }
+
+    // Lens control (motorized-lens module) — not a camera, so no feed/PiP/
+    // record wiring, just its "lens-control" form on the left drawer, same
+    // GET-populates/PUT-applies contract as the biases/camera-settings forms.
+    const lensMod  = modules.find(mm => mm.name === 'motorized-lens');
+    const lensForm = lensMod ? (lensMod.ui || []).find(c => c.type === 'form' && c.id === 'lens-control') : null;
+    camInfo.lens = lensForm ? {
+      mod: lensMod.name,
+      settingsForm: { socket: lensForm.socket, get: lensForm.get, put: lensForm.put, method: lensForm.method || 'POST' },
+    } : null;
   } catch { /* keep last-known camInfo; retry on next poll */ }
   applyFeeds();
 
@@ -343,11 +364,16 @@ function applyFeeds() {
   setFeed(document.getElementById('feed-basler'), document.getElementById('off-basler'), camInfo.basler);
 }
 
-// ── Camera settings (left drawer) — EVK biases + Basler camera settings ────
-// Field bounds/steps are fixed to match each module's manifest (evk_datalogger
-// and basler_eric eventide-module.json field definitions) — this kiosk is
-// hard-wired to exactly these two modules, so there's no need to discover
-// field lists dynamically the way the generic dashboard form widget does.
+// ── Camera settings (left drawer) — EVK biases + Basler camera settings +
+//    motorized-lens control ───────────────────────────────────────────────
+// Field bounds/steps are fixed to match each module's manifest (evk_datalogger,
+// basler_eric, and Motorized_Lens eventide-module.json field definitions) —
+// this kiosk is hard-wired to exactly these modules, so there's no need to
+// discover field lists dynamically the way the generic dashboard form widget
+// does. Zoom/focus are plain 0-100% numeric fields, so they're listed here
+// like any other stepper field; focus mode/iris/IR-cut are select/toggle
+// controls with their own markup, rendered around this group (see
+// renderCameraFieldRows below).
 const CAMERA_FIELDS = [
   { group: 'EVK4 BIASES',      cam: 'evk',    key: 'diff_on',       label: 'Diff ON',           min: 0, max: 255,    step: 5,   decimals: 0 },
   { group: 'EVK4 BIASES',      cam: 'evk',    key: 'diff_off',      label: 'Diff OFF',          min: 0, max: 255,    step: 5,   decimals: 0 },
@@ -356,18 +382,34 @@ const CAMERA_FIELDS = [
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'frame_rate_hz', label: 'Frame rate (Hz)',   min: 0, max: 500,    step: 5,   decimals: 0 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'black_level',   label: 'Black level',       min: 0, max: 255,    step: 1,   decimals: 0 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'gamma',         label: 'Gamma',             min: 0, max: 4,      step: 0.1, decimals: 2 },
+  { group: 'LENS CONTROL',     cam: 'lens',   key: 'zoom',          label: 'Zoom %',            min: 0, max: 100,   step: 5,   decimals: 0 },
+  { group: 'LENS CONTROL',     cam: 'lens',   key: 'focus',         label: 'Focus %',           min: 0, max: 100,   step: 5,   decimals: 0 },
 ];
 const cameraFieldValues = {};   // "cam.key" -> current numeric value
 
 function fieldValueId(f) { return `${f.cam}.${f.key}`; }
 function fmtFieldValue(f, v) { return v == null ? '—' : v.toFixed(f.decimals); }
 
+function lensModeRowHtml() {
+  const modes = [['far', 'FAR'], ['near', 'NEAR'], ['manual', 'MANUAL']];
+  return `<div class="mode-row" id="lens-mode-row">` +
+    modes.map(([v, label]) => `<button class="mode-chip ${lensState.mode === v ? 'on' : ''}" data-mode="${v}">${label}</button>`).join('') +
+    `</div>`;
+}
+function lensToggleLabel(key, val) {
+  if (val == null) return '—';
+  return key === 'iris' ? (val ? 'OPEN' : 'CLOSED') : (val ? 'ON' : 'OFF');
+}
+
 function renderCameraFieldRows() {
   const container = document.getElementById('camera-fields');
   let html = '', lastGroup = null;
   for (const f of CAMERA_FIELDS) {
-    if (f.group !== lastGroup) { html += `<div class="section-title">${f.group}</div>`; lastGroup = f.group; }
-    lastGroup = f.group;
+    if (f.group !== lastGroup) {
+      html += `<div class="section-title">${f.group}</div>`;
+      if (f.group === 'LENS CONTROL') html += lensModeRowHtml();
+      lastGroup = f.group;
+    }
     const id = fieldValueId(f);
     html += `
       <div class="field-row">
@@ -377,6 +419,9 @@ function renderCameraFieldRows() {
         <button class="mini-stepper" data-field="${id}" data-delta="${f.step}">+</button>
       </div>`;
   }
+  html += `
+    <button class="keypad-toggle-btn" id="lens-ircut-toggle">IR-CUT FILTER: ${lensToggleLabel('ircut', lensState.ircut)}</button>
+    <button class="keypad-toggle-btn" id="lens-iris-toggle">IRIS: ${lensToggleLabel('iris', lensState.iris)}</button>`;
   container.innerHTML = html;
 
   container.querySelectorAll('.mini-stepper').forEach(btn => {
@@ -387,10 +432,14 @@ function renderCameraFieldRows() {
     const f = CAMERA_FIELDS.find(f => fieldValueId(f) === el.dataset.field);
     el.addEventListener('click', () => openKeypadFor(f.min, f.max, v => setCameraField(f, v)));
   });
+  container.querySelectorAll('.mode-chip').forEach(btn =>
+    btn.addEventListener('click', () => setLensMode(btn.dataset.mode)));
+  document.getElementById('lens-ircut-toggle').addEventListener('click', () => toggleLensField('ircut'));
+  document.getElementById('lens-iris-toggle').addEventListener('click', () => toggleLensField('iris'));
 }
 
 async function loadCameraFields() {
-  for (const camId of ['evk', 'basler']) {
+  for (const camId of ['evk', 'basler', 'lens']) {
     const info = camInfo[camId];
     if (!info || !info.settingsForm) continue;
     try {
@@ -399,6 +448,11 @@ async function loadCameraFields() {
       const data = await r.json();
       for (const f of CAMERA_FIELDS.filter(f => f.cam === camId)) {
         if (data[f.key] != null) cameraFieldValues[fieldValueId(f)] = Number(data[f.key]);
+      }
+      if (camId === 'lens') {
+        if (data.mode != null) lensState.mode = data.mode;
+        if (typeof data.iris === 'boolean') lensState.iris = data.iris;
+        if (typeof data.ircut === 'boolean') lensState.ircut = data.ircut;
       }
     } catch { /* leave whatever was last known */ }
   }
@@ -420,6 +474,36 @@ async function setCameraField(f, rawValue) {
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
   } catch (e) { toast(`${f.label} failed: ${e.message}`); }
+}
+
+// Lens focus mode (select) and iris/IR-cut (toggles) — same PUT endpoint and
+// module as the zoom/focus fields above (/api/lens-control accepts a partial
+// body; unset fields are left untouched), just not plain numeric fields so
+// they don't fit the CAMERA_FIELDS stepper mechanism.
+async function postLensControl(patch, label) {
+  const info = camInfo.lens;
+  if (!info || !info.settingsForm) return;
+  try {
+    const r = await fetch(proxyUrl(info.mod, info.settingsForm.socket, info.settingsForm.put), {
+      method: info.settingsForm.method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+  } catch (e) { toast(`${label} failed: ${e.message}`); }
+}
+
+function setLensMode(mode) {
+  lensState.mode = mode;
+  document.querySelectorAll('#lens-mode-row .mode-chip').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  postLensControl({ mode }, 'Focus mode');
+}
+
+function toggleLensField(key) {
+  const next = !lensState[key];
+  lensState[key] = next;
+  const btn = document.getElementById('lens-' + key + '-toggle');
+  if (btn) btn.textContent = `${key === 'iris' ? 'IRIS' : 'IR-CUT FILTER'}: ${lensToggleLabel(key, next)}`;
+  postLensControl({ [key]: next }, key === 'iris' ? 'Iris' : 'IR-cut filter');
 }
 
 // ── Main / PiP swap — tapping the PiP box itself is the toggle ─────────────

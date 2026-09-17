@@ -51,7 +51,7 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .feed-wrap.pip .rec-dot{width:7px;height:7px;top:6px;right:6px}
 
 /* ── record button ───────────────────────────────────────────────────── */
-.record-btn{position:fixed;top:20px;right:20px;z-index:40;min-width:200px;height:64px;padding:0 22px;
+.record-btn{position:fixed;bottom:20px;right:20px;z-index:40;min-width:200px;height:64px;padding:0 22px;
   border-radius:32px;background:var(--surface2);border:2px solid var(--border2);color:var(--accent);
   font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.06em;
   display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer}
@@ -61,6 +61,14 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .record-btn.recording .dot{background:var(--warn);border-radius:3px}
 .record-btn:disabled{opacity:.5;cursor:default}
 @keyframes recpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,91,107,.45)}50%{box-shadow:0 0 0 16px rgba(255,91,107,0)}}
+
+/* ── refresh button — small and dimmed on purpose; a reload escape hatch
+   for a kiosk with no browser chrome, not a primary control ───────────── */
+.refresh-btn{position:fixed;top:20px;right:20px;z-index:40;width:44px;height:44px;border-radius:50%;
+  background:var(--surface2);border:1px solid var(--border2);color:var(--text-dim);
+  font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;opacity:.55;transition:opacity .2s ease,color .2s ease,border-color .2s ease}
+.refresh-btn:active{opacity:1;color:var(--accent);border-color:var(--accent)}
 
 /* ── edge tabs ────────────────────────────────────────────────────────────
    Each tab is a child of its drawer, positioned just outside the drawer's
@@ -143,8 +151,7 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .day-chip.on{color:var(--accent);border-color:var(--accent);background:var(--accent-dim)}
 .add-schedule-btn{height:48px;border-radius:var(--r);border:1px solid var(--accent);background:var(--accent-dim);
   color:var(--accent);font-size:11px;letter-spacing:.06em;cursor:pointer}
-.sched-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto}
-.sched-item{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:var(--r)}
+.sched-item{display:flex;align-items:center;gap:8px;padding:8px;margin-bottom:6px;border:1px solid var(--border);border-radius:var(--r)}
 .sched-item .sched-info{flex:1;min-width:0}
 .sched-item .sched-time{font-size:12px;color:var(--text)}
 .sched-item .sched-days{font-size:9px;color:var(--text-dim);margin-top:2px}
@@ -192,11 +199,14 @@ button{font-family:var(--mono);-webkit-user-select:none}
     <span class="rec-time" id="record-time"></span>
   </button>
 
+  <button class="refresh-btn" id="refresh-btn" title="Reload">↻</button>
+
   <div class="drawer drawer-bottom" id="drawer-recordings">
     <button class="edge-tab edge-tab-bottom" id="tab-recordings">▲</button>
     <div class="rec-tabs">
       <button class="rec-tab" data-src="evk">EVK4</button>
       <button class="rec-tab" data-src="basler">BASLER</button>
+      <button class="rec-tab" data-src="schedule">SCHEDULE</button>
     </div>
     <div class="rec-list" id="rec-list"><div class="rec-empty">Loading…</div></div>
   </div>
@@ -225,7 +235,6 @@ button{font-family:var(--mono);-webkit-user-select:none}
       </div>
       <div class="day-row" id="sched-days"></div>
       <button class="add-schedule-btn" id="sched-add">+ ADD SCHEDULE (USES DURATION ABOVE)</button>
-      <div class="sched-list" id="sched-list"><div class="rec-empty">Loading…</div></div>
     </div>
   </div>
 
@@ -575,6 +584,8 @@ function swapMain(el) {
 document.getElementById('wrap-evk').addEventListener('click', function () { swapMain(this); });
 document.getElementById('wrap-basler').addEventListener('click', function () { swapMain(this); });
 
+document.getElementById('refresh-btn').addEventListener('click', () => location.reload());
+
 (function restoreMain() {
   const saved = localStorage.getItem('eventide-kiosk-main');
   if (saved && saved !== 'evk') {
@@ -737,6 +748,10 @@ async function loadRecList() {
 }
 
 document.getElementById('rec-list').addEventListener('click', async (ev) => {
+  // Schedule rows wire their own toggle/del listeners directly in
+  // loadSchedules() each render — this delegated handler is for the
+  // recording-file fav/del buttons only.
+  if (activeRecTab === 'schedule') return;
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
   const src = recSources[activeRecTab];
@@ -758,17 +773,21 @@ document.getElementById('rec-list').addEventListener('click', async (ev) => {
   }
 });
 
+function loadActiveRecTab() {
+  return activeRecTab === 'schedule' ? loadSchedules() : loadRecList();
+}
+
 document.querySelectorAll('.rec-tab').forEach(tab => tab.addEventListener('click', () => {
   activeRecTab = tab.dataset.src;
   document.querySelectorAll('.rec-tab').forEach(t => t.classList.toggle('active', t === tab));
-  loadRecList();
+  loadActiveRecTab();
 }));
 document.querySelector('.rec-tab[data-src="evk"]').classList.add('active');
 
 // ── Drawer open/close (edge tabs) — three drawers, mutually exclusive ──────
 const drawers = {
-  recordings: { el: document.getElementById('drawer-recordings'), tab: document.getElementById('tab-recordings'), openGlyph: '▼', closedGlyph: '▲', onOpen: loadRecList },
-  settings:   { el: document.getElementById('drawer-settings'),   tab: document.getElementById('tab-settings'),   openGlyph: '▶', closedGlyph: '◀', onOpen: loadSchedules },
+  recordings: { el: document.getElementById('drawer-recordings'), tab: document.getElementById('tab-recordings'), openGlyph: '▼', closedGlyph: '▲', onOpen: loadActiveRecTab },
+  settings:   { el: document.getElementById('drawer-settings'),   tab: document.getElementById('tab-settings'),   openGlyph: '▶', closedGlyph: '◀' },
   camera:     { el: document.getElementById('drawer-camera'),     tab: document.getElementById('tab-camera'),     openGlyph: '◀', closedGlyph: '▶', onOpen: loadCameraFields },
 };
 function closeDrawer(d) { d.el.classList.remove('open'); d.tab.textContent = d.closedGlyph; }
@@ -931,11 +950,17 @@ document.getElementById('sched-add').addEventListener('click', async () => {
   }
 });
 
+// Renders into the shared #rec-list (recordings drawer's "SCHEDULE" tab) —
+// same container EVK4/BASLER use, so it must not touch the DOM unless that
+// tab is the one actually showing (same race-guard pattern as loadRecList).
 async function loadSchedules() {
-  const list = document.getElementById('sched-list');
+  const requestedTab = activeRecTab;
+  if (requestedTab !== 'schedule') return;
+  const list = document.getElementById('rec-list');
   try {
     const r = await fetch(proxyUrl('eventide-core', 'scheduler_api', '/api/schedules'));
     const data = await r.json();
+    if (requestedTab !== activeRecTab) return;
     const items = data.items || [];
     if (!items.length) { list.innerHTML = '<div class="rec-empty">No schedules.</div>'; return; }
     list.innerHTML = items.map(it => {
@@ -955,7 +980,7 @@ async function loadSchedules() {
     list.querySelectorAll('[data-act="toggle"]').forEach(cb => cb.addEventListener('change', () => toggleSchedule(cb.dataset.schedId, cb.checked, cb)));
     list.querySelectorAll('[data-act="del"]').forEach(btn => btn.addEventListener('click', () => deleteSchedule(btn.dataset.schedId)));
   } catch {
-    list.innerHTML = '<div class="rec-empty">Error loading schedules.</div>';
+    if (requestedTab === activeRecTab) list.innerHTML = '<div class="rec-empty">Error loading schedules.</div>';
   }
 }
 

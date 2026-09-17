@@ -61,6 +61,13 @@ FORCE_KMSDEV="${FORCE_KMSDEV:-}"             # leave blank normally. Only set th
                                               # set here, e.g. FORCE_KMSDEV=/dev/dri/card1. Device numbering
                                               # comes from device-tree probe order, so it's stable across
                                               # reboots on a given board but can differ between boards/images.
+KIOSK_WAIT_SECS="${KIOSK_WAIT_SECS:-60}"     # seconds to wait for KIOSK_URL to respond before starting X
+                                              # anyway. Covers any backend-not-ready-yet case (slow boot,
+                                              # a DHCP source that's itself slow to power on, ...) so
+                                              # Chromium never gets a chance to render a "can't connect"
+                                              # page — the console just shows a plain waiting message
+                                              # instead. Set to 0 to disable and start X immediately, the
+                                              # old behaviour.
 # ---- end configuration ----
 
 # Coordinate Transformation Matrix per rotation direction (only used if TOUCH_DEVICE is set)
@@ -89,7 +96,7 @@ id "$KIOSK_USER" > /dev/null 2>&1 || {
 # ---- 1. Install required packages ----
 echo "-- Installing packages --"
 sudo apt update
-PKGS="xserver-xorg xinit openbox unclutter x11-xserver-utils xinput"
+PKGS="xserver-xorg xinit openbox unclutter x11-xserver-utils xinput curl"
 if [ "$CHROMIUM_BIN" = "chromium" ]; then
   PKGS="$PKGS chromium"
 fi
@@ -145,13 +152,33 @@ EOF
 sudo systemctl daemon-reload
 
 # ---- 4. Auto-start X on tty1 login ----
+# Waits (bounded by KIOSK_WAIT_SECS) for KIOSK_URL to actually respond before
+# starting X — otherwise X/Chromium can win the race against a backend that's
+# still starting (e.g. behind a slow-to-power-on DHCP source) and briefly
+# show a "can't connect" page. The wait happens on the plain text console,
+# before Chromium ever opens, so a slow backend is just a status line here
+# instead of a broken-looking kiosk. KIOSK_URL/KIOSK_WAIT_SECS are baked in
+# as literal values below (not read from the environment at login time), so
+# re-run this script to change them rather than editing .bash_profile by hand.
 echo "-- Configuring startx on login --"
 USER_HOME=$(eval echo "~$KIOSK_USER")
 BASH_PROFILE="$USER_HOME/.bash_profile"
 if ! grep -q "startx" "$BASH_PROFILE" 2>/dev/null; then
-cat >> "$BASH_PROFILE" << 'PROFILE_EOF'
+cat >> "$BASH_PROFILE" << PROFILE_EOF
 
-if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+if [ -z "\$DISPLAY" ] && [ "\$(tty)" = "/dev/tty1" ]; then
+  if [ "$KIOSK_WAIT_SECS" -gt 0 ]; then
+    echo "Waiting up to ${KIOSK_WAIT_SECS}s for $KIOSK_URL to respond..."
+    SECONDS=0
+    while [ "\$SECONDS" -lt "$KIOSK_WAIT_SECS" ] && ! curl -sf -o /dev/null "$KIOSK_URL"; do
+      sleep 1
+    done
+    if [ "\$SECONDS" -lt "$KIOSK_WAIT_SECS" ]; then
+      echo "Backend responded after \${SECONDS}s."
+    else
+      echo "Backend still not responding after ${KIOSK_WAIT_SECS}s — starting anyway."
+    fi
+  fi
   startx
 fi
 PROFILE_EOF

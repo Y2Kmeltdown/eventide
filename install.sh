@@ -46,8 +46,9 @@ RECORDINGS_SD_MOUNTPOINT="${RECORDINGS_SD_MOUNTPOINT:-/media/eventide}"
 # headless or only ever accessed remotely). When set, config/setup-display.sh
 # runs with its own defaults (see that file's CONFIGURATION block) — override
 # any of KIOSK_URL, HDMI_OUTPUT, ROTATION, SCALE_FACTOR, WINDOW_SIZE,
-# TOUCH_DEVICE, CHROMIUM_BIN, FORCE_MODELINE, FORCE_KMSDEV the same way, as
-# environment variables set before running this installer, e.g.:
+# TOUCH_DEVICE, CHROMIUM_BIN, FORCE_MODELINE, FORCE_KMSDEV, KIOSK_WAIT_SECS
+# the same way, as environment variables set before running this installer,
+# e.g.:
 #   SETUP_KIOSK_DISPLAY=1 KIOSK_URL=http://localhost/kiosk TOUCH_DEVICE="wch.cn USB2IIC_CTP_CONTROL" ./install.sh
 SETUP_KIOSK_DISPLAY="${SETUP_KIOSK_DISPLAY:-}"
 
@@ -329,6 +330,18 @@ fi
 step "System configuration (generic)"
 sudo timedatectl set-timezone "$INSTALL_TIMEZONE"
 sudo sed -i 's/#HandlePowerKey=poweroff/HandlePowerKey=ignore/g' /etc/systemd/logind.conf
+
+# eventide.service only needs loopback (nginx proxies to it on localhost) —
+# it never needs an assigned IP or external connectivity — but on a stock
+# image, NetworkManager-wait-online.service/systemd-networkd-wait-online.service
+# block multi-user.target (and therefore every WantedBy=multi-user.target
+# service, eventide.service included) until DHCP actually succeeds. That's a
+# real, user-visible delay whenever the DHCP source itself is slow to come up
+# (e.g. a WiFi bridge/AP powering on alongside the board). Neither wait-online
+# unit provides anything eventide needs, so disable both defensively — a
+# harmless no-op on any image that doesn't have them.
+sudo systemctl disable NetworkManager-wait-online.service 2> /dev/null || true
+sudo systemctl disable systemd-networkd-wait-online.service 2> /dev/null || true
 
 ## OS-SPECIFIC CONFIGURATION
 step "OS-specific configuration ($OS)"

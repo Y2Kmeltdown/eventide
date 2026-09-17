@@ -70,14 +70,21 @@ environment variables set before running the script:
   prompt, via `config/setup-display.sh`. Override any of its display/touch
   settings (`KIOSK_URL`, `HDMI_OUTPUT`, `ROTATION`, `SCALE_FACTOR`,
   `WINDOW_SIZE`, `TOUCH_DEVICE`, `CHROMIUM_BIN`, `FORCE_MODELINE`,
-  `FORCE_KMSDEV`) the same way, e.g.:
+  `FORCE_KMSDEV`, `KIOSK_WAIT_SECS`) the same way, e.g.:
 
   ```bash
   SETUP_KIOSK_DISPLAY=1 KIOSK_URL=http://localhost/kiosk TOUCH_DEVICE="wch.cn USB2IIC_CTP_CONTROL" ./install.sh
   ```
 
   Leave it unset for a headless install or one only ever accessed remotely —
-  `config/setup-display.sh` can always be run on its own later.
+  `config/setup-display.sh` can always be run on its own later. Before
+  starting X, the kiosk waits up to `KIOSK_WAIT_SECS` (default 60, `0` to
+  disable) for `KIOSK_URL` to actually respond, so a slow-starting backend
+  (a slow DHCP source, a large module registry, ...) shows as a plain wait
+  message on the console instead of a broken page in Chromium. The
+  installer also disables `NetworkManager`/`systemd-networkd`'s
+  wait-online units, since `eventide.service` only needs loopback and
+  otherwise ends up waiting on DHCP for no reason.
 - **Timezone** — set `INSTALL_TIMEZONE` (an IANA name, e.g.
   `America/New_York`) to override the `Australia/Sydney` default. Like the
   recordings directory, this can also be changed later from the dashboard

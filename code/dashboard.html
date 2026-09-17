@@ -6,10 +6,15 @@
 <title>Eventide Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Orbitron:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/gridstack@13.0.2/dist/gridstack.min.css"/>
-<script src="https://unpkg.com/gridstack@13.0.2/dist/gridstack-all.js"></script>
+<!-- Vendored locally (code/vendor/, served at /vendor/... by both eventide.py
+     and frontend.py) rather than from a CDN, so the dashboard has no
+     internet dependency at load time. See code/vendor/README.md. -->
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css"/>
+<script src="vendor/leaflet/leaflet.js"></script>
+<link rel="stylesheet" href="vendor/gridstack/gridstack.min.css"/>
+<script src="vendor/gridstack/gridstack-all.js"></script>
+<link rel="stylesheet" href="vendor/litegraph/litegraph.css"/>
+<script src="vendor/litegraph/litegraph.min.js"></script>
 <style>
 :root {
   --bg:         #040a0f;
@@ -26,6 +31,8 @@
   --warn-dim:   #ff5b6b18;
   --amber:      #ffb830;
   --amber-dim:  #ffb83018;
+  --violet:     #b388ff;
+  --violet-dim: #b388ff18;
   --text:       #c8dce8;
   --text-dim:   #3e6070;
   --text-mid:   #6a8fa3;
@@ -63,6 +70,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .tab-btn.active.t-playback{color:var(--amber);border-bottom-color:var(--amber);text-shadow:0 0 12px rgba(255,184,48,.5)}
 .tab-btn.active.t-super{color:var(--warn);border-bottom-color:var(--warn);text-shadow:0 0 12px rgba(255,91,107,.5)}
 .tab-btn.active.t-modules{color:var(--green);border-bottom-color:var(--green);text-shadow:0 0 12px rgba(0,232,157,.5)}
+.tab-btn.active.t-graph{color:var(--violet);border-bottom-color:var(--violet);text-shadow:0 0 12px rgba(179,136,255,.5)}
 .tab-btn.active.t-settings{color:var(--text);border-bottom-color:var(--text);text-shadow:0 0 12px rgba(200,220,232,.4)}
 .tab-icon{font-size:12px}
 
@@ -459,15 +467,6 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .super-status-bar .dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
 .super-status-bar .dot.on{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
 
-/* Service rows inside module cards */
-.svc-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
-.svc-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid transparent;border-radius:var(--r);cursor:pointer}
-.svc-row:hover{background:var(--surface2)}
-.svc-row.selected{background:var(--surface3);border-color:var(--border2)}
-.svc-name{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--text)}
-.svc-meta{font-size:8px;color:var(--text-dim);letter-spacing:.06em}
-.svc-row .proc-actions{margin-left:auto}
-
 /* Modules tab */
 .mod-layout{display:grid;grid-template-columns:1fr 340px;overflow:hidden;min-height:0}
 .mod-main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
@@ -484,25 +483,53 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .mod-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px}
 .mod-card-head{display:flex;align-items:center;gap:8px}
 .mod-card-actions{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
-.arg-form{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.arg-row{display:flex;align-items:center;gap:8px}
-.arg-label{font-family:var(--mono);font-size:9px;color:var(--text-mid);min-width:200px;flex-shrink:0}
-.arg-name{color:var(--text-dim);font-size:8px;margin-left:5px}
-.arg-input{flex:1;min-width:0}
-.arg-actions{display:flex;gap:6px;margin-top:4px}
-.arg-hint{font-size:8px;color:var(--text-dim);line-height:1.5;letter-spacing:.04em}
-.arg-section-title{font-family:var(--display);font-size:7px;letter-spacing:.2em;color:var(--text-dim);margin:10px 0 2px;border-top:1px solid var(--border);padding-top:10px}
-.prog-settings{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface2)}
-.prog-settings-name{font-family:var(--display);font-size:8px;letter-spacing:.12em;color:var(--text-mid);width:100%}
-.prog-toggle{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--text-dim);cursor:pointer;letter-spacing:.06em}
-.prog-num{display:flex;align-items:center;gap:6px;font-size:8px;color:var(--text-dim);letter-spacing:.08em}
-.prog-num .mod-input{width:80px;padding:3px 6px}
+.prog-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.prog-row{padding:6px 8px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface2)}
+.prog-row-head{display:flex;align-items:center;gap:8px}
+.prog-row-name{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--text)}
+.prog-row-count{font-size:8px;color:var(--text-dim);letter-spacing:.04em;margin-left:auto}
+.prog-row-meta{font-size:8px;color:var(--text-dim);margin-top:4px;line-height:1.5;word-break:break-all}
+.prog-row-meta span{color:var(--text-mid)}
 .mod-name{font-family:var(--display);font-size:10px;letter-spacing:.14em;color:var(--green)}
 .mod-version{font-size:8px;color:var(--text-dim);letter-spacing:.1em}
 .mod-desc{font-size:9px;color:var(--text-mid);margin-top:5px;line-height:1.4}
 .mod-meta{font-size:8px;color:var(--text-dim);margin-top:6px;line-height:1.6;word-break:break-all}
 .mod-meta span{color:var(--text-mid)}
 .mod-empty{color:var(--text-dim);font-size:9px;font-style:italic;text-align:center;padding:24px 0}
+
+/* ════════════════════════════════════════
+   TAB — GRAPH (litegraph-driven supervisor)
+════════════════════════════════════════ */
+#ws-graph{grid-template-columns:1fr;overflow:hidden}
+.graph-shell{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.graph-toolbar{display:flex;align-items:center;gap:8px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.graph-toolbar-title{font-family:var(--display);font-size:9px;letter-spacing:.2em;color:var(--text-mid)}
+.graph-warn-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:9px;letter-spacing:.08em;border:1px solid var(--border2);color:var(--text-dim);cursor:pointer;background:none;font-family:var(--mono)}
+.graph-warn-badge.has-warn{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
+.graph-layout{display:grid;grid-template-columns:210px 1fr 320px;overflow:hidden;min-height:0;flex:1}
+.graph-palette{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-right:1px solid var(--border)}
+.graph-palette-search{padding:8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.graph-palette-list{flex:1;overflow-y:auto;padding:6px}
+.graph-palette-list::-webkit-scrollbar{width:3px}
+.graph-palette-list::-webkit-scrollbar-thumb{background:var(--border2)}
+.graph-palette-group{font-family:var(--display);font-size:7px;letter-spacing:.16em;color:var(--text-dim);margin:10px 4px 4px}
+.graph-palette-item{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--r);margin-bottom:4px;cursor:pointer;background:var(--surface2);transition:all .15s}
+.graph-palette-item:hover{border-color:var(--accent);background:var(--accent-dim)}
+.graph-palette-item .gp-name{font-size:9px;font-weight:700;color:var(--text)}
+.graph-palette-item .gp-mod{font-size:8px;color:var(--text-dim)}
+.graph-palette-empty{color:var(--text-dim);font-size:9px;font-style:italic;text-align:center;padding:20px 8px}
+.graph-canvas-wrap{position:relative;overflow:hidden;background:#050b10}
+#graph-canvas{display:block;width:100%;height:100%}
+.graph-canvas-hint{position:absolute;bottom:10px;left:12px;font-size:8px;color:var(--text-dim);letter-spacing:.06em;pointer-events:none;z-index:2}
+.graph-inspector{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border)}
+.graph-inspector-empty{color:var(--text-dim);font-size:9px;font-style:italic;padding:16px;text-align:center}
+.graph-inspector-head{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.graph-node-title{font-family:var(--display);font-size:11px;letter-spacing:.1em;color:var(--green);margin-bottom:2px;word-break:break-all}
+.graph-node-sub{font-size:8px;color:var(--text-dim);letter-spacing:.06em}
+.graph-node-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.graph-warn-list{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--border);max-height:180px;overflow-y:auto;flex-shrink:0}
+.graph-warn-item{font-size:8px;color:var(--amber);line-height:1.5;padding:5px 7px;border:1px solid rgba(255,184,48,.3);border-radius:var(--r);background:var(--amber-dim)}
+.graph-inspector .super-log{flex:1;min-height:0;border-left:none}
 
 /* ════════════════════════════════════════
    TAB 4 — SETTINGS
@@ -528,17 +555,6 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .retention-item .ri-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .retention-list{max-height:160px;overflow-y:auto;margin-top:4px}
 
-/* Copy sub-panels (copies of copyable programs) */
-.copy-panel{border:1px solid var(--border);border-radius:var(--r);background:var(--surface2);padding:8px 10px;margin-top:8px}
-.copy-head{display:flex;align-items:center;gap:8px}
-.copy-title{font-family:var(--display);font-size:8px;letter-spacing:.14em;color:var(--text-mid)}
-.copy-value{font-family:var(--mono);font-size:9px;color:var(--text)}
-.copy-actions{display:flex;gap:6px;margin-left:auto}
-.copy-sockets{font-size:8px;color:var(--text-dim);margin-top:4px;line-height:1.6;word-break:break-all}
-.copy-sockets span{color:var(--text-mid)}
-.copy-add{display:flex;align-items:center;gap:8px;margin-top:8px;border-top:1px solid var(--border);padding-top:10px}
-.copy-add-label{font-family:var(--display);font-size:7px;letter-spacing:.2em;color:var(--text-dim);flex-shrink:0}
-.copy-add .mod-input{flex:1;min-width:0}
 
 /* SSH key panel (private GitHub repos) */
 .ssh-panel{padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
@@ -623,6 +639,7 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
   <button class="tab-btn active"     id="tab-main"     onclick="switchTab('main')"><span class="tab-icon">◉</span> MAIN</button>
   <button class="tab-btn t-playback" id="tab-playback" onclick="switchTab('playback')"><span class="tab-icon">◈</span> PLAYBACK</button>
   <button class="tab-btn t-modules"  id="tab-modules"  onclick="switchTab('modules')"><span class="tab-icon">⬡</span> MODULES</button>
+  <button class="tab-btn t-graph"    id="tab-graph"    onclick="switchTab('graph')"><span class="tab-icon">⬢</span> GRAPH</button>
   <button class="tab-btn t-settings" id="tab-settings" onclick="switchTab('settings')"><span class="tab-icon">⚙</span> SETTINGS</button>
 </div>
 
@@ -734,11 +751,9 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 
     <div class="mod-main">
       <div class="super-toolbar">
-        <span class="super-toolbar-title">MODULES &amp; SERVICES</span>
+        <span class="super-toolbar-title">MODULES</span>
         <div class="super-spacer"></div>
-        <button class="super-btn s-green" onclick="superStartAll()">▶ START ALL</button>
-        <button class="super-btn s-warn"  onclick="superStopAll()">■ STOP ALL</button>
-        <button class="super-btn"         onclick="loadModules()">↻ REFRESH</button>
+        <button class="super-btn" onclick="loadModules()">↻ REFRESH</button>
       </div>
       <div class="mod-install-bar">
         <input class="mod-input repo" id="mod-repo-input"
@@ -785,12 +800,68 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
         </div>
       </div>
       <div class="log-scroll" id="mod-log-scroll">
-        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Click a service to view its log (OUT/ERR choose the stream), or install a module to watch the install log.</pre>
+        <pre id="mod-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Install a module to watch its install log here. Once installed, its programs appear as node types in the GRAPH tab's palette — start/stop/restart and per-program logs live there now.</pre>
       </div>
     </div>
 
   </div>
 </div><!-- /ws-modules -->
+
+<!-- ═════════════════════════════════════════════════════════
+     TAB — GRAPH
+     litegraph.js editor. The palette (one node type per installed
+     module program) comes from GET /api/modules; SUBMIT posts the
+     canvas's current graph to POST /api/graph/submit, which is what
+     actually renders/starts anything (docs/GRAPH_SUPERVISOR_PLAN.md).
+════════════════════════════════════════════════════════════ -->
+<div class="workspace" id="ws-graph">
+  <div class="graph-shell">
+    <div class="graph-toolbar">
+      <span class="graph-toolbar-title">SYSTEM GRAPH</span>
+      <button class="graph-warn-badge" id="graph-warn-badge" onclick="toggleGraphWarnList()" style="display:none"></button>
+      <div class="super-spacer"></div>
+      <button class="super-btn" onclick="loadGraphPalette(true)">↻ RELOAD PALETTE</button>
+      <button class="super-btn" onclick="exportGraph()" title="Export the running graph to duplicate this system elsewhere">⬇ EXPORT</button>
+      <button class="super-btn" onclick="document.getElementById('graph-import-input').click()" title="Import a graph exported from another payload">⬆ IMPORT</button>
+      <input type="file" id="graph-import-input" accept=".json,application/json" style="display:none" onchange="graphImportFileSelected(this)">
+      <button class="super-btn" onclick="clearGraphCanvas()">✕ CLEAR</button>
+      <button class="super-btn s-green" onclick="submitGraph()">▶ SUBMIT</button>
+    </div>
+    <div class="graph-layout">
+      <div class="graph-palette">
+        <div class="graph-palette-search">
+          <input class="mod-input" style="width:100%" id="graph-palette-search"
+                 placeholder="filter node types…" spellcheck="false" oninput="renderGraphPalette()">
+        </div>
+        <div class="graph-palette-list" id="graph-palette-list">
+          <div class="graph-palette-empty">Loading installed modules…</div>
+        </div>
+      </div>
+      <div class="graph-canvas-wrap" id="graph-canvas-wrap">
+        <canvas id="graph-canvas"></canvas>
+        <div class="graph-canvas-hint">Click a palette entry to place a node · drag from an output dot to an input dot to wire · Del removes the selected node</div>
+      </div>
+      <div class="graph-inspector">
+        <div class="graph-inspector-head" id="graph-inspector-head">
+          <div class="graph-inspector-empty">Select a node to see its status, controls and log.</div>
+        </div>
+        <div class="super-log">
+          <div class="log-header">
+            <span class="log-title" id="graph-log-title">NODE LOG</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn-sm" onclick="document.getElementById('graph-log-output').textContent=''">✕ CLEAR</button>
+              <button class="btn-sm" onclick="refreshGraphLog()">↻ REFRESH</button>
+            </div>
+          </div>
+          <div class="log-scroll" id="graph-log-scroll">
+            <pre id="graph-log-output" style="color:var(--text-dim);font-size:9px;font-style:italic">Select a node, then OUT/ERR, to view its log.</pre>
+          </div>
+        </div>
+        <div class="graph-warn-list" id="graph-warn-list" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div><!-- /ws-graph -->
 
 <!-- ═════════════════════════════════════════════════════════
      TAB 4 — SETTINGS
@@ -907,61 +978,73 @@ function playbackUrl(path)  { return getBase() + '/playback' + (path || '/'); }
 function apiUrl(path)       { return getBase() + '/api' + path; }
 
 // ── Module info & proxy URLs ────────────────────────────────────────────────
-// Module HTTP services (MJPEG streams, settings APIs, the gimbal API) are
+// Node HTTP services (MJPEG streams, settings APIs, the gimbal API) are
 // reached through the backend's generic proxy:
-//   /proxy/<module>/<socket>/<upstream path>  →  127.0.0.1:<allocated port>
-// UI components reference their module + socket by name (from the manifest's
-// "ui" section); the proxy resolves the allocated port from the registry.
-let _modInfo = null;   // last /api/modules snapshot
+//   /proxy/node/<node id>/<socket>/<upstream path>  →  127.0.0.1:<allocated port>
+// UI components reference their owning program's socket by name (from the
+// manifest's per-program "ui" section — docs/GRAPH_SUPERVISOR_PLAN.md §10);
+// the proxy resolves the *active graph's* resolved address for that node.
+let _modInfo = null;         // last /api/modules snapshot
+let _activeGraphNodes = [];  // last active graph's nodes: [{id, label, module, program, args, pos}]
+let mainPollTimer = null;    // refreshes _modInfo/_activeGraphNodes while the MAIN tab is open
 
-// Only the latest request may write _modInfo — while a new host is being
-// typed, refreshes for intermediate addresses ("192.168.30." …) are still in
-// flight, and a slow failure from one of those must not clobber the good
-// snapshot the final host's refresh already delivered (that race blanked the
-// workspace; probeBackend guards the same way with _probeSeq).
+// Only the latest request may write _modInfo/_activeGraphNodes — while a new
+// host is being typed, refreshes for intermediate addresses ("192.168.30." …)
+// are still in flight, and a slow failure from one of those must not clobber
+// the good snapshot the final host's refresh already delivered (that race
+// blanked the workspace; probeBackend guards the same way with _probeSeq).
 let _modInfoSeq = 0;
 async function refreshModuleInfo() {
   const seq = ++_modInfoSeq;
   try {
-    // Generous timeout — /api/modules crosses the constrained link.
-    const r = await fetch(apiUrl('/modules'), { signal: timeoutSignal(10000) });
+    // Generous timeouts — these cross the constrained link.
+    const [modRes, graphRes] = await Promise.all([
+      fetch(apiUrl('/modules'), { signal: timeoutSignal(10000) }),
+      fetch(apiUrl('/graph'),   { signal: timeoutSignal(10000) }),
+    ]);
     if (seq !== _modInfoSeq) return _modInfo;
-    _modInfo = r.ok ? await r.json() : null;
+    _modInfo = modRes.ok ? await modRes.json() : null;
+    const graphState = graphRes.ok ? await graphRes.json() : null;
+    _activeGraphNodes = (graphState?.active?.nodes || []).filter(n => n && n.id);
   } catch {
-    if (seq === _modInfoSeq) _modInfo = null;
+    if (seq === _modInfoSeq) { _modInfo = null; _activeGraphNodes = []; }
   }
   return _modInfo;
 }
 
-// Copies of copyable programs proxy through their copy id:
-// /proxy/<mod>/copy/<cid>/<sock>.
-function proxyUrl(mod, copy, sock, path) {
-  return copy ? `${getBase()}/proxy/${mod}/copy/${copy}/${sock}${path}`
-              : `${getBase()}/proxy/${mod}/${sock}${path}`;
+// A node's own socket address is resolved from the *active* graph
+// (docs/GRAPH_SUPERVISOR_PLAN.md §7/§10) — there's no more module/copy
+// pair to proxy through, just the node that owns the socket.
+function proxyUrl(node, sock, path) {
+  return `${getBase()}/proxy/node/${node}/${sock}${path}`;
 }
 
 // ═══════════════════════════════════════════════════════════
 //  MODULAR COMPONENT WORKSPACE (MAIN tab)
-//  Installed modules advertise UI components in their manifests
-//  ("ui" array → /api/modules). The user places components into
-//  the left/right sidebars or the tabbed centre workspace from
-//  the palette; the layout persists per backend host.
+//  Programs advertise UI components in their manifest's per-program "ui"
+//  array (docs/GRAPH_SUPERVISOR_PLAN.md §10). The palette is built from the
+//  *active graph's* nodes, not from installed modules — a node contributes
+//  its own copy of its program's ui[] entries, so placing a second node of
+//  the same program (what used to be a "copy") just gets its own set of
+//  components, keyed by node id, automatically. The user places components
+//  into the left/right sidebars or the tabbed centre workspace from the
+//  palette; the layout persists per backend host.
 // ═══════════════════════════════════════════════════════════
-let uiLayout       = [];    // [{m, id, copy?, r:'left'|'right'|'center', o}]
-let uiComponents   = [];    // available components from /api/modules + SYSTEM_COMPONENTS
+let uiLayout       = [];    // [{node, id, r:'left'|'right'|'center', o}]
+let uiComponents   = [];    // available components from the active graph + SYSTEM_COMPONENTS
 let _lastUiSig     = '';    // change detector so polls don't re-render
-const uiLive       = new Map();  // "mod/id" or "mod/copy/id" → {destroy(), map?}
+const uiLive       = new Map();  // "node/id" → {destroy(), map?}
 
 const LAYOUT_KEY     = () => 'eventide-layout:'    + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
 const SEEN_KEY       = () => 'eventide-ui-seen:'   + (localStorage.getItem(BACKEND_STORAGE_KEY) || 'default');
-const uiKey = e => e.copy ? `${e.m}/${e.copy}/${e.id}` : `${e.m}/${e.id}`;
+const uiKey = e => `${e.node}/${e.id}`;
 
-// Built-in components not backed by any installed module — they flow
-// through the same palette/gridstack pipeline as module-supplied ones
-// (placeable, draggable, resizable, removable), just sourced locally
-// instead of from /api/modules. "dashboard" is a reserved module
-// namespace; no real module may use it (names come from the manifest's
-// `name` field, which is validated against installed repos).
+// Built-in components not backed by any graph node — they flow through the
+// same palette/gridstack pipeline as node-supplied ones (placeable,
+// draggable, resizable, removable), just sourced locally instead of from
+// the active graph. "dashboard" is a reserved node-id namespace; no real
+// node can use it (node ids are slugified from a user label — see the
+// GRAPH tab — and "dashboard" isn't a valid module name either).
 const SYSTEM_COMPONENTS = [
   // Reserved namespace for dashboard-built components. The master-record
   // widget now ships as part of the default eventide-core module.
@@ -969,29 +1052,37 @@ const SYSTEM_COMPONENTS = [
 
 function collectUiComponents() {
   const out = [...SYSTEM_COMPONENTS];
-  (_modInfo?.modules || []).forEach(m => {
-    // socket name → copy ids whose program-copy binds it (copies of copyable
-    // programs get their own component copies, keyed by copy id).
-    const copyIdsBySocket = {};
-    (m.programs || []).forEach(p => (p.copies || []).forEach(copy => {
-      (copy.sockets || []).forEach(s => {
-        (copyIdsBySocket[s.name] = copyIdsBySocket[s.name] || new Set()).add(copy.id);
-      });
-    }));
-    (m.ui || []).forEach(c => {
+  const progUi = {};   // "module/program" -> {ui[], mod, prog}
+  (_modInfo?.modules || []).forEach(m => (m.programs || []).forEach(p => {
+    progUi[m.name + '/' + p.name] = { ui: p.ui || [], mod: m.name, prog: p.name };
+  }));
+
+  // Only disambiguate titles with the node's label when more than one node
+  // shares the same program — mirrors the old base-program-vs-copy split,
+  // just driven by how many nodes of that program are actually placed.
+  const countByProg = {};
+  _activeGraphNodes.forEach(n => {
+    const k = n.module + '/' + n.program;
+    countByProg[k] = (countByProg[k] || 0) + 1;
+  });
+
+  _activeGraphNodes.forEach(n => {
+    const key = n.module + '/' + n.program;
+    const tmpl = progUi[key];
+    if (!tmpl) return;   // module uninstalled / program renamed since this node was placed
+    const label = n.label || n.id;
+    const suffix = countByProg[key] > 1 ? ' · ' + label : '';
+    tmpl.ui.forEach(c => {
       if (!c || !c.id || !c.type) return;
-      out.push({ mod: m.name, ...c });   // base program's component
-      const sockNames = [c.socket, c.track?.socket, c.adsb?.socket].filter(Boolean);
-      const copyIds = [...new Set(sockNames.flatMap(sn => [...(copyIdsBySocket[sn] || [])]))].sort();
-      copyIds.forEach(cid => out.push({
-        mod: m.name, copy: cid, ...c,
-        title: (c.title ? c.title + ' · ' + cid : c.title),
-      }));
+      out.push({
+        node: n.id, label, mod: tmpl.mod, prog: tmpl.prog, ...c,
+        title: c.title ? c.title + suffix : c.title,
+      });
     });
   });
   return out;
 }
-const findComponent = (m, id, copy) => uiComponents.find(c => c.mod === m && c.id === id && c.copy === copy);
+const findComponent = (node, id) => uiComponents.find(c => c.node === node && c.id === id);
 
 function loadLayoutState() {
   try {
@@ -1016,27 +1107,25 @@ function loadSeenSet() {
 }
 function saveSeenSet(seen) { localStorage.setItem(SEEN_KEY(), JSON.stringify([...seen])); }
 
-// Reconcile installed components with the saved layout: auto-place brand-new
-// "default" components, re-render only when something actually changed.
+// Reconcile the active graph's components with the saved layout: auto-place
+// brand-new "default" components, re-render only when something actually
+// changed.
 function reconcileLayout() {
   uiComponents = collectUiComponents();
-  // SYSTEM_COMPONENTS is reserved for future dashboard-built components.
-  // The logic below only ever
-  // ADDS default-placed entries that aren't already saved — it never
-  // removes a saved entry just because its component is temporarily
-  // unavailable (module uninstalled/backend down), so this is safe to run
-  // unconditionally.
+  // The logic below only ever ADDS default-placed entries that aren't
+  // already saved — it never removes a saved entry just because its
+  // component is temporarily unavailable (node removed from the graph /
+  // backend down), so this is safe to run unconditionally.
   const seen = loadSeenSet();
   // Saved entries are kept even when their component is temporarily missing
-  // (module uninstalled): they don't render, but a reinstall restores them
-  // exactly where the user had them.
-  const next = loadLayoutState().filter(e => e && e.m && e.id);
+  // (node removed from the graph): they don't render, but re-adding a node
+  // with the same label restores them exactly where the user had them.
+  const next = loadLayoutState().filter(e => e && e.node && e.id);
   uiComponents.forEach(c => {
-    const key = c.copy ? c.mod + '/' + c.copy + '/' + c.id : c.mod + '/' + c.id;
-    if (c.default && !seen.has(key) && !next.some(e => e.m === c.mod && e.id === c.id && e.copy === c.copy)) {
+    const key = c.node + '/' + c.id;
+    if (c.default && !seen.has(key) && !next.some(e => e.node === c.node && e.id === c.id)) {
       const region = c.region === 'center' ? 'center' : 'left';
-      const entry = { m: c.mod, id: c.id, r: region };
-      if (c.copy) entry.copy = c.copy;
+      const entry = { node: c.node, id: c.id, r: region };
       // Sidebar entries stack at the bottom; centre entries auto-place.
       if (region !== 'center') {
         entry.y = next.reduce((mx, e) => (e.r === region ? Math.max(mx, e.y ?? e.o ?? -1) : mx), -1) + 1;
@@ -1069,7 +1158,7 @@ let gsGrids = {};        // {left, right, center}
 let _gsRendering = false;
 
 const GS_REGION_EL = { left: '#ui-left-grid', right: '#ui-right-grid', center: '#ui-center-grid' };
-const gsId = e => e.copy ? `${e.m}|${e.copy}|${e.id}` : `${e.m}|${e.id}`;
+const gsId = e => `${e.node}|${e.id}`;
 const EMPTY_REGION_HTML = '<div class="ui-region-empty">No components placed.<br>Open ＋ COMPONENTS to add some.</div>';
 const EMPTY_CENTER_HTML = `<div class="ui-center-empty"><div class="icon">◉</div>
   <div>WORKSPACE EMPTY<br><span style="font-size:8px">Open ＋ COMPONENTS to place module components.</span></div></div>`;
@@ -1177,14 +1266,8 @@ function saveFromGrids() {
   const next = [];
   Object.entries(gsGrids).forEach(([region, grid]) => {
     grid.save(false).forEach(n => {
-      const parts = (n.id || '').split('|');   // "mod|id" or "mod|copy|id"
-      if (parts.length === 2) {
-        next.push({ m: parts[0], id: parts[1],
-                    r: region, x: n.x, y: n.y, w: n.w, h: n.h });
-      } else if (parts.length === 3) {
-        next.push({ m: parts[0], copy: parts[1], id: parts[2],
-                    r: region, x: n.x, y: n.y, w: n.w, h: n.h });
-      }
+      const [node, id] = (n.id || '').split('|');   // "node|id"
+      if (node && id) next.push({ node, id, r: region, x: n.x, y: n.y, w: n.w, h: n.h });
     });
   });
   uiLayout = next;
@@ -1192,10 +1275,10 @@ function saveFromGrids() {
 }
 
 // Entries that should render in a region: placed, and their component exists
-// (phantom entries for uninstalled modules stay saved but don't render).
+// (phantom entries for a node no longer in the graph stay saved but don't render).
 function visibleEntries(region) {
   return uiLayout
-    .filter(e => e.r === region && findComponent(e.m, e.id, e.copy))
+    .filter(e => e.r === region && findComponent(e.node, e.id))
     .sort((a, b) => (a.y ?? a.o ?? 0) - (b.y ?? b.o ?? 0) || (a.x ?? 0) - (b.x ?? 0));
 }
 
@@ -1273,7 +1356,7 @@ function renderCenterRegion() {
 }
 
 function buildSidebarWidget(entry) {
-  const comp = findComponent(entry.m, entry.id, entry.copy);
+  const comp = findComponent(entry.node, entry.id);
   const el = document.createElement('div');
   el.className = 'grid-stack-item';
   el.dataset.gsRegion = 'sidebar';
@@ -1284,13 +1367,13 @@ function buildSidebarWidget(entry) {
       <div class="ui-widget-wrap">
         <div class="ui-widget-head" title="Drag to move">
           <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
-          <span class="ui-widget-mod">${escHtml(entry.m)}</span>
+          <span class="ui-widget-mod" title="${escHtml(comp ? comp.mod + '/' + comp.prog : '')}">${escHtml(comp?.label || entry.node)}</span>
           <button class="ui-widget-remove" title="Remove">×</button>
         </div>
         <div class="ui-widget-body"></div>
       </div>
     </div>`;
-  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id, entry.copy));
+  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.node, entry.id));
   const body = el.querySelector('.ui-widget-body');
   if (comp) {
     const instance = mountWidget(comp, body);
@@ -1302,7 +1385,7 @@ function buildSidebarWidget(entry) {
 }
 
 function buildCenterTile(entry) {
-  const comp = findComponent(entry.m, entry.id, entry.copy);
+  const comp = findComponent(entry.node, entry.id);
   const el = document.createElement('div');
   el.className = 'grid-stack-item';
   el.dataset.gsRegion = 'center';
@@ -1310,14 +1393,14 @@ function buildCenterTile(entry) {
     <div class="grid-stack-item-content">
       <div class="ui-widget-head" title="Drag to move · resize from the corner">
         <span class="ui-widget-title">${escHtml(comp?.title || entry.id)}</span>
-        <span class="ui-widget-mod">${escHtml(entry.m)}</span>
+        <span class="ui-widget-mod" title="${escHtml(comp ? comp.mod + '/' + comp.prog : '')}">${escHtml(comp?.label || entry.node)}</span>
         <button class="ui-widget-fs" title="Fullscreen (Esc to exit)">⛶</button>
         <button class="ui-widget-remove" title="Remove">×</button>
       </div>
       <div class="ui-tile-body"></div>
       <button class="ui-fs-exit" title="Exit fullscreen">✕</button>
     </div>`;
-  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.m, entry.id, entry.copy));
+  el.querySelector('.ui-widget-remove').addEventListener('click', () => removeWidget(entry.node, entry.id));
   // Fullscreen via the browser Fullscreen API (like a YouTube player).
   el.querySelector('.ui-widget-fs').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -1339,18 +1422,17 @@ function buildCenterTile(entry) {
 
 // ── Layout mutations ────────────────────────────────────────────────────────
 
-function removeWidget(m, id, copy) {
-  uiLayout = uiLayout.filter(e => !(e.m === m && e.id === id && e.copy === copy));
+function removeWidget(node, id) {
+  uiLayout = uiLayout.filter(e => !(e.node === node && e.id === id));
   saveLayoutState();
   renderWorkspace();
 }
 
-function addComponent(m, id, copy) {
-  const comp = findComponent(m, id, copy);
-  if (!comp || uiLayout.some(e => e.m === m && e.id === id && e.copy === copy)) return;
+function addComponent(node, id) {
+  const comp = findComponent(node, id);
+  if (!comp || uiLayout.some(e => e.node === node && e.id === id)) return;
   const region = comp.region === 'center' ? 'center' : 'left';
-  const entry = { m, id, r: region };
-  if (copy) entry.copy = copy;
+  const entry = { node, id, r: region };
   // Sidebar entries stack at the bottom; centre entries auto-place in the grid.
   if (region !== 'center') {
     entry.y = uiLayout.reduce((mx, e) => (e.r === region ? Math.max(mx, e.y ?? e.o ?? -1) : mx), -1) + 1;
@@ -1375,40 +1457,37 @@ function renderPalette() {
   if (!list) return;
   if (!uiComponents.length) {
     list.innerHTML = _modInfo
-      ? '<div class="empty">No components advertised.<br>Install a module that declares a "ui" section.</div>'
+      ? '<div class="empty">No components available.<br>Place a program as a node in the GRAPH ' +
+        'tab and submit the graph — its "ui" components appear here once it\'s running.</div>'
       : '<div class="empty">Connecting to backend…</div>';
     return;
   }
-  const byMod = {};
-  uiComponents.forEach(c => { (byMod[c.mod] = byMod[c.mod] || []).push(c); });
+  // Grouped by node — every component now belongs to exactly one placed
+  // node, so there's no more bare-module-vs-copy split to render.
+  const byNode = {};
+  uiComponents.forEach(c => { (byNode[c.node] = byNode[c.node] || []).push(c); });
   const itemHtml = c => {
-    const placed = uiLayout.some(e => e.m === c.mod && e.id === c.id && e.copy === c.copy);
+    const placed = uiLayout.some(e => e.node === c.node && e.id === c.id);
     return `<div class="ui-palette-item">
       <div class="ui-palette-item-info">
         <div class="ui-palette-item-title">${escHtml(c.title || c.id)}</div>
         <div class="ui-palette-item-type">${escHtml(c.type)} · ${escHtml(c.region === 'center' ? 'center' : 'sidebar')}</div>
       </div>
-      <button class="ui-palette-add ${placed ? 'placed' : ''}" data-mod="${escHtml(c.mod)}" data-id="${escHtml(c.id)}" data-copy="${escHtml(c.copy || '')}">${placed ? '✓' : '＋'}</button>
+      <button class="ui-palette-add ${placed ? 'placed' : ''}" data-node="${escHtml(c.node)}" data-id="${escHtml(c.id)}">${placed ? '✓' : '＋'}</button>
     </div>`;
   };
-  list.innerHTML = Object.keys(byMod).sort().map(mod => {
-    const comps = byMod[mod];
-    // Components of program copies are subgrouped under "MOD · <cid>"; the
-    // base programs' components always show under the plain module header.
-    const copies = [...new Set(comps.map(c => c.copy).filter(Boolean))].sort();
-    let html = `<div class="ui-palette-mod">${escHtml(mod)}</div>`
-             + comps.filter(c => !c.copy).map(itemHtml).join('');
-    html += copies.map(cid => `
-      <div class="ui-palette-mod">${escHtml(mod)} · ${escHtml(cid)}</div>
-      ${comps.filter(c => c.copy === cid).map(itemHtml).join('')}`).join('');
-    return html;
+  list.innerHTML = Object.keys(byNode).sort().map(node => {
+    const comps = byNode[node];
+    const label = comps[0]?.label || node;
+    const modProg = comps[0] ? `${comps[0].mod}/${comps[0].prog}` : '';
+    return `<div class="ui-palette-mod" title="${escHtml(modProg)}">${escHtml(label)}</div>`
+         + comps.map(itemHtml).join('');
   }).join('');
   list.querySelectorAll('.ui-palette-add').forEach(btn =>
     btn.addEventListener('click', () => {
-      const { mod, id, copy } = btn.dataset;
-      const cid = copy || undefined;
-      if (uiLayout.some(e => e.m === mod && e.id === id && e.copy === cid)) removeWidget(mod, id, cid);
-      else addComponent(mod, id, cid);
+      const { node, id } = btn.dataset;
+      if (uiLayout.some(e => e.node === node && e.id === id)) removeWidget(node, id);
+      else addComponent(node, id);
       renderPalette();
     }));
 }
@@ -1520,7 +1599,7 @@ const WIDGET_RENDERERS = {
     const img     = bodyEl.querySelector('img');
     const offline = bodyEl.querySelector('.stream-offline');
     const dot     = bodyEl.querySelector('.ui-mjpeg-dot');
-    const url     = proxyUrl(comp.mod, comp.copy, comp.socket, comp.path || '/stream');
+    const url     = proxyUrl(comp.node, comp.socket, comp.path || '/stream');
     let retry = 500, timer = null, dead = false;
     function connect() {
       if (dead) return;
@@ -1581,7 +1660,7 @@ const WIDGET_RENDERERS = {
     async function populate() {
       for (const ep of getEps) {
         try {
-          const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, ep));
+          const r = await fetch(proxyUrl(comp.node, comp.socket, ep));
           if (!r.ok) continue;
           const data = await r.json();
           fields.forEach((f, i) => {
@@ -1609,7 +1688,7 @@ const WIDGET_RENDERERS = {
             if ((f.put || comp.put) !== ep) return;
             body[f.key] = getFieldValue(f, inputs[i]);
           });
-          const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, ep), {
+          const r = await fetch(proxyUrl(comp.node, comp.socket, ep), {
             method, headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
@@ -1678,7 +1757,7 @@ const WIDGET_RENDERERS = {
     }
 
     function featUrl(name) {
-      return proxyUrl(comp.mod, comp.copy, comp.socket, `${base}/${encodeURIComponent(name)}`);
+      return proxyUrl(comp.node, comp.socket, `${base}/${encodeURIComponent(name)}`);
     }
 
     function controlHtml(f) {
@@ -1834,7 +1913,7 @@ const WIDGET_RENDERERS = {
 
     (async () => {
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, base));
+        const r = await fetch(proxyUrl(comp.node, comp.socket, base));
         if (!r.ok) throw new Error(r.statusText);
         state.tree = await r.json();
         renderTree();
@@ -1891,7 +1970,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.get), { signal: timeoutSignal(5000) });
         if (!r.ok) return;
         const d = await r.json();
         const v = dotPath(d, key);
@@ -1918,7 +1997,7 @@ const WIDGET_RENDERERS = {
         if (Number.isFinite(secs) && secs > 0) payload[dkey] = secs;
       }
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.put), {
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.put), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
@@ -1950,7 +2029,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.get));
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.get));
         if (!r.ok) return;
         const data = await r.json();
         rows.forEach((row, i) => { els[i].textContent = fmtVal(dotPath(data, row.path), row.fmt); });
@@ -1971,7 +2050,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.get), { signal: timeoutSignal(5000) });
         if (!r.ok) return;
         const data = await r.json();
         renderRows(Array.isArray(data) ? data : (data.items || []));
@@ -2008,7 +2087,7 @@ const WIDGET_RENDERERS = {
       const isActive = key === activeKey;
       const act = (isActive && comp.stop_action) ? comp.stop_action : comp.row_action;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, act.path), {
+        const r = await fetch(proxyUrl(comp.node, comp.socket, act.path), {
           method: act.method || 'POST',
           headers: { 'Content-Type': 'application/json' },
           ...((act.method || 'POST') !== 'DELETE' ? { body: JSON.stringify({ [comp.row_action.key]: key }) } : {}),
@@ -2040,7 +2119,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.get), { signal: timeoutSignal(5000) });
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.get), { signal: timeoutSignal(5000) });
         if (!r.ok) return;
         const data = await r.json();
         render(Array.isArray(data) ? data : (data.items || []));
@@ -2074,7 +2153,7 @@ const WIDGET_RENDERERS = {
     async function onToggle(item, cb) {
       cb.disabled = true;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, `${comp.get}/${encodeURIComponent(item.id)}`), {
+        const r = await fetch(proxyUrl(comp.node, comp.socket, `${comp.get}/${encodeURIComponent(item.id)}`), {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled: cb.checked }),
         });
@@ -2090,7 +2169,7 @@ const WIDGET_RENDERERS = {
 
     async function onDelete(item) {
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, `${comp.get}/${encodeURIComponent(item.id)}`), { method: 'DELETE' });
+        const r = await fetch(proxyUrl(comp.node, comp.socket, `${comp.get}/${encodeURIComponent(item.id)}`), { method: 'DELETE' });
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
         toast(`Deleted "${item.label || item.id}"`, 'ok');
       } catch (e) {
@@ -2174,7 +2253,7 @@ const WIDGET_RENDERERS = {
 
     async function send(x, y) {
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.put), {
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.put), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ [fx]: x, [fy]: y, [ff]: frameEl.checked }),
         });
@@ -2299,7 +2378,7 @@ const WIDGET_RENDERERS = {
       if (dead || dragging || !comp.telemetry_get) return;
       if (document.activeElement === xEl || document.activeElement === yEl) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.telemetry_get));
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.telemetry_get));
         if (!r.ok) return;
         const d = await r.json();
         const sx = dotPath(d, px), sy = dotPath(d, py);
@@ -2373,7 +2452,7 @@ const WIDGET_RENDERERS = {
       const t = comp.track;
       const pollTrack = async () => {
         try {
-          const r = await fetch(proxyUrl(comp.mod, comp.copy, t.socket, t.get));
+          const r = await fetch(proxyUrl(comp.node, t.socket, t.get));
           if (!r.ok) return;
           const d = await r.json();
           const lat = dotPath(d, t.lat || 'lat'), lon = dotPath(d, t.lon || 'lon');
@@ -2410,7 +2489,7 @@ const WIDGET_RENDERERS = {
       const a = comp.adsb;
       const pollAdsb = async () => {
         try {
-          const r = await fetch(proxyUrl(comp.mod, comp.copy, a.socket, a.get), { signal: timeoutSignal(5000) });
+          const r = await fetch(proxyUrl(comp.node, a.socket, a.get), { signal: timeoutSignal(5000) });
           if (!r.ok) return;
           const tracks = await r.json();
           const seen = new Set();
@@ -2607,7 +2686,7 @@ const WIDGET_RENDERERS = {
     async function poll() {
       if (dead) return;
       try {
-        const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.get));
+        const r = await fetch(proxyUrl(comp.node, comp.socket, comp.get));
         if (!r.ok) return;
         const d = await r.json();
         const pan = dotPath(d, pp), tilt = dotPath(d, pt), roll = dotPath(d, pr);
@@ -2674,7 +2753,8 @@ const WIDGET_RENDERERS = {
     };
     if (!sources.length) {
       list.innerHTML = `<div class="mr-empty">${_modInfo
-        ? 'No modules advertise recording control.'
+        ? 'No recording controls available. Place a recording program as a ' +
+          'node in the GRAPH tab and submit the graph.'
         : 'Connecting to backend…'}</div>`;
       return { destroy() {} };
     }
@@ -2739,8 +2819,8 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
   const el = document.createElement('div');
   el.className = 'mr-row';
   el.innerHTML = `
-    <span class="mr-dot" title="${escHtml(c.mod)}"></span>
-    <span class="mr-name" title="${escHtml(c.title || c.mod)}">${escHtml(c.title || c.mod)}</span>
+    <span class="mr-dot" title="${escHtml(c.mod)}/${escHtml(c.prog)}"></span>
+    <span class="mr-name" title="${escHtml(c.title || c.label)}">${escHtml(c.title || c.label)}</span>
     <span class="mr-file"></span>
     <button class="mr-toggle" disabled>···</button>`;
   const dot    = el.querySelector('.mr-dot');
@@ -2782,7 +2862,7 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
   async function poll() {
     if (state.dead) return;
     try {
-      const r = await fetch(proxyUrl(c.mod, c.copy, c.socket, c.get), { signal: timeoutSignal(5000) });
+      const r = await fetch(proxyUrl(c.node, c.socket, c.get), { signal: timeoutSignal(5000) });
       if (!r.ok) throw new Error('offline');
       const d = await r.json();
       state.offline = false;
@@ -2805,20 +2885,20 @@ function buildRecordingRow(c, onChange, getTimeoutSeconds) {
     if (state.busy || !state.control || state.offline) return;
     state.busy = true; render();
     try {
-      const r = await fetch(proxyUrl(c.mod, c.copy, c.socket, c.put), {
+      const r = await fetch(proxyUrl(c.node, c.socket, c.put), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [key]: next }),
       });
       const b = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(b.error || r.statusText);
-      toast((c.title || c.mod) + (next ? ' started' : ' stopped'), 'ok');
+      toast((c.title || c.label) + (next ? ' started' : ' stopped'), 'ok');
       clearAutoStop();
       if (next) {
         const secs = getTimeoutSeconds ? getTimeoutSeconds() : 0;
         if (secs > 0) scheduleAutoStop(secs);
       }
     } catch (e) {
-      toast(`${c.title || c.mod}: ${e.message}`, 'err');
+      toast(`${c.title || c.label}: ${e.message}`, 'err');
     } finally {
       state.busy = false;
       await poll();   // re-sync with the source of truth
@@ -2967,7 +3047,6 @@ let activeTab      = 'main';
 let activeInnerTab = 'evk';
 let playbackCam    = 'evk';
 let playingFile    = null;
-let selectedProc   = null;
 
 // ═══════════════════════════════════════════════════════════
 //  CLOCK
@@ -3005,15 +3084,33 @@ function switchTab(tab) {
     clearInterval(settingsHealthTimer);
     settingsHealthTimer = null;
   }
+  if (tab === 'graph') {
+    initGraphTab();
+    if (!graphStatusTimer) graphStatusTimer = setInterval(loadGraphStatus, 4000);
+    if (!graphAutosaveTimer) graphAutosaveTimer = setInterval(autosaveGraphDraft, 3000);
+    setTimeout(resizeGraphCanvas, 0);
+  } else {
+    clearInterval(graphStatusTimer);
+    graphStatusTimer = null;
+    clearInterval(graphAutosaveTimer);
+    graphAutosaveTimer = null;
+  }
   // Leaflet maps need a resize nudge when the main tab becomes visible.
   if (tab === 'main') {
-    // If the initial /api/modules fetch failed, retry so the workspace
-    // doesn't stay empty until the next backend-IP change.
+    // If the initial fetch failed, retry so the workspace doesn't stay
+    // empty until the next backend-IP change.
     if (!_modInfo) refreshModuleInfo().then(reconcileLayout);
+    // The available component set now depends on the *active graph*, which
+    // can change from the GRAPH tab without ever touching MODULES — so this
+    // tab needs its own poll rather than piggybacking on modPollTimer.
+    if (!mainPollTimer) mainPollTimer = setInterval(() => refreshModuleInfo().then(reconcileLayout), 5000);
     // Content-fit passes are no-ops while the tab is hidden, so re-run them.
     fitSidebarContent();
     fitCenterGrid();
     setTimeout(() => uiLive.forEach(w => w.map?.invalidateSize()), 50);
+  } else {
+    clearInterval(mainPollTimer);
+    mainPollTimer = null;
   }
 }
 
@@ -3262,23 +3359,23 @@ function switchInnerTab(cam) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MODULES TAB (merged with the old SUPERVISOR tab)
-//  GitHub module installs run on the backend (eventide.py) as
-//  background jobs; this tab polls job status, lists the
-//  installed-module registry, and merges in live supervisord
-//  process info (via XML-RPC) so every installed-module program
-//  is controllable from one list. The right-hand log panel is
-//  shared between install-job output and per-service stdout tails.
+//  MODULES TAB
+//  Install/uninstall + palette listing only (docs/GRAPH_SUPERVISOR_PLAN.md
+//  §7/§13, workstream 5) — installing a module clones/builds it and makes
+//  its programs[] available as node types in the GRAPH tab's palette, but
+//  starts nothing. Nothing here runs until it's placed as a node and the
+//  graph is submitted, so this tab shows no live per-program status,
+//  start/stop/restart, args editing, or copies — all of that moved to the
+//  GRAPH tab's per-node inspector. GitHub/zip installs still run on the
+//  backend as background jobs; this tab polls job status and shows the
+//  install log in the right-hand panel.
 // ═══════════════════════════════════════════════════════════
 let modJobId     = null;
 let modJobTimer  = null;
 let modPollTimer = null;
 let settingsHealthTimer = null;
-let logMode      = null;   // 'job' (install log) | 'proc' (service log)
-let logStream    = 'stdout'; // 'stdout' | 'stderr' — which supervisord log to tail
-let superProcs   = null;   // live supervisor.getAllProcessInfo, null if RPC down
+let logMode      = null;   // 'job' — the install log is the only thing this tab logs now
 let lastModules  = [];     // last module registry snapshot from the backend
-let editingModule = null;  // args form is open ('name' or 'name/prog/cid') — poll re-render paused
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
@@ -3304,152 +3401,70 @@ async function loadModules() {
     setModConn(false, 'Backend unreachable: ' + e.message);
     return;
   }
+  // Still a useful system-health signal for the header's SUPERVISOR pill,
+  // even though this tab no longer lists individual programs.
+  let serviceCount = null;
   try {
-    superProcs = await xmlrpcCall('supervisor.getAllProcessInfo');
+    serviceCount = (await xmlrpcCall('supervisor.getAllProcessInfo')).length;
     setSuperConn(true);
   } catch (e) {
-    superProcs = null;
     setSuperConn(false, e.message);
   }
   lastModules = modules;
-  // Don't re-render while an args form is open — it would wipe the inputs.
-  if (!editingModule) renderModules(modules);
-  setModConn(superProcs !== null,
+  renderModules(modules);
+  setModConn(serviceCount !== null,
     modules.length + ' module(s) installed' +
-    (superProcs ? ' · ' + superProcs.length + ' service(s)'
-                : ' · supervisord unavailable'));
-  if (logMode === 'proc' && selectedProc) refreshLog();
+    (serviceCount !== null ? ' · ' + serviceCount + ' service(s) running'
+                           : ' · supervisord unavailable'));
 }
 
 function renderModules(modules) {
   const list = document.getElementById('mod-list');
-  const procByName = {};
-  (superProcs || []).forEach(p => { procByName[p.name] = p; });
-
-  // Every base-platform service (playback server, master-record, ...) is
-  // now owned by the eventide-core module, so there's no separate "BASE"
-  // pseudo-module to render — every supervisor program belongs to some
-  // installed module's card below.
-  let html = '';
-
-  // Per-copyable-program COPIES section: one sub-panel per copy (own sockets,
-  // service row, EDIT/REMOVE) plus an ADD COPY row.
-  const copiesHtml = (m, p) => {
-    const label = p.instance.label || p.instance.argument;
-    const panels = (p.copies || []).map(copy => {
-      if (editingModule === m.name + '/' + p.name + '/' + copy.id) {
-        return `<div class="copy-panel">${copyArgsFormHtml(m, p, copy)}</div>`;
-      }
-      const csocks = (copy.sockets || []).map(s =>
-        s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
-      ).join(', ');
-      const crows = svcRowsHtml([copy.name], procByName, {[copy.name]: copy.status});
-      return `<div class="copy-panel">
-        <div class="copy-head">
-          <span class="copy-title">${escHtml(String(label).toUpperCase())}</span>
-          <span class="copy-value">${escHtml(copy.value)}</span>
-          <span class="copy-actions">
-            <button class="super-btn" onclick="editCopyArgs('${escHtml(m.name)}','${escHtml(p.name)}','${escHtml(copy.id)}')">✎ EDIT</button>
-            <button class="super-btn s-warn" onclick="removeCopy('${escHtml(m.name)}','${escHtml(p.name)}','${escHtml(copy.id)}')">✕ REMOVE</button>
-          </span>
-        </div>
-        ${csocks ? `<div class="copy-sockets">sockets: <span>${escHtml(csocks)}</span></div>` : ''}
-        <div class="svc-list">${crows}</div>
-      </div>`;
-    }).join('');
-    const instArg = (m.arguments || []).find(a => a.name === p.instance.argument);
-    const addRow = `<div class="copy-add">
-      <span class="copy-add-label">ADD COPY — ${escHtml(String(label).toUpperCase())}</span>
-      <input class="mod-input" id="add-copy-${escHtml(m.name)}-${escHtml(p.name)}" value="${escHtml(instArg ? String(instArg.default) : '')}" spellcheck="false">
-      <button class="super-btn s-green" onclick="addCopy('${escHtml(m.name)}','${escHtml(p.name)}')">＋ ADD</button>
-    </div>`;
-    return `<div class="arg-section-title">COPIES — ${escHtml(p.name)}</div>${panels}${addRow}`;
-  };
-
-  html += modules.map(m => {
-    const args = (m.arguments || []).map(a => `${a.flag}=${a.default}`).join('  ');
-    const fallback = {};
-    (m.programs || []).forEach(p => { fallback[p.name] = p.status; });
-    const copyBlocks = (m.programs || []).filter(p => p.instance).map(p => copiesHtml(m, p)).join('');
-    const socks = (m.sockets || []).map(s =>
-      s.type === 'tcp' ? `${s.name}: tcp/${s.port}` : `${s.name}: ${s.path}`
-    ).join(', ');
-    return svcCardHtml({
-      title: m.name,
-      version: 'v' + (m.version || '?'),
-      desc: m.description || '',
-      services: (m.programs || []).map(p => p.name),
-      actionServices: (m.programs || []).flatMap(p =>
-        [p.name, ...(p.copies || []).map(c => c.name)]),
-      procByName,
-      fallbackStatus: fallback,
-      metaHtml:
-        (m.repo_url ? 'repo: <span>' + escHtml(m.repo_url) + '</span><br>' : '') +
-        (socks ? 'sockets: <span>' + escHtml(socks) + '</span><br>' : '') +
-        (args ? 'args: <span>' + escHtml(args) + '</span>' : ''),
-      uninstallable: true,
-      editing: editingModule === m.name,
-      module: m,
-      bodySuffixHtml: copyBlocks,
-    });
-  }).join('');
-  list.innerHTML = html;
+  if (!modules.length) {
+    list.innerHTML = '<div class="mod-empty">No modules installed. Install one above to add ' +
+      'its programs as node types in the GRAPH tab\'s palette.</div>';
+    return;
+  }
+  list.innerHTML = modules.map(modCardHtml).join('');
 }
 
-// Service rows (status badge, name, meta, start/stop/restart/log buttons) —
-// shared by module cards and per-copy panels.
-function svcRowsHtml(services, procByName, fallbackStatus) {
-  return services.map(name => {
-    const info  = procByName[name];
-    const state = info ? info.statename : (fallbackStatus[name] || 'UNKNOWN');
-    const fullName = info && info.group && info.group !== info.name
-      ? `${info.group}:${info.name}` : name;
-    const canStart = ['STOPPED','EXITED','FATAL','UNKNOWN'].includes(state);
-    const canStop  = ['RUNNING','STARTING'].includes(state);
-    const meta = info
-      ? `pid ${info.pid || '—'} · up ${fmtUptime(info.now - info.start)}`
-      : 'no live data';
-    const selected = selectedProc === fullName;
-    return `<div class="svc-row ${selected ? 'selected' : ''}" data-svc="${escHtml(fullName)}" onclick="selectProcess('${escHtml(fullName)}')">
-      ${stateBadge(state)}
-      <span class="svc-name">${escHtml(name)}</span>
-      <span class="svc-meta">${escHtml(meta)}</span>
-      <span class="proc-actions">
-        ${canStart ? `<button class="proc-btn start" onclick="superStart('${fullName}',event)">▶</button>` : ''}
-        ${canStop  ? `<button class="proc-btn stop"  onclick="superStop('${fullName}',event)">■</button>` : ''}
-        <button class="proc-btn restart" onclick="superRestart('${fullName}',event)">↺</button>
-        <button class="proc-btn log ${selected && logStream === 'stdout' ? 'active' : ''}" onclick="superLog('${fullName}','stdout',event)">OUT</button>
-        <button class="proc-btn log ${selected && logStream === 'stderr' ? 'active' : ''}" onclick="superLog('${fullName}','stderr',event)">ERR</button>
-      </span>
-    </div>`;
-  }).join('');
+// One program's read-only summary within a module card — arguments/sockets
+// are the program *template*, not a running thing (docs/GRAPH_SUPERVISOR_PLAN.md
+// §5); active_node_count says how many graph nodes currently use it.
+function progRowHtml(p) {
+  const args = (p.arguments || []).map(a => `${a.flag}=${a.default}`).join('  ');
+  const socks = (p.sockets || []).map(s => {
+    const bits = [s.direction, s.transport, s.pattern, s.stream_kind].filter(Boolean);
+    return `${s.name}: ${bits.join('/')}`;
+  }).join(', ');
+  return `<div class="prog-row">
+    <div class="prog-row-head">
+      <span class="prog-row-name">${escHtml(p.name)}</span>
+      <span class="prog-row-count">${p.active_node_count
+        ? p.active_node_count + ' node(s) in graph' : 'not placed in graph'}</span>
+    </div>
+    ${args  ? `<div class="prog-row-meta">args: <span>${escHtml(args)}</span></div>` : ''}
+    ${socks ? `<div class="prog-row-meta">sockets: <span>${escHtml(socks)}</span></div>` : ''}
+  </div>`;
 }
 
-function svcCardHtml(o) {
-  const rows = svcRowsHtml(o.services, o.procByName, o.fallbackStatus);
-  // Card-level start/stop/restart may cover more services than are listed
-  // (e.g. copies of copyable programs, listed in their own panels).
-  const namesArg = (o.actionServices || o.services).join(',');
-  const actions = o.editing ? '' : `<div class="mod-card-actions">
-      <button class="super-btn s-green" onclick="moduleAction('start','${namesArg}')">▶ START</button>
-      <button class="super-btn s-warn"  onclick="moduleAction('stop','${namesArg}')">■ STOP</button>
-      <button class="super-btn"         onclick="moduleAction('restart','${namesArg}')">↺ RESTART</button>
-      ${o.uninstallable ? `<button class="super-btn" onclick="editModuleArgs('${escHtml(o.title)}')">✎ EDIT</button>` : ''}
-      ${o.uninstallable ? `<button class="super-btn s-warn" onclick="uninstallModule('${escHtml(o.title)}')">✕ UNINSTALL</button>` : ''}
-    </div>`;
-  const body = o.editing
-    ? argsFormHtml(o.module)
-    : `${o.desc ? `<div class="mod-desc">${escHtml(o.desc)}</div>` : ''}
-       <div class="svc-list">${rows || '<div class="mod-empty">No services found.</div>'}</div>
-       ${o.bodySuffixHtml || ''}
-       ${o.metaHtml ? `<div class="mod-meta">${o.metaHtml}</div>` : ''}`;
+function modCardHtml(m) {
+  const progs = (m.programs || []).map(progRowHtml).join('');
+  const meta =
+    (m.repo_url ? 'repo: <span>' + escHtml(m.repo_url) + '</span><br>' : '') +
+    (m.recordings_subdir ? 'recordings: <span>' + escHtml(m.recordings_subdir) + '</span><br>' : '') +
+    (m.author ? 'author: <span>' + escHtml(m.author) + '</span>' : '');
   return `<div class="mod-card">
     <div class="mod-card-head">
-      <span class="mod-name">${escHtml(o.title)}</span>
-      <span class="mod-version">${escHtml(o.version)}</span>
-      ${actions}
+      <span class="mod-name">${escHtml(m.name)}</span>
+      <span class="mod-version">v${escHtml(m.version || '?')}</span>
+      <div class="mod-card-actions">
+        <button class="super-btn s-warn" onclick="uninstallModule('${escHtml(m.name)}')">✕ UNINSTALL</button>
+      </div>
     </div>
-    ${body}
+    ${m.description ? `<div class="mod-desc">${escHtml(m.description)}</div>` : ''}
+    <div class="prog-list">${progs || '<div class="mod-empty">This module declares no programs.</div>'}</div>
+    ${meta ? `<div class="mod-meta">${meta}</div>` : ''}
   </div>`;
 }
 
@@ -3562,241 +3577,41 @@ function setModJobBadge(status) {
 }
 
 async function uninstallModule(name) {
-  if (!confirm(`Uninstall module '${name}'? Its supervisor programs will be stopped and removed.`)) return;
+  // Uninstalling is allowed even if the module is in use by the running
+  // graph (docs/GRAPH_SUPERVISOR_PLAN.md §7) — the backend drops the
+  // affected nodes and regenerates automatically. List them up front so
+  // the confirm isn't a surprise.
+  let affected = [];
+  try {
+    const r = await fetch(apiUrl('/graph'));
+    if (r.ok) {
+      const state = await r.json();
+      affected = ((state.active && state.active.nodes) || [])
+        .filter(n => n.module === name).map(n => n.id);
+    }
+  } catch { /* best-effort — fall back to a generic confirm below */ }
+
+  const msg = affected.length
+    ? `Uninstall module '${name}'? It's used by ${affected.length} node(s) in the running ` +
+      `graph (${affected.join(', ')}) — they'll be removed and the graph regenerated.`
+    : `Uninstall module '${name}'?`;
+  if (!confirm(msg)) return;
+
   try {
     const r = await fetch(apiUrl('/modules/' + encodeURIComponent(name) + '/uninstall'),
                           {method: 'POST'});
     const data = await r.json();
     if (!r.ok) { toast(data.error || 'Uninstall failed', 'err'); return; }
-    if (editingModule === name) editingModule = null;
     toast('Module ' + name + ' uninstalled', 'ok');
+    if ((data.graph_removed_nodes || []).length) {
+      toast(`Removed from graph: ${data.graph_removed_nodes.join(', ')}` +
+        (data.graph_regenerated ? ' — graph regenerated' : ''), 'ok');
+    }
+    if (data.graph_error) {
+      toast('Graph could not be regenerated after removal: ' + data.graph_error, 'err');
+    }
     loadModules();
   } catch (e) { toast('Uninstall failed: ' + e.message, 'err'); }
-}
-
-// ── Module / service actions ───────────────────────────────
-// Start, stop or restart every service belonging to one card (an installed
-// module or the base set).  namesCsv is a comma-separated list of full
-// supervisor process names rendered into the card's buttons.
-async function moduleAction(action, namesCsv) {
-  const names = (namesCsv || '').split(',').filter(Boolean);
-  if (!names.length) { toast('No services to ' + action, 'err'); return; }
-  let failed = 0;
-  for (const name of names) {
-    try {
-      if (action === 'start') {
-        await xmlrpcCall('supervisor.startProcess', name);
-      } else if (action === 'stop') {
-        await xmlrpcCall('supervisor.stopProcess', name);
-      } else {
-        await xmlrpcCall('supervisor.stopProcess', name).catch(() => {});
-        await xmlrpcCall('supervisor.startProcess', name);
-      }
-    } catch { failed++; }
-  }
-  toast(failed
-    ? `${action}: ${failed} of ${names.length} service(s) failed`
-    : `${action} sent to ${names.length} service(s)`, failed ? 'err' : 'ok');
-  loadModules();
-}
-
-// ── Module argument editing ────────────────────────────────
-// EDIT swaps the card body for a form over the manifest's declared
-// arguments.  Saving posts the values to the backend, which rewrites the
-// module's supervisor conf and runs reread/update (restarting the affected
-// programs — copies included).  While a form is open, loadModules skips
-// re-rendering so the 5 s poll can't wipe in-progress edits.
-function argsFormHtml(m) {
-  const rows = (m.arguments || []).map(a =>
-    `<label class="arg-row">
-      <span class="arg-label">${escHtml(a.flag)}<span class="arg-name">${escHtml(a.name)} · ${escHtml(a.type)}</span></span>
-      <input class="mod-input arg-input" data-arg="${escHtml(a.name)}" value="${escHtml(String(a.default))}" spellcheck="false">
-    </label>`).join('');
-  // Supervisor run parameters per program (autostart/autorestart/startretries/
-  // priority) — saved into the manifest and re-rendered into the conf.d file.
-  // Copies share their base program's settings.
-  const progRows = (m.programs || []).map(p =>
-    `<div class="prog-settings" data-prog="${escHtml(p.name)}">
-      <div class="prog-settings-name">${escHtml(p.name)}</div>
-      <label class="prog-toggle"><input type="checkbox" data-param="autostart" ${p.autostart !== false ? 'checked' : ''}> autostart</label>
-      <label class="prog-toggle"><input type="checkbox" data-param="autorestart" ${p.autorestart !== false ? 'checked' : ''}> autorestart</label>
-      <label class="prog-num">startretries <input class="mod-input" type="number" min="0" data-param="startretries" value="${p.startretries ?? 10000}"></label>
-      <label class="prog-num">priority <input class="mod-input" type="number" min="0" data-param="priority" value="${p.priority ?? 10}"></label>
-    </div>`).join('');
-  return `<div class="arg-form" data-module="${escHtml(m.name)}">
-    ${rows || '<div class="mod-empty">This module declares no arguments.</div>'}
-    <div class="arg-section-title">SUPERVISOR SETTINGS</div>
-    ${progRows}
-    <div class="arg-actions">
-      <button class="super-btn s-green" onclick="saveModuleArgs('${escHtml(m.name)}')">✔ SAVE &amp; APPLY</button>
-      <button class="super-btn" onclick="cancelModuleArgs()">✕ CANCEL</button>
-    </div>
-    <div class="arg-hint">Saving rewrites the module's supervisor config and reloads
-    supervisord — running programs restart with the new settings.</div>
-  </div>`;
-}
-
-// Per-copy argument form (copies of copyable programs): values come from the
-// copy, the instance argument is pinned, and supervisor settings are edited
-// at module level (they are shared with the base program).
-function copyArgsFormHtml(m, p, copy) {
-  const copyArgs = copy.args || {};
-  const iaName = p.instance ? p.instance.argument : null;
-  const rows = (m.arguments || []).map(a => {
-    const isInstanceArg = iaName === a.name;
-    const val = isInstanceArg ? (copy.value ?? a.default) : (copyArgs[a.name] ?? a.default);
-    return `<label class="arg-row">
-      <span class="arg-label">${escHtml(a.flag)}<span class="arg-name">${escHtml(a.name)} · ${escHtml(a.type)}</span></span>
-      <input class="mod-input arg-input" data-arg="${escHtml(a.name)}" value="${escHtml(String(val))}" spellcheck="false"
-        ${isInstanceArg ? 'disabled title="Identifies this copy — remove and re-add the copy to change it"' : ''}>
-    </label>`;
-  }).join('');
-  return `<div class="arg-form" data-module="${escHtml(m.name)}" data-prog="${escHtml(p.name)}" data-cid="${escHtml(copy.id)}">
-    ${rows || '<div class="mod-empty">This module declares no arguments.</div>'}
-    <div class="arg-actions">
-      <button class="super-btn s-green" onclick="saveCopyArgs('${escHtml(m.name)}','${escHtml(p.name)}','${escHtml(copy.id)}')">✔ SAVE &amp; APPLY</button>
-      <button class="super-btn" onclick="cancelModuleArgs()">✕ CANCEL</button>
-    </div>
-    <div class="arg-hint">Saving rewrites the module's supervisor config and reloads
-    supervisord. The instance argument is fixed — remove and re-add the copy to
-    change it. Supervisor settings are shared with the base program — edit them
-    from the module EDIT form.</div>
-  </div>`;
-}
-
-function editModuleArgs(name) {
-  editingModule = name;
-  renderModules(lastModules);
-}
-
-function editCopyArgs(name, pname, cid) {
-  editingModule = name + '/' + pname + '/' + cid;
-  renderModules(lastModules);
-}
-
-function cancelModuleArgs() {
-  editingModule = null;
-  renderModules(lastModules);
-}
-
-async function saveModuleArgs(name) {
-  const form = document.querySelector(`.arg-form[data-module="${name}"]`);
-  if (!form) return;
-  const args = {};
-  form.querySelectorAll('.arg-input').forEach(i => { args[i.dataset.arg] = i.value; });
-  const programs = {};
-  form.querySelectorAll('.prog-settings').forEach(ps => {
-    const params = {};
-    ps.querySelectorAll('[data-param]').forEach(i => {
-      params[i.dataset.param] = i.type === 'checkbox' ? i.checked : parseInt(i.value, 10);
-    });
-    programs[ps.dataset.prog] = params;
-  });
-  try {
-    const r = await fetch(apiUrl('/modules/' + encodeURIComponent(name) + '/args'), {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({args, programs}),
-    });
-    const data = await r.json();
-    if (!r.ok) { toast(data.error || 'Save failed', 'err'); return; }
-    editingModule = null;
-    toast('Module settings updated — supervisor reloaded', 'ok');
-    if (data.warning) toast(data.warning, 'err');
-    loadModules();
-  } catch (e) { toast('Save failed: ' + e.message, 'err'); }
-}
-
-async function saveCopyArgs(name, pname, cid) {
-  const form = document.querySelector(
-    `.arg-form[data-module="${name}"][data-prog="${pname}"][data-cid="${cid}"]`);
-  if (!form) return;
-  const args = {};
-  form.querySelectorAll('.arg-input:not([disabled])').forEach(i => { args[i.dataset.arg] = i.value; });
-  try {
-    const r = await fetch(apiUrl(
-      `/modules/${encodeURIComponent(name)}/programs/${encodeURIComponent(pname)}/copies/${encodeURIComponent(cid)}/args`), {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({args}),
-    });
-    const data = await r.json();
-    if (!r.ok) { toast(data.error || 'Save failed', 'err'); return; }
-    editingModule = null;
-    toast('Copy settings updated — supervisor reloaded', 'ok');
-    if (data.warning) toast(data.warning, 'err');
-    loadModules();
-  } catch (e) { toast('Save failed: ' + e.message, 'err'); }
-}
-
-// ── Program copies (per-program instancing) ────────────────
-async function addCopy(name, pname) {
-  const input = document.getElementById('add-copy-' + name + '-' + pname);
-  const value = input ? input.value.trim() : '';
-  if (!value) { toast('Enter a copy value first', 'err'); return; }
-  try {
-    const r = await fetch(apiUrl(`/modules/${encodeURIComponent(name)}/programs/${encodeURIComponent(pname)}/copies`), {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({value}),
-    });
-    const data = await r.json();
-    if (!r.ok) { toast(data.error || 'Failed to add copy', 'err'); return; }
-    toast(`Copy '${(data.copy && data.copy.id) || value}' added`, 'ok');
-    if (data.warning) toast(data.warning, 'err');
-    loadModules();
-  } catch (e) { toast('Add copy failed: ' + e.message, 'err'); }
-}
-
-async function removeCopy(name, pname, cid) {
-  if (!confirm(`Remove copy '${cid}' of program '${pname}'? Its supervisor program will be stopped and removed.`)) return;
-  try {
-    const r = await fetch(apiUrl(`/modules/${encodeURIComponent(name)}/programs/${encodeURIComponent(pname)}/copies/${encodeURIComponent(cid)}`),
-                          {method: 'DELETE'});
-    const data = await r.json();
-    if (!r.ok) { toast(data.error || 'Failed to remove copy', 'err'); return; }
-    if (editingModule === name + '/' + pname + '/' + cid) editingModule = null;
-    toast(`Copy '${cid}' removed`, 'ok');
-    if (data.warning) toast(data.warning, 'err');
-    loadModules();
-  } catch (e) { toast('Remove copy failed: ' + e.message, 'err'); }
-}
-
-// ── Shared log panel (install log ⇄ service logs) ──────────
-function selectProcess(name) {
-  selectedProc = name;
-  logMode = 'proc';
-  document.getElementById('mod-log-title').textContent =
-    name.toUpperCase() + ' — ' + logStream.toUpperCase();
-  document.querySelectorAll('.svc-row').forEach(r =>
-    r.classList.toggle('selected', r.dataset.svc === name));
-  refreshLog();
-}
-
-// OUT/ERR buttons on a service row: view that service's stdout or stderr.
-function superLog(name, stream, e) {
-  e?.stopPropagation();
-  logStream = stream;
-  selectProcess(name);
-  renderModules(lastModules);  // refresh OUT/ERR active states immediately
-}
-
-async function refreshLog() {
-  if (!selectedProc) return;
-  const method = logStream === 'stderr'
-    ? 'supervisor.tailProcessStderrLog'
-    : 'supervisor.tailProcessStdoutLog';
-  try {
-    const result = await xmlrpcCall(method, selectedProc, 0, 8192);
-    const text = Array.isArray(result) ? result[0] : result;
-    const el = document.getElementById('mod-log-output');
-    el.style.color = 'var(--text-mid)'; el.style.fontStyle = 'normal';
-    el.textContent = text || '(no output)';
-    const scroll = document.getElementById('mod-log-scroll');
-    scroll.scrollTop = scroll.scrollHeight;
-  } catch (e) {
-    document.getElementById('mod-log-output').textContent = 'Error: ' + e.message;
-  }
 }
 
 function logClear() {
@@ -3804,8 +3619,7 @@ function logClear() {
 }
 
 function logRefresh() {
-  if (logMode === 'job') pollModJob();
-  else if (logMode === 'proc') refreshLog();
+  pollModJob();
 }
 
 // ── SSH key panel ──────────────────────────────────────────
@@ -3922,9 +3736,14 @@ function extBadge(ext) {
   const c = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
   return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;border:1px solid ${c};color:${c};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;
 }
-// Recording sources come from the backend: one per installed module that
-// declares recordings_subdir (GET /api/recordings → {sources: [...]}).
-let recSources = [];   // [{name, module}]
+// Recording sources come from the backend: one per node in the *active*
+// graph whose program records (GET /api/recordings → {sources: [...]}) —
+// docs/GRAPH_SUPERVISOR_PLAN.md §9. Installing a module alone adds nothing
+// here; its recording program has to be placed as a node and the graph
+// submitted from the GRAPH tab first.
+let recSources = [];   // [{name, module}] — "module" is a human-readable
+                        // "<node id> — <module>/<program>" label, not a
+                        // literal module name; see _recording_sources().
 
 async function loadRecordingSources() {
   try {
@@ -3941,8 +3760,9 @@ function renderRecordingTabs() {
   if (!bar || !panels) return;
   if (!recSources.length) {
     bar.innerHTML = '';
-    panels.innerHTML = '<div class="empty">No recording modules installed.<br>'
-                     + 'Install a module that declares a recordings_subdir.</div>';
+    panels.innerHTML = '<div class="empty">No recording sources yet.<br>'
+                     + 'Place a recording program as a node in the GRAPH tab '
+                     + 'and submit the graph — sources appear here once it\'s running.</div>';
     return;
   }
   if (!recSources.some(s => s.name === activeInnerTab)) activeInnerTab = recSources[0].name;
@@ -4168,38 +3988,11 @@ function stateBadge(state) {
 }
 
 function setSuperConn(ok) {
-  // The merged MODULES tab reports supervisord reachability in its own
-  // status bar; here we only drive the header pill.
+  // Drives the header's SUPERVISOR pill — MODULES no longer lists
+  // individual programs (GRAPH's per-node inspector does), but this is
+  // still a useful at-a-glance "is supervisord up" signal.
   const hdr = document.getElementById('hdr-dot-super');
   if (hdr) hdr.className = 'dot' + (ok ? ' on' : '');
-}
-
-async function superStart(name, e) {
-  e?.stopPropagation();
-  try { await xmlrpcCall('supervisor.startProcess', name); toast(name + ' started', 'ok'); loadModules(); }
-  catch(e) { toast('Start failed: ' + e.message, 'err'); }
-}
-async function superStop(name, e) {
-  e?.stopPropagation();
-  try { await xmlrpcCall('supervisor.stopProcess', name); toast(name + ' stopped'); loadModules(); }
-  catch(e) { toast('Stop failed: ' + e.message, 'err'); }
-}
-async function superRestart(name, e) {
-  e?.stopPropagation();
-  try {
-    await xmlrpcCall('supervisor.stopProcess', name).catch(() => {});
-    await xmlrpcCall('supervisor.startProcess', name);
-    toast(name + ' restarted', 'ok');
-    loadModules();
-  } catch(e) { toast('Restart failed: ' + e.message, 'err'); }
-}
-async function superStartAll() {
-  try { await xmlrpcCall('supervisor.startAllProcesses'); toast('All processes started', 'ok'); loadModules(); }
-  catch(e) { toast('Start all failed: ' + e.message, 'err'); }
-}
-async function superStopAll() {
-  try { await xmlrpcCall('supervisor.stopAllProcesses'); toast('All processes stopped'); loadModules(); }
-  catch(e) { toast('Stop all failed: ' + e.message, 'err'); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4258,6 +4051,610 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 setInterval(loadAllRecordings, 15000);
+
+// ═══════════════════════════════════════════════════════════
+//  GRAPH TAB — litegraph.js-driven supervisor
+//  docs/GRAPH_SUPERVISOR_PLAN.md. The palette is one litegraph node type
+//  per installed module program (GET /api/modules); placing/wiring nodes
+//  edits an in-browser LGraph, autosaved as the draft (PUT /api/graph/draft)
+//  and only actually applied — rendered into supervisor conf and started —
+//  on SUBMIT (POST /api/graph/submit). Per-node start/stop/restart/logs
+//  reuse the existing /supervisor/ XML-RPC proxy unchanged (via the shared
+//  xmlrpcCall() helper): a graph node is just a supervisor program named
+//  after its (slugified) node id, so the same calls that used to drive
+//  MODULES' service rows work here, just keyed by node id instead.
+// ═══════════════════════════════════════════════════════════
+
+let lgGraph = null, lgCanvas = null;
+let graphInitialized     = false;
+let graphPaletteModules  = [];        // last /api/modules snapshot
+let graphRegisteredTypes = new Set(); // "module/program" keys already registered
+let graphStatusTimer     = null;
+let graphAutosaveTimer   = null;
+let graphLastSavedJson   = null;      // last draft snapshot successfully PUT
+let graphSelectedNode    = null;      // litegraph node instance, or null
+let graphLogStream       = 'stdout';  // 'stdout' | 'stderr'
+let graphNodeStatuses    = {};        // node id -> {status, status_detail}
+let graphWarnings        = [];        // persistent unconnected-socket warnings
+let graphNodePlaceCounter = 0;
+
+const GRAPH_STATUS_COLORS = {
+  RUNNING: '#00e89d', STARTING: '#ffb830', BACKOFF: '#ffb830',
+  STOPPING: '#ffb830', STOPPED: '#3e6070', EXITED: '#ff5b6b',
+  FATAL: '#ff5b6b', UNKNOWN: '#3e6070',
+};
+
+// ── Naming / typing helpers shared with the backend's own rules ────────────
+// (docs/GRAPH_SUPERVISOR_PLAN.md §5-§6 — mirrors _copy_id()-style
+// slugification and the direction/transport/pattern/stream_kind taxonomy).
+
+function graphSlugify(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+function graphEffectivePattern(sock) {
+  return sock.transport === 'http' ? 'request-reply' : sock.pattern;
+}
+function graphSlotType(sock) {
+  return [sock.transport, graphEffectivePattern(sock), sock.stream_kind].filter(Boolean).join('/');
+}
+function graphNodeTypeKey(moduleName, programName) { return moduleName + '/' + programName; }
+
+// ── Dynamic node types, one per installed (module, program) ────────────────
+
+function graphRegisterNodeType(moduleName, mod, prog) {
+  const key = graphNodeTypeKey(moduleName, prog.name);
+  if (graphRegisteredTypes.has(key)) return;
+  graphRegisteredTypes.add(key);
+
+  function EventideGraphNode() {
+    this.properties = { module: moduleName, program: prog.name, label: prog.name, args: {} };
+    this._socketDefs = prog.sockets || [];
+    this._countArgBases = {};   // argument name -> [socket def, ...]
+    this._eventideStatus = null;
+    this._eventideWarnings = [];
+    this.size = [220, 80];
+
+    (prog.arguments || []).forEach(a => { this.properties.args[a.name] = a.default; });
+
+    this._socketDefs.forEach(s => {
+      if (s.count_arg) {
+        (this._countArgBases[s.count_arg] = this._countArgBases[s.count_arg] || []).push(s);
+      } else if (s.direction === 'output') {
+        this.addOutput(s.name, graphSlotType(s));
+      } else {
+        this.addInput(s.name, graphSlotType(s));
+      }
+    });
+
+    this.addWidget('text', 'label', this.properties.label, (v) => {
+      this.properties.label = v;
+      this.title = v || prog.name;
+    });
+    (prog.arguments || []).forEach(a => {
+      const wtype = (a.type === 'int' || a.type === 'float') ? 'number' : 'text';
+      const opts  = a.type === 'int' ? { precision: 0, step: 10 } : {};
+      this.addWidget(wtype, a.name, this.properties.args[a.name], (v) => {
+        this.properties.args[a.name] = v;
+        this._syncCountSockets();
+      }, opts);
+    });
+
+    this.title = this.properties.label;
+    this._syncCountSockets();
+  }
+
+  EventideGraphNode.title = prog.name;
+  EventideGraphNode.desc  = (mod.description || '') + ' · ' + moduleName;
+
+  EventideGraphNode.prototype._slotListFor = function(direction) {
+    return direction === 'output' ? this.outputs : this.inputs;
+  };
+
+  // Expands/shrinks a count_arg socket's numbered slots (<name>1..<name>N)
+  // to match the node's current argument value — docs/GRAPH_SUPERVISOR_PLAN.md
+  // §9 (the built-in Stream Fan-out program is the motivating case).
+  EventideGraphNode.prototype._syncCountSockets = function() {
+    const self = this;
+    Object.keys(this._countArgBases).forEach(argName => {
+      const wanted = Math.max(parseInt(self.properties.args[argName], 10) || 0, 0);
+      self._countArgBases[argName].forEach(s => {
+        let have = (self._slotListFor(s.direction) || [])
+          .filter(x => x && x._eventideBase === s.name).length;
+        while (have < wanted) {
+          have++;
+          const name = s.name + have;
+          if (s.direction === 'output') self.addOutput(name, graphSlotType(s));
+          else self.addInput(name, graphSlotType(s));
+          const l = self._slotListFor(s.direction);
+          l[l.length - 1]._eventideBase = s.name;
+        }
+        while (have > wanted) {
+          const idx = (self._slotListFor(s.direction) || []).findIndex(
+            x => x && x._eventideBase === s.name && x.name === s.name + have);
+          if (idx >= 0) {
+            if (s.direction === 'output') self.removeOutput(idx);
+            else self.removeInput(idx);
+          }
+          have--;
+        }
+      });
+    });
+  };
+
+  EventideGraphNode.prototype._socketDefForSlotName = function(name) {
+    const base = String(name).replace(/\d+$/, '');
+    return this._socketDefs.find(s => s.name === name) ||
+           this._socketDefs.find(s => s.name === base && s.count_arg);
+  };
+
+  // Stream outputs are strictly 1:1 (docs/GRAPH_SUPERVISOR_PLAN.md §6) — a
+  // best-effort client-side guard only; the server re-validates on submit
+  // regardless (validate_graph in code/eventide.py), so a wrong guess here
+  // is never unsafe, just a worse UX than getting it right.
+  EventideGraphNode.prototype.onConnectOutput = function(slot) {
+    const out = this.outputs && this.outputs[slot];
+    if (!out) return true;
+    const s = this._socketDefForSlotName(out.name);
+    if (s && graphEffectivePattern(s) === 'stream' && s.transport !== 'http') {
+      if (out.links && out.links.length > 0) return false;
+    }
+    return true;
+  };
+
+  EventideGraphNode.prototype.onDrawForeground = function(ctx) {
+    if (this.flags && this.flags.collapsed) return;
+    if (this._eventideStatus) {
+      ctx.save();
+      ctx.font = '9px monospace';
+      ctx.fillStyle = GRAPH_STATUS_COLORS[this._eventideStatus] || '#6a8fa3';
+      ctx.fillText(this._eventideStatus, 4, this.size[1] + 14);
+      ctx.restore();
+    }
+    if (this._eventideWarnings && this._eventideWarnings.length) {
+      ctx.save();
+      ctx.font = 'bold 13px monospace';
+      ctx.fillStyle = '#ffb830';
+      ctx.textAlign = 'right';
+      ctx.fillText('⚠', this.size[0] - 4, 14);
+      ctx.restore();
+    }
+  };
+
+  EventideGraphNode.prototype.onSelected   = function() { showGraphNodeInspector(this); };
+  EventideGraphNode.prototype.onDeselected = function() { hideGraphNodeInspectorIfSelected(this); };
+
+  LiteGraph.registerNodeType(key, EventideGraphNode);
+}
+
+// ── Palette (GET /api/modules) ──────────────────────────────────────────────
+
+async function loadGraphPalette(forceReload) {
+  try {
+    const r = await fetch(apiUrl('/modules'));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    graphPaletteModules = (await r.json()).modules || [];
+  } catch (e) {
+    toast('Failed to load module palette: ' + e.message, 'err');
+    return;
+  }
+  graphPaletteModules.forEach(m => (m.programs || []).forEach(p => graphRegisterNodeType(m.name, m, p)));
+  renderGraphPalette();
+  if (forceReload) toast('Palette reloaded', 'ok');
+}
+
+function renderGraphPalette() {
+  const list = document.getElementById('graph-palette-list');
+  const filter = (document.getElementById('graph-palette-search').value || '').toLowerCase();
+  if (!graphPaletteModules.length) {
+    list.innerHTML = '<div class="graph-palette-empty">No modules installed — install one from the MODULES tab first.</div>';
+    return;
+  }
+  let html = '';
+  graphPaletteModules.forEach(m => {
+    const progs = (m.programs || []).filter(p =>
+      !filter || (m.name + ' ' + p.name).toLowerCase().includes(filter));
+    if (!progs.length) return;
+    html += `<div class="graph-palette-group">${escHtml(m.name)}</div>`;
+    progs.forEach(p => {
+      html += `<div class="graph-palette-item" onclick="addGraphNode('${escHtml(m.name)}','${escHtml(p.name)}')">
+        <span class="gp-name">${escHtml(p.name)}</span>
+        <span class="gp-mod">${p.active_node_count ? p.active_node_count + ' running' : 'not running'}</span>
+      </div>`;
+    });
+  });
+  list.innerHTML = html || '<div class="graph-palette-empty">No node types match.</div>';
+}
+
+function addGraphNode(moduleName, programName) {
+  if (!lgGraph) return;
+  const node = LiteGraph.createNode(graphNodeTypeKey(moduleName, programName));
+  if (!node) { toast('Unknown node type: ' + moduleName + '/' + programName, 'err'); return; }
+  graphNodePlaceCounter++;
+  const offset = (graphNodePlaceCounter % 8) * 24;
+  node.pos = [80 + offset, 60 + offset];
+  lgGraph.add(node);
+  lgCanvas.selectNode(node);
+}
+
+// ── Canvas setup ─────────────────────────────────────────────────────────────
+
+function initGraphTab() {
+  if (typeof LGraph === 'undefined') {
+    document.getElementById('graph-palette-list').innerHTML =
+      '<div class="graph-palette-empty">litegraph.js failed to load (no internet access?) — the GRAPH tab needs it.</div>';
+    return;
+  }
+  if (graphInitialized) { loadGraphPalette(); loadGraphFromServer(); return; }
+  graphInitialized = true;
+  lgGraph = new LGraph();
+  lgCanvas = new LGraphCanvas('#graph-canvas', lgGraph);
+  if (typeof lgCanvas.startRendering === 'function' && !lgCanvas.is_rendering) {
+    lgCanvas.startRendering();
+  }
+  resizeGraphCanvas();
+  window.addEventListener('resize', resizeGraphCanvas);
+  loadGraphPalette().then(loadGraphFromServer);
+}
+
+function resizeGraphCanvas() {
+  if (!lgCanvas) return;
+  const wrap = document.getElementById('graph-canvas-wrap');
+  if (!wrap) return;
+  lgCanvas.resize(wrap.clientWidth, wrap.clientHeight);
+}
+
+// ── Load / serialize ─────────────────────────────────────────────────────────
+
+async function loadGraphFromServer() {
+  let state;
+  try {
+    const r = await fetch(apiUrl('/graph'));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    state = await r.json();
+  } catch (e) {
+    toast('Failed to load graph: ' + e.message, 'err');
+    return;
+  }
+  applyGraphDocument(state.draft || state.active || { nodes: [], edges: [] });
+  graphLastSavedJson = JSON.stringify(serializeGraphDocument());
+  loadGraphStatus();
+}
+
+function applyGraphDocument(doc) {
+  lgGraph.clear();
+  const byId = {};
+  (doc.nodes || []).forEach(n => {
+    const node = LiteGraph.createNode(graphNodeTypeKey(n.module, n.program));
+    if (!node) {
+      toast(`Skipped node '${n.id}': '${n.module}/${n.program}' isn't installed here`, 'err');
+      return;
+    }
+    node.properties.label = n.label || n.id;
+    node.title = node.properties.label;
+    Object.keys(n.args || {}).forEach(k => { node.properties.args[k] = n.args[k]; });
+    (node.widgets || []).forEach(w => {
+      if (w.name === 'label') w.value = node.properties.label;
+      else if (Object.prototype.hasOwnProperty.call(node.properties.args, w.name)) {
+        w.value = node.properties.args[w.name];
+      }
+    });
+    node._syncCountSockets();
+    node.pos = Array.isArray(n.pos) && n.pos.length === 2 ? n.pos.slice() : [100, 100];
+    node._eventideNodeId = n.id;
+    lgGraph.add(node);
+    byId[n.id] = node;
+  });
+  (doc.edges || []).forEach(e => {
+    const fromNode = byId[e.from && e.from.node];
+    const toNode   = byId[e.to && e.to.node];
+    if (!fromNode || !toNode) return;
+    const outIdx = (fromNode.outputs || []).findIndex(o => o && o.name === e.from.socket);
+    const inIdx  = (toNode.inputs   || []).findIndex(i => i && i.name === e.to.socket);
+    if (outIdx < 0 || inIdx < 0) return;
+    fromNode.connect(outIdx, toNode, inIdx);
+  });
+}
+
+function graphCurrentNodeId(node) {
+  return node._eventideNodeId || graphSlugify(node.properties.label || node.properties.program) || 'node';
+}
+
+function serializeGraphDocument() {
+  const nodes = [];
+  const usedIds = new Set();
+  const idByNodeUid = {};
+
+  (lgGraph._nodes || []).forEach(node => {
+    const base = graphSlugify(node.properties.label || node.properties.program) || 'node';
+    let id = base, n = 2;
+    while (usedIds.has(id)) { id = `${base}-${n}`; n++; }
+    usedIds.add(id);
+    idByNodeUid[node.id] = id;
+    node._eventideNodeId = id;   // keep status/log lookups in sync with what we just assigned
+  });
+
+  (lgGraph._nodes || []).forEach(node => {
+    nodes.push({
+      id: idByNodeUid[node.id],
+      label: node.properties.label,
+      module: node.properties.module,
+      program: node.properties.program,
+      args: Object.assign({}, node.properties.args),
+      pos: Array.isArray(node.pos) ? [node.pos[0], node.pos[1]] : [0, 0],
+    });
+  });
+
+  const edges = [];
+  Object.values(lgGraph.links || {}).forEach(link => {
+    if (!link) return;
+    const fromNode = lgGraph.getNodeById(link.origin_id);
+    const toNode   = lgGraph.getNodeById(link.target_id);
+    if (!fromNode || !toNode) return;
+    const outSlot = fromNode.outputs && fromNode.outputs[link.origin_slot];
+    const inSlot  = toNode.inputs && toNode.inputs[link.target_slot];
+    if (!outSlot || !inSlot) return;
+    edges.push({
+      id: 'e' + link.id,
+      from: { node: idByNodeUid[fromNode.id], socket: outSlot.name },
+      to:   { node: idByNodeUid[toNode.id],   socket: inSlot.name },
+    });
+  });
+
+  return { nodes, edges };
+}
+
+async function autosaveGraphDraft() {
+  if (!lgGraph) return;
+  const json = JSON.stringify(serializeGraphDocument());
+  if (json === graphLastSavedJson) return;
+  try {
+    await fetch(apiUrl('/graph/draft'), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: json,
+    });
+    graphLastSavedJson = json;   // only on success — a failed PUT keeps retrying next tick
+  } catch (e) { /* best-effort; retried on the next autosave tick */ }
+}
+
+function clearGraphCanvas() {
+  if (!lgGraph) return;
+  if (!confirm('Clear the whole canvas? This only touches your draft — nothing running is ' +
+               'stopped until you SUBMIT.')) return;
+  lgGraph.clear();
+  graphSelectedNode = null;
+  document.getElementById('graph-inspector-head').innerHTML =
+    '<div class="graph-inspector-empty">Select a node to see its status, controls and log.</div>';
+}
+
+// ── Submit ───────────────────────────────────────────────────────────────────
+
+async function submitGraph() {
+  if (!lgGraph) return;
+  const doc = serializeGraphDocument();
+  try {
+    const r = await fetch(apiUrl('/graph/submit'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      showGraphSubmitErrors(Array.isArray(data.errors) ? data.errors.join('\n') : (data.error || 'submit failed'));
+      toast('Submit failed — see the log panel', 'err');
+      return;
+    }
+    graphLastSavedJson = JSON.stringify(doc);
+    graphWarnings = data.warnings || [];
+    renderGraphWarnBadge();
+    toast('Graph submitted', 'ok');
+    loadGraphStatus();
+  } catch (e) { toast('Submit request failed: ' + e.message, 'err'); }
+}
+
+function showGraphSubmitErrors(text) {
+  const out = document.getElementById('graph-log-output');
+  out.style.color = 'var(--warn)'; out.style.fontStyle = 'normal';
+  out.textContent = 'SUBMIT FAILED:\n' + text;
+  document.getElementById('graph-log-title').textContent = 'SUBMIT ERRORS';
+}
+
+// ── Live status + persistent warnings (GET /api/graph/status) ──────────────
+
+async function loadGraphStatus() {
+  let data;
+  try {
+    const r = await fetch(apiUrl('/graph/status'));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch (e) { return; }
+
+  graphNodeStatuses = {};
+  (data.nodes || []).forEach(n => { graphNodeStatuses[n.id] = n; });
+  graphWarnings = data.warnings || [];
+
+  const warnByNode = {};
+  graphWarnings.forEach(w => (warnByNode[w.node] = warnByNode[w.node] || []).push(w));
+
+  (lgGraph ? lgGraph._nodes : []).forEach(node => {
+    const id = graphCurrentNodeId(node);
+    const st = graphNodeStatuses[id];
+    node._eventideStatus = st ? st.status : null;
+    node._eventideWarnings = warnByNode[id] || [];
+  });
+  if (lgCanvas) lgCanvas.setDirty(true, true);
+  renderGraphWarnBadge();
+  if (graphSelectedNode) showGraphNodeInspector(graphSelectedNode);
+}
+
+function renderGraphWarnBadge() {
+  const badge = document.getElementById('graph-warn-badge');
+  if (!graphWarnings.length) {
+    badge.style.display = 'none';
+    document.getElementById('graph-warn-list').style.display = 'none';
+    return;
+  }
+  badge.style.display = '';
+  badge.classList.add('has-warn');
+  badge.textContent = '⚠ ' + graphWarnings.length + ' warning' + (graphWarnings.length > 1 ? 's' : '');
+}
+
+function toggleGraphWarnList() {
+  const list = document.getElementById('graph-warn-list');
+  if (list.style.display !== 'none') { list.style.display = 'none'; return; }
+  list.innerHTML = graphWarnings.map(w =>
+    `<div class="graph-warn-item">${escHtml(w.node)}.${escHtml(w.socket)} — ${escHtml(w.message)}</div>`
+  ).join('');
+  list.style.display = '';
+}
+
+// ── Node inspector / controls / log panel ───────────────────────────────────
+
+function showGraphNodeInspector(node) {
+  graphSelectedNode = node;
+  const id = graphCurrentNodeId(node);
+  const st = graphNodeStatuses[id];
+  const statusText = st ? st.status : 'UNKNOWN';
+  document.getElementById('graph-inspector-head').innerHTML = `
+    <div class="graph-node-title">${escHtml(node.properties.label || node.properties.program)}</div>
+    <div class="graph-node-sub">${escHtml(node.properties.module)} / ${escHtml(node.properties.program)} · id: ${escHtml(id)}</div>
+    <div style="margin-top:6px">${stateBadge(statusText)}</div>
+    <div class="graph-node-actions">
+      <button class="proc-btn start"   onclick="graphNodeAction('${id}','start')">▶ START</button>
+      <button class="proc-btn stop"    onclick="graphNodeAction('${id}','stop')">■ STOP</button>
+      <button class="proc-btn restart" onclick="graphNodeAction('${id}','restart')">↺ RESTART</button>
+      <button class="proc-btn log ${graphLogStream === 'stdout' ? 'active' : ''}" onclick="graphSelectLog('stdout')">OUT</button>
+      <button class="proc-btn log ${graphLogStream === 'stderr' ? 'active' : ''}" onclick="graphSelectLog('stderr')">ERR</button>
+    </div>`;
+  document.getElementById('graph-log-title').textContent = id.toUpperCase() + ' — ' + graphLogStream.toUpperCase();
+  refreshGraphLog();
+}
+
+function hideGraphNodeInspectorIfSelected(node) {
+  if (graphSelectedNode !== node) return;
+  graphSelectedNode = null;
+  document.getElementById('graph-inspector-head').innerHTML =
+    '<div class="graph-inspector-empty">Select a node to see its status, controls and log.</div>';
+}
+
+function graphSelectLog(stream) {
+  graphLogStream = stream;
+  if (graphSelectedNode) showGraphNodeInspector(graphSelectedNode);
+}
+
+async function refreshGraphLog() {
+  if (!graphSelectedNode) return;
+  const id = graphCurrentNodeId(graphSelectedNode);
+  const method = graphLogStream === 'stderr' ? 'supervisor.tailProcessStderrLog' : 'supervisor.tailProcessStdoutLog';
+  try {
+    const result = await xmlrpcCall(method, id, 0, 8192);
+    const text = Array.isArray(result) ? result[0] : result;
+    const el = document.getElementById('graph-log-output');
+    el.style.color = 'var(--text-mid)'; el.style.fontStyle = 'normal';
+    el.textContent = text || '(no output)';
+    const scroll = document.getElementById('graph-log-scroll');
+    scroll.scrollTop = scroll.scrollHeight;
+  } catch (e) {
+    document.getElementById('graph-log-output').textContent = 'Error: ' + e.message;
+  }
+}
+
+const GRAPH_PAST_TENSE = { start: 'started', stop: 'stopped', restart: 'restarted' };
+
+async function graphNodeAction(id, action) {
+  try {
+    if (action === 'restart') {
+      await xmlrpcCall('supervisor.stopProcess', id).catch(() => {});
+      await xmlrpcCall('supervisor.startProcess', id);
+    } else {
+      await xmlrpcCall('supervisor.' + (action === 'start' ? 'startProcess' : 'stopProcess'), id);
+    }
+    toast(id + ' ' + GRAPH_PAST_TENSE[action], 'ok');
+    loadGraphStatus();
+  } catch (e) { toast(action + ' failed: ' + e.message, 'err'); }
+}
+
+// ── Export / import (docs/GRAPH_SUPERVISOR_PLAN.md §12) ────────────────────
+// EXPORT downloads the *active* graph plus enough per-module info to
+// reinstall it identically elsewhere; IMPORT posts that file back and loads
+// the result as the draft (never active) on whichever payload receives it,
+// so the operator reviews and explicitly SUBMITs it there. Both reuse the
+// same shared log panel the node inspector uses, and the same job-polling
+// idiom MODULES uses for install jobs.
+let importJobId    = null;
+let importJobTimer = null;
+
+async function exportGraph() {
+  try {
+    const r = await fetch(apiUrl('/graph/export?source=active'));
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Export failed', 'err'); return; }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `eventide-export-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    const pre = data.preinstalled_modules || [];
+    toast('Graph exported' + (pre.length ? ` (assumes already installed: ${pre.join(', ')})` : ''), 'ok');
+  } catch (e) { toast('Export failed: ' + e.message, 'err'); }
+}
+
+function graphImportFileSelected(input) {
+  const file = input.files && input.files[0];
+  input.value = '';   // allow picking the same file again
+  if (file) importGraphFile(file);
+}
+
+async function importGraphFile(file) {
+  let bundle;
+  try {
+    bundle = JSON.parse(await file.text());
+  } catch (e) { toast('Not a valid export file: ' + e.message, 'err'); return; }
+  try {
+    const r = await fetch(apiUrl('/graph/import'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bundle),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Import failed to start', 'err'); return; }
+    toast('Import started', 'ok');
+    startImportJob(data.job_id);
+  } catch (e) { toast('Import request failed: ' + e.message, 'err'); }
+}
+
+function startImportJob(jobId) {
+  importJobId = jobId;
+  document.getElementById('graph-log-title').textContent = 'IMPORT LOG';
+  const out = document.getElementById('graph-log-output');
+  out.style.color = 'var(--text-mid)'; out.style.fontStyle = 'normal';
+  out.textContent = '';
+  if (importJobTimer) clearInterval(importJobTimer);
+  importJobTimer = setInterval(pollImportJob, 2000);
+  pollImportJob();
+}
+
+async function pollImportJob() {
+  if (!importJobId) return;
+  try {
+    const r = await fetch(apiUrl('/graph/import/jobs/' + importJobId));
+    if (!r.ok) return;
+    const job = await r.json();
+    const out = document.getElementById('graph-log-output');
+    out.textContent = job.log.join('\n') || '(waiting for output…)';
+    const scroll = document.getElementById('graph-log-scroll');
+    scroll.scrollTop = scroll.scrollHeight;
+    if (job.status === 'done' || job.status === 'failed') {
+      clearInterval(importJobTimer); importJobTimer = null;
+      if (job.status === 'done') {
+        toast('Import complete — loaded as the draft graph, review and SUBMIT', 'ok');
+        (job.warnings || []).forEach(w => toast(w, 'err'));
+        loadGraphFromServer();
+      } else {
+        toast('Import failed: ' + (job.error || 'unknown error'), 'err');
+      }
+    }
+  } catch { /* backend may be briefly unreachable — keep polling */ }
+}
 </script>
 </body>
 </html>

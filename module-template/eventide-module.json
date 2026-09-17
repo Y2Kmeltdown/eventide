@@ -3,25 +3,6 @@
   "version": "1.0.0",
   "description": "Minimal example Eventide module. Prints a heartbeat line to its supervisor log every few seconds.",
   "author": "Eventide",
-  "arguments": [
-    {
-      "name": "message",
-      "flag": "--message",
-      "type": "str",
-      "default": "hello from eventide",
-      "required": false,
-      "description": "Text printed on each heartbeat."
-    },
-    {
-      "name": "interval",
-      "flag": "--interval",
-      "type": "int",
-      "default": 5,
-      "required": false,
-      "description": "Seconds between heartbeats."
-    }
-  ],
-  "sockets": [],
   "programs": [
     {
       "name": "hello_module",
@@ -31,7 +12,26 @@
       "autorestart": true,
       "startretries": 10000,
       "priority": 10,
-      "user": "root"
+      "user": "root",
+      "arguments": [
+        {
+          "name": "message",
+          "flag": "--message",
+          "type": "str",
+          "default": "hello from eventide",
+          "required": false,
+          "description": "Text printed on each heartbeat."
+        },
+        {
+          "name": "interval",
+          "flag": "--interval",
+          "type": "int",
+          "default": 5,
+          "required": false,
+          "description": "Seconds between heartbeats."
+        }
+      ],
+      "sockets": []
     }
   ]
 }

@@ -299,24 +299,53 @@ per §2.
 ## 9. Consequential changes: recordings & playback
 
 Recording programs being graph nodes — possibly several nodes of the same
-recording program template — breaks today's "one PLAYBACK inner tab per
-module (or per copy)" assumption. **PROPOSED**: PLAYBACK's inner tabs are
-built from the *active graph's* nodes (one tab per node whose program
-declares `recordings_subdir`, recording to
-`<recordings_dir>/<subdir>-<node-id>`), not from installed modules.
+recording program template — breaks the old "one PLAYBACK inner tab per
+module (or per copy)" assumption. **Implemented**: `_recording_sources()`
+now builds PLAYBACK's inner tabs entirely from the *active graph's* nodes —
+one tab per node whose program references `{recordings_subdir}`, recording
+to `<recordings_dir>/<subdir>-<node id>`. There is no module-level or
+"base program" source any more, distinct from a node: installing a module
+alone adds nothing to PLAYBACK, and the bare (unsuffixed) per-module
+directory this used to create at install time and on a recordings-dir
+change is gone too — nothing ever wrote there under the graph model, so it
+was a directory nobody used. A node has to be placed and the graph
+submitted before its recordings source exists.
 
-**Stream Fan-out**, the built-in node from §2, is proposed to ship as a new
-program template inside `eventide-core` (fitting the "inside the graph"
-decision in §2) rather than as frontend-only sugar: a small program with one
-`input` stream socket of *any* `stream_kind` (pass-through) and a
-configurable number of `output` stream sockets, all producing an identical
-copy of every chunk read from the input. This needs one new small manifest
-capability — a **socket count driven by an argument** (e.g. `"count_arg":
-"fanout_count"` on a socket definition, generating that many numbered output
-slots) — which doesn't exist in the schema at all today and would need to be
-designed and added as part of this work.
+**Stream Fan-out — implemented.** Ships as three thin program templates
+inside `eventide-core` — `stream_fanout_irregular`, `stream_fanout_regular`,
+`stream_fanout_framed` — all wrapping the same script
+(`modules/eventide-core/stream_fanout.py`), differing only in which fixed
+`stream_kind` their sockets declare. Three variants rather than one
+"any-kind" node because §6's stream-kind matching stays exact-value (per the
+resolved decision in §13) — the script itself never inspects the bytes it
+copies, so nothing about its behaviour actually differs between them.
 
-## 10. MAIN tab UI components — stays manifest-defined, now per-program
+Each variant has one `input` socket (`in`) and one `output` socket (`out`)
+tagged `"count_arg": "fanout_count"`, resolving the earlier open point on
+socket-count-driven-by-an-argument as follows:
+
+- **Numbered slots.** A `count_arg` socket named `<name>` expands to
+  `<name>1`..`<name>N` (1-indexed), N being that node's resolved value of
+  the named argument — each a fully independent output with its own
+  address, subject to the same 1:1 cardinality rule as any other stream
+  output. This is what a graph edge actually targets
+  (`{"node": "fan1", "socket": "out2"}`).
+- **Command-line joining.** `{socket:<name>}` in the *program's own*
+  command resolves to every numbered slot's address joined with commas
+  (`/tmp/…/out1.sock,/tmp/…/out2.sock,…`) — the program parses that itself;
+  no new placeholder syntax was needed.
+- **`out` is `"capped": true`** — the script drops writes to any output
+  with no consumer currently connected rather than blocking, so an unused
+  slot (fanout_count set higher than the number of wired consumers) never
+  triggers §7's persistent unconnected-socket warning.
+
+Both the manifest capability and the graph-compiler expansion logic
+(`_expand_program_sockets`/`_node_arg_values` in `code/eventide.py`, used by
+`validate_graph`, `graph_warnings`, `allocate_graph_addresses`, and
+`render_graph_conf`) are implemented, not just designed — this is no longer
+an open item.
+
+## 10. MAIN tab UI components — stays manifest-defined, now per-program — implemented
 
 The first pass at this (UI widgets becoming their own graph nodes) was
 walked back as more complexity than the project needs right now. The
@@ -361,6 +390,24 @@ The one change is where `ui[]` lives and what populates the palette:
   component, just resolved from the active graph's nodes instead of the
   module registry.
 
+`dashboard.html`'s component workspace (`collectUiComponents`,
+`findComponent`, `proxyUrl`, the palette, and gridstack layout persistence)
+has been rewired accordingly: every placed/available component is now keyed
+by `(node id, component id)` instead of the old `(module, copy?, component
+id)` triple, a node's component titles only get a disambiguating ` ·
+<label>` suffix when more than one node shares the same program (mirroring
+the old base-vs-copy behaviour without needing a separate concept for it),
+and the MAIN tab polls `/api/graph` (via `refreshModuleInfo`) on its own
+timer now, since the active node set can change from the GRAPH tab without
+ever touching MODULES. Verified against the real backend responses (a
+two-node graph on one program correctly produces two disambiguated
+components each, a one-node graph produces an unsuffixed one, and
+`proxyUrl` produces exactly `/proxy/node/<id>/<socket>/<path>`) — not just
+read through. One accepted side effect: anyone with a saved MAIN tab layout
+from before this change will see it reset to empty once, since old
+entries have no `node` field to match against — not worth writing a
+migration for at this stage of the project.
+
 ## 11. New documentation
 
 `docs/GRAPH_CONNECTIONS.md` — written for module authors, covering:
@@ -386,7 +433,75 @@ UI components section stays largely as-is — same widget types and fields —
 amended only to describe per-program placement and the graph-node-driven
 palette (§10).
 
-## 12. Rough workstreams (not a schedule — for sequencing sanity only)
+## 12. Export/import for full system duplication — implemented
+
+The ability to export everything needed to reproduce one payload's setup on
+a fresh install of another, rather than manually reinstalling each module
+and rebuilding the graph by hand.
+
+- **Export** (`GET /api/graph/export?source=active|draft`, default
+  `active`) bundles that graph together with, for every module it
+  references, enough to reinstall it identically elsewhere: `repo_url`,
+  `ref`, and the exact `commit` the registry recorded when it was installed
+  — so import re-clones and checks out the precise code that was actually
+  running, not just whatever `ref` currently points to (`_clone_repo` does
+  a full, non-shallow clone plus `git checkout <commit>` when a commit is
+  given, since a shallow `--depth 1` clone only ever has the current tip).
+  400s with a clear error if the graph references an module that isn't
+  currently installed.
+- **Import** (`POST /api/graph/import`) takes that bundle and, on the
+  destination payload: installs every listed module not already present
+  (cloning at `ref`, then checking out `commit`; already-installed modules
+  are skipped, not reinstalled), then loads the graph as the **draft** —
+  not the active graph — so the operator reviews and explicitly submits it
+  on the new device (hardware may differ between payloads even when the
+  module set doesn't, and addresses/ports get reallocated fresh on that
+  submit regardless per §7). Runs as a background job
+  (`GET /api/graph/import/jobs/<id>`), the same idiom as a module install,
+  since installing several modules in sequence can take a while.
+- Frontend: EXPORT downloads the bundle as a `.json` file via a Blob URL;
+  IMPORT posts a picked file and polls the job, reusing the GRAPH tab's
+  existing per-node log panel to show progress.
+
+**The zip-sourced-module question resolved differently than either option
+originally on the table**, once implementation surfaced a fact the original
+framing missed: `eventide-core` itself — present in essentially every
+graph, via the playback server / scheduler / stream-fanout nodes — is
+*also* not git-sourced. `install.sh` installs it with `--install-local`
+straight from the repo checkout `install.sh` is run from
+(`_install_local_module`), so its registry entry's `repo_url` is a local
+filesystem path, not a git remote — exactly the same "can't be re-cloned
+elsewhere" problem as a zip upload. Refusing export outright over this
+would have made export nearly useless for the overwhelmingly common case.
+So both cases are handled the same way, more usefully than a blanket
+refusal: any referenced module without a `repo_url` matching
+`https://`/`git@`/`git://` (git-sourced modules get bundled with
+reinstall info in `"modules"`; zip- and locally-sourced ones land in a
+`"preinstalled_modules"` name-only list instead) goes in
+`"preinstalled_modules"` — a bare name list. Export still succeeds. Import
+checks that list against the destination's registry **up front, before
+doing anything else**, and refuses with a clear error naming exactly which
+ones are missing, rather than silently producing a graph with dangling
+node types. In practice this means: export always succeeds when every
+referenced module is either reinstallable or reasonably assumed to already
+exist on any properly-bootstrapped payload (eventide-core); import fails
+fast and legibly on a destination that's missing something it can't fetch
+itself.
+
+Verified against a real running server end-to-end, not just read through:
+export correctly buckets a local-sourced module into
+`preinstalled_modules` and a git-sourced one into `modules`; import
+correctly fails fast (before any git operation) when a preinstalled
+module is missing, correctly skips an already-installed module and still
+succeeds, and — critically — only ever touches the **draft** graph,
+confirmed by checking `GET /api/graph` before/after and seeing the active
+graph unchanged. The commit-pinning clone mechanism itself
+(`_clone_repo`) was verified against a real local git repository with two
+commits: a pinned import correctly retrieves the older commit's content
+while a normal (unpinned) clone gets the branch tip, proving the
+shallow-clone pitfall this exists to avoid is actually avoided.
+
+## 13. Rough workstreams (not a schedule — for sequencing sanity only)
 
 1. Manifest schema + validation: move `arguments`/`sockets`/`ui[]` under
    `programs[]`, add the socket tags (§6), add fanout socket-count support.
@@ -421,15 +536,23 @@ palette (§10).
    design decisions.
 9. Documentation: `docs/GRAPH_CONNECTIONS.md`, `docs/MODULES.md` rewrite,
    root `README.md` updates.
+10. Export/import (§12): `GET /api/graph/export` / `POST /api/graph/import`,
+    the re-clone-at-commit install path, and the GRAPH tab's EXPORT/IMPORT
+    buttons.
 
-## 13. Open questions summary
+## 14. Open questions summary
 
-All open questions from earlier revisions are now resolved:
+All open questions from earlier revisions are resolved:
 
 - **§6** `stream_kind` on an input socket is explicitly a single value, not
   a set — see the resolved note there.
+- **§12** resolved, and differently than either option originally on the
+  table — see the revised §12 for why (short version: zip- and
+  locally-sourced modules are treated the same, as a name-only
+  "preinstalled" list that import checks upfront, rather than refusing
+  export outright).
 - (§10's earlier open sub-questions — multi-socket UI nodes, per-browser
   layout loss, proxy path scoping for UI-as-nodes — no longer apply now that
   `ui[]` stays manifest-defined instead of becoming graph nodes.)
 
-Nothing outstanding is blocking the start of workstream 1 (§12).
+Nothing outstanding is blocking work already in progress (§13).

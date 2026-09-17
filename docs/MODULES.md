@@ -1,25 +1,36 @@
 # Eventide Module System
 
 Eventide payloads are built from a **minimal base platform** plus **modules**
-installed from GitHub repositories. A module is any component that runs as one
-or more **supervisord programs** — camera dataloggers, MJPEG streamers, the
-gimbal controller, and so on.
+installed from GitHub repositories, plus a **graph** you build in the
+dashboard's GRAPH tab that decides what actually runs. A module is a
+GitHub repo (or a zip upload) that declares one or more **program
+templates** — camera dataloggers, MJPEG streamers, the gimbal controller,
+and so on — which become node types you can place on the graph. Installing
+a module makes its programs available; it doesn't start anything by
+itself.
 
 This document covers:
 
 - [Architecture](#architecture)
 - [The module manifest (`eventide-module.json`)](#the-module-manifest)
-- [Program copies (`instance`)](#program-copies-instance)
+- [Command placeholders](#command-placeholders)
+- [The graph: nodes, edges, and how supervisor config is generated](#the-graph-nodes-edges-and-how-supervisor-config-is-generated)
 - [Network locations (ports & proxying)](#network-locations-ports--proxying)
 - [Dashboard UI components (`ui`)](#dashboard-ui-components-ui)
 - [Install lifecycle & error handling](#install-lifecycle--error-handling)
-- [How supervisor config is generated](#how-supervisor-config-is-generated)
 - [Backend API reference](#backend-api-reference)
 - [Authoring a module](#authoring-a-module)
 - [Porting the existing components](#porting-the-existing-components)
-- [Making a program copyable](#making-a-program-copyable)
 - [Migrating from a pre-module install](#migrating-from-a-pre-module-install)
 - [Troubleshooting](#troubleshooting)
+
+For the full reasoning behind the socket tag taxonomy
+(`direction`/`transport`/`pattern`/`stream_kind`/`capped`/`count_arg`) and a
+worked example, see
+[docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md) — this document covers
+the rest of the manifest and the platform around it. For the full design
+rationale behind the graph itself, see
+[docs/GRAPH_SUPERVISOR_PLAN.md](GRAPH_SUPERVISOR_PLAN.md).
 
 ---
 
@@ -30,12 +41,14 @@ This document covers:
 │                                                                    │
 │  base platform (install.sh)                                        │
 │    eventide.py  ──► /api/modules/*  (module manager, runs as root)│
+│               ──► /api/graph/*   (graph compiler)                 │
 │    supervisord   ──► /etc/supervisor/conf.d/                       │
 │                        00-eventide-base.conf   (inet_http_server)  │
-│                        module-eventide-core.conf (default module)  │
-│                        module-<name>.conf      (one per module)    │
+│                        eventide-graph.conf     (generated on       │
+│                                                  every graph submit)│
 │    /usr/local/eventide/                                            │
 │      modules.json            ← installed-modules registry          │
+│      graph.json               ← active/draft graph + resolved addrs│
 │      packages/<name>/        ← cloned module repos                 │
 │      packages/<name>/.venv/  ← per-module Python virtualenv        │
 │      code/                   ← copied module artifacts (binaries)  │
@@ -44,25 +57,31 @@ This document covers:
 └────────────────────────────────────────────────────────────────────┘
             ▲ cross-origin /api calls (CORS open)
 ┌───────────┴──────────── ground station ────────────────────────────┐
-│  frontend.py serves dashboard.html → MODULES tab                   │
+│  frontend.py serves dashboard.html → MODULES + GRAPH tabs           │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
 The **base install** (`install.sh`) contains only what the platform needs to
-boot and manage modules: OS configuration, Python + Flask, supervisord,
-nginx, the dashboard backend, the watchdog/RTC/MAVProxy services, the playback
-server (its source ships in this repo), and the Rust toolchain so Rust modules
-can build on-device. Everything else is a module.
+boot and manage modules and graphs: OS configuration, Python + Flask,
+supervisord, nginx, the dashboard backend, the watchdog/RTC/MAVProxy
+services, the playback server (its source ships in this repo, run as a
+graph node provided by the built-in `eventide-core` module), and the Rust
+toolchain so Rust modules can build on-device. Everything else is a
+module, and nothing a module provides runs until it's placed as a node in
+the graph and the graph is submitted.
 
-The **backend** (`eventide.py`) performs installs and reports status; the
-**frontend** (MODULES tab) only displays what the backend tells it.
+The **backend** (`eventide.py`) performs installs, compiles submitted
+graphs into a running supervisor config, and reports status; the
+**frontend** (MODULES + GRAPH tabs) only displays what the backend tells
+it.
 
 ---
 
 ## The module manifest
 
-Every module repository contains `eventide-module.json` at its root. It is the
-single source of truth for what the module is, what it needs, and how it runs.
+Every module repository contains `eventide-module.json` at its root. It is
+the single source of truth for what the module is, what it needs, and what
+program templates it contributes to the GRAPH tab's palette.
 
 ### Minimal example
 
@@ -74,7 +93,9 @@ single source of truth for what the module is, what it needs, and how it runs.
   "programs": [
     {
       "name": "hello_module",
-      "command": "/usr/bin/python3 {module_dir}/hello_module.py"
+      "command": "/usr/bin/python3 {module_dir}/hello_module.py",
+      "arguments": [],
+      "sockets": []
     }
   ]
 }
@@ -89,7 +110,7 @@ A complete, working example ships in this repo under
 
 | Field         | Type   | Required | Description |
 | ------------- | ------ | -------- | ----------- |
-| `name`        | string | yes      | Module identifier. Must match `^[a-z0-9][a-z0-9-]*$` and be unique per payload. Used for the clone directory and the `module-<name>.conf` filename. |
+| `name`        | string | yes      | Module identifier. Must match `^[a-z0-9][a-z0-9-]*$` and be unique per payload. Used for the clone directory. |
 | `version`     | string | yes      | Free-form version string, shown in the dashboard. |
 | `description` | string | yes      | Short human-readable summary, shown in the dashboard. |
 | `author`      | string | no       | Author/owner, shown in the dashboard. |
@@ -97,7 +118,8 @@ A complete, working example ships in this repo under
 #### `dependencies` (optional)
 
 Installed **before** any build steps, in the order `apt` → venv creation →
-`requirements` → `pip` → `commands`.
+`requirements` → `pip` → `commands`. Unchanged from before — this is
+module-level, install-time behaviour, not affected by the graph.
 
 | Field       | Type     | Description |
 | ----------- | -------- | ----------- |
@@ -110,21 +132,19 @@ Installed **before** any build steps, in the order `apt` → venv creation →
 ##### Python virtual environments
 
 Every module that uses Python gets its **own virtual environment** at
-`/usr/local/eventide/packages/<name>/.venv`, created at install time. A venv
-is created whenever the module has a requirements file, declares
-`dependencies.pip`, or references a `{venv_...}` placeholder in a program
-command. The venv is removed together with the module directory on uninstall.
+`/usr/local/eventide/packages/<name>/.venv`, created at install time — same
+as before. A venv is created whenever the module has a requirements file,
+declares `dependencies.pip`, or references a `{venv_...}` placeholder in
+any program's command. The venv is shared by every node placed from that
+module, however many there are, and is removed together with the module
+directory on uninstall.
 
-Supervisor programs must run the venv interpreter explicitly — use the
+Program commands must run the venv interpreter explicitly — use the
 `{venv_python}` placeholder:
 
 ```json
 "command": "{venv_python} {module_dir}/camera_app.py --output-dir {recordings_subdir}"
 ```
-
-Because the venv is per module, two modules can pin conflicting versions of
-the same package without breaking each other — and without touching the base
-system's Python (no more `pip install --break-system-packages` for modules).
 
 #### `install` (optional)
 
@@ -135,226 +155,233 @@ system's Python (no more `pip install --break-system-packages` for modules).
 
 #### `recordings_subdir` (optional)
 
-String. If present, `<recordings_dir>/<recordings_subdir>` is created at
-install time and the module appears as a **recording source**: the dashboard's
-PLAYBACK tab gets an inner tab for it and `/api/recordings/<subdir>` lists its
-files. Must be unique across installed modules. Program commands should
-reference the directory through the `{recordings_subdir}` placeholder (below)
-rather than hardcoding the path.
-
-For **copyable programs** (programs declaring `instance`, see below) each
-copy records to its own directory, `<recordings_dir>/<recordings_subdir>-<cid>`,
-created when the copy is created — `{recordings_subdir}` expands accordingly
-in the copy's command, and the PLAYBACK tab gets one inner tab per recording
-copy. The base program always records to `<recordings_dir>/<recordings_subdir>`.
-
-#### `arguments` (optional)
-
-Command-line argument metadata — the module's configurable surface. The
-dashboard displays these; defaults are substituted into program commands via
-`{arg:<name>}` at install time.
-
-| Field       | Type    | Required | Description |
-| ----------- | ------- | -------- | ----------- |
-| `name`      | string  | yes      | Argument identifier (`^[a-z0-9_]+$`), referenced as `{arg:name}`. |
-| `flag`      | string  | yes      | CLI flag, e.g. `"--port"`. Informational. |
-| `type`      | string  | yes      | `"str"`, `"int"`, or `"float"` (defaults are validated against it). |
-| `default`   | any     | yes      | Value substituted for `{arg:name}` during install. |
-| `required`  | boolean | no       | Informational — whether the program needs the flag. |
-| `description` | string | no      | Shown in the dashboard. |
-
-#### `sockets` (optional)
-
-Network/IPC endpoints the module exposes. The backend uses them to wire up
-network locations: any HTTP service behind a TCP socket is reachable through
-the backend's generic proxy at `/proxy/<module>/<socket>/<upstream path>`
-(copies of copyable programs: `/proxy/<module>/copy/<cid>/<socket>/<upstream
-path>`), and program commands reference them with the `{socket:<name>}`
-placeholder.
-
-| Field         | Type   | Required | Description |
-| ------------- | ------ | -------- | ----------- |
-| `name`        | string | yes      | Socket identifier, unique within the module. The name `copy` is reserved. |
-| `type`        | string | yes      | `"tcp"` or `"unix"`. |
-| `port`        | int    | no       | TCP port (1–65535). **Normally omitted — eventide allocates a free port from its pool (`--port-pool`, default 8100–8199) at install time.** Only set this to request a specific port for the base programs; it must not collide with a socket of another installed module. Copies of copyable programs always get pool-allocated ports of their own. |
-| `path`        | string | no       | Filesystem path of the UNIX socket (parent directory created at install time). **May be omitted — eventide generates one** (`/tmp/eventide-<module>-<name>.sock`). Copies of copyable programs always get generated per-copy paths (`/tmp/eventide-<module>-<cid>-<name>.sock`). |
-| `description` | string | no       | What the socket is for (e.g. `"MJPEG live stream"`). |
-
-The allocated (or declared) port is stored in the registry and shown in the
-MODULES tab. Because programs get the value through `{socket:<name>}`, a
-module never needs to know the number in advance. The dashboard resolves
-camera streams by convention: the module whose `recordings_subdir` matches
-the camera key, preferring a TCP socket named `mjpeg`; the gimbal API is the
-first TCP socket of the `gimbal-controller` module (falling back to any
-module exposing the legacy port 5001).
+String, module-level (unchanged in shape from before). If present, a
+program that references `{recordings_subdir}` in its command records to
+`<recordings_dir>/<recordings_subdir>-<node id>` — **suffixed with the
+placing node's id**, one directory per node, created when the graph is
+submitted (not at install time — nothing has a node id yet at install
+time). The dashboard's PLAYBACK tab gets one inner tab per such node,
+automatically, for whatever's in the *active* graph; installing the module
+alone adds nothing to PLAYBACK.
 
 #### `programs` (required, ≥1)
 
-One entry per supervisord program the module provides. A camera module, for
-example, typically declares two: a datalogger and an MJPEG server.
+One entry per node type the module contributes to the GRAPH tab's palette.
+A camera module, for example, typically declares two: a datalogger and an
+MJPEG server.
 
 | Field          | Type    | Default                     | Description |
 | -------------- | ------- | --------------------------- | ----------- |
-| `name`         | string  | —                           | supervisord program name. Must match `^[a-z0-9][a-z0-9_-]*$` and be unique across **all** installed modules. |
-| `command`      | string  | —                           | Full command line; supports placeholders (below). |
+| `name`         | string  | —                           | Program template identifier. Must match `^[a-z0-9][a-z0-9_-]*$` and be unique within the module (not across modules — see below). |
+| `command`      | string  | —                           | Full command line; supports placeholders (below), resolved per graph node. |
 | `directory`    | string  | `{install_dir}`             | Working directory; supports placeholders. |
 | `autostart`    | boolean | `true`                      | Start when supervisord starts. |
 | `autorestart`  | boolean | `true`                      | Restart if the process exits. |
 | `startretries` | int     | `10000`                     | Start attempts before giving up. |
 | `priority`     | int     | `10`                        | supervisord start/stop ordering. |
 | `user`         | string  | `"root"`                    | User the program runs as. |
-| `instance`     | object  | —                           | Optional. **Its presence makes the program copyable** (see [Program copies](#program-copies-instance)): `{"argument": "<arg-name>", "label"?: "..."}`, where `argument` names a `str`/`int` entry in `arguments` whose value identifies a copy — e.g. the serial port. The base program runs with the argument's default; the operator adds copies from the MODULES tab. |
+| `arguments`    | array   | `[]`                        | This program's own configurable surface — see below. |
+| `sockets`      | array   | `[]`                        | This program's own socket declarations — see [docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md). |
+| `ui`           | array   | `[]`                        | This program's dashboard MAIN tab components — see [Dashboard UI components](#dashboard-ui-components-ui). |
 
-```json
-{ "name": "serial_daemon",
-  "command": "{venv_python} {module_dir}/daemon.py --port {arg:port}",
-  "instance": { "argument": "port", "label": "Serial port" } }
-```
+Program names no longer need to be globally unique across every installed
+module: what actually runs is one supervisor program per **graph node**,
+named after that node's id (a slug of a user-editable label), not the
+program template's name. Two different modules can both declare a program
+called `server` with no conflict.
+
+##### `arguments` (per program)
+
+Command-line argument metadata — a program's configurable surface. The
+GRAPH tab shows these as widgets on every node placed from this program
+template, independently editable per node; defaults are substituted into
+the program's command via `{arg:<name>}` when the graph is submitted.
+
+| Field       | Type    | Required | Description |
+| ----------- | ------- | -------- | ----------- |
+| `name`      | string  | yes      | Argument identifier (`^[a-z0-9_]+$`), referenced as `{arg:name}`. |
+| `flag`      | string  | yes      | CLI flag, e.g. `"--port"`. Informational. |
+| `type`      | string  | yes      | `"str"`, `"int"`, or `"float"` (defaults are validated against it). |
+| `default`   | any     | yes      | Value substituted for `{arg:name}` when no node overrides it. |
+| `required`  | boolean | no       | Informational — whether the program needs the flag. |
+| `description` | string | no      | Shown in the dashboard. |
+
+##### `sockets` (per program)
+
+Network/IPC endpoints this program's placed nodes expose or connect to.
+Full field reference and the reasoning behind each tag:
+[docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md#socket-tags). Summary:
+
+| Field         | Type   | Required | Description |
+| ------------- | ------ | -------- | ----------- |
+| `name`        | string | yes      | Socket identifier, unique within the program. |
+| `direction`   | string | yes      | `"output"` (this program owns the address) or `"input"` (attaches to another node's output). |
+| `transport`   | string | yes      | `"unix"`, `"tcp"`, or `"http"`. |
+| `pattern`     | string | `unix`/`tcp` only | `"stream"` or `"request-reply"` (omit for `http` — always request-reply). |
+| `stream_kind` | string | `stream` pattern only | `"irregular"`, `"regular"`, or `"framed"`. |
+| `capped`      | boolean | no      | Only meaningful on a `stream`, non-`http` output — asserts it's safe to leave unconnected. |
+| `port`        | int    | no       | TCP/HTTP only. Omit to let eventide pool-allocate one at graph-submit time. |
+| `path`        | string | no       | Unix only. Omit to let eventide generate one at graph-submit time. |
+| `count_arg`   | string | no       | Names an `int` argument that turns this into a variable-count socket template — see the linked doc. |
+| `description` | string | no       | What the socket is for, shown in the dashboard. |
+
+##### `ui` (per program)
+
+Optional dashboard MAIN tab components this program's placed nodes offer —
+see [Dashboard UI components](#dashboard-ui-components-ui) below for the
+full widget reference (unchanged from before; only its placement in the
+manifest, and what populates the palette, has moved).
 
 ### Command placeholders
 
-Placeholders are expanded at install time — in `dependencies.commands` and
-`install.commands` (when they run), in program commands and `directory` fields
-(when the module's supervisor config is generated), and in
-`install.artifacts` destinations (when artifacts are copied):
+Placeholders are expanded when a graph is submitted (for program commands
+and `directory` fields) or at install time (for `dependencies.commands`,
+`install.commands`, and `install.artifacts` destinations, which are
+module-level and run once, before any node exists):
 
 | Placeholder          | Expands to                                   |
-| -------------------- | -------------------------------------------- |
+| -------------------- | --------------------------------------------- |
 | `{install_dir}`      | `/usr/local/eventide/code`                   |
 | `{config_dir}`       | `/usr/local/eventide/config`                 |
 | `{module_dir}`       | `/usr/local/eventide/packages/<name>`        |
 | `{recordings_dir}`   | The payload's recordings directory           |
-| `{recordings_subdir}`| `{recordings_dir}/<recordings_subdir>` — requires the `recordings_subdir` field |
+| `{recordings_subdir}`| `{recordings_dir}/<recordings_subdir>-<node id>` (program commands only — requires the manifest field, and a node id, so it never resolves for `dependencies.commands`/`install.*`) |
 | `{venv_dir}`         | `/usr/local/eventide/packages/<name>/.venv`  |
 | `{venv_python}`      | `{venv_dir}/bin/python3`                     |
-| `{arg:<name>}`       | The argument's default value (string form)   |
-| `{socket:<name>}`    | The socket's port (tcp) or path (unix)       |
+| `{arg:<name>}`       | The node's value for that argument (its own override, or the declared default) |
+| `{socket:<name>}`    | The address resolved for that socket by the graph compiler — a port, a path, or (for a `count_arg` socket) every numbered slot's address joined with commas |
 
-For copies of copyable programs every placeholder resolves **per copy**: the
-copy's program block is rendered with that copy's argument values, allocated
-ports, generated unix paths, and recordings directory.
+For copies of copyable programs — **there's no such thing any more**. What
+used to be a per-copy re-resolution of these placeholders is now just what
+happens for every node: `{arg:...}`/`{socket:...}`/`{recordings_subdir}`
+all resolve **per node**, always.
 
 ---
 
-## Program copies (`instance`)
+## The graph: nodes, edges, and how supervisor config is generated
 
-A program whose manifest entry declares
-[`instance`](#programs-required-1) is **copyable**. The module installs and
-behaves exactly like any other module — the *base program* runs once with the
-argument's default — but the operator can then add **copies** of just that
-program from the MODULES tab, one per *copy value* (the value of the CLI
-argument the key names). The canonical example is a serial-device daemon: the
-base program drives `/dev/ttyS1`, copies drive `/dev/ttyS2`, `/dev/ttyUSB0`, …,
-while the module's other programs (a shared API, an MJPEG server) keep running
-once, untouched.
+A **node** is one placed instance of a program template; an **edge** is a
+wire between one node's output socket and another's input socket. The
+dashboard's GRAPH tab is a litegraph.js canvas: install a module to add its
+programs to the palette, click a palette entry to place a node, drag from
+an output dot to an input dot to wire two nodes together, edit a node's
+argument widgets, then **SUBMIT**.
 
-A copy is identified in two forms:
+Submitting a graph is a **full stop-and-regenerate**, every time — there's
+no incremental/diff-based apply:
 
-- the **value** (`/dev/ttyS2`) — passed to the copied program via
-  `{arg:<instance argument>}`;
-- the **copy id (cid)** — a slug derived from the value (lowercase,
-  non-`[a-z0-9]` runs → `-`, trimmed; `/dev/ttyS2` → `dev-ttys2`), used in
-  program names, file names, URLs, and the API. Values that slugify to an
-  empty string, or duplicate an existing value/slug for that program, are
-  rejected.
+1. The submitted graph is validated: every node's module/program must
+   exist, every edge must connect a compatible output/input pair (matching
+   `transport`, `pattern`, and — for streams — `stream_kind` exactly), and
+   cardinality is enforced (a stream output accepts at most one edge; any
+   input accepts at most one). This is the server-side re-check of exactly
+   the rules in
+   [docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md#connection-compatibility-rules-summarised)
+   — the editor's own checks are a convenience, this is the authority.
+2. **Addresses are allocated**: one per (node, output socket) — a
+   pool-allocated TCP port, or a generated unix path — regardless of how
+   many edges use it (0 for an unconnected stub, 1 for a stream socket, any
+   number for a `request-reply`/`http` one).
+3. Every node's command is rendered, substituting `{arg:...}` from that
+   node's own values and `{socket:...}` from the resolved address (an
+   input socket's `{socket:...}` resolves to whatever output it's wired
+   to; unconnected resolves to nothing).
+4. A single generated conf, `/etc/supervisor/conf.d/eventide-graph.conf`,
+   is written — one `[program:<node id>]` block per node — replacing
+   whatever was there before, atomically, then applied with
+   `supervisorctl reread && update` (which starts/stops/restarts programs
+   to match the new file on its own — added nodes start, removed ones
+   stop, changed ones restart).
+5. The submitted graph becomes the new **active** graph.
 
-The base program is completely unaffected by copies. For each copy, eventide
-generates at copy-creation time:
+**Unconnected stream sockets** don't fail validation — see `capped` in
+[docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md#capped-promising-you-wont-block-on-a-missing-reader).
+The GRAPH tab shows a persistent warning badge on any such socket until
+it's wired or the manifest marks it `capped`.
 
-| What | Shape |
-| ---- | ----- |
-| supervisor program | `<program>-<cid>`, rendered into the module's single conf file |
-| TCP ports | one fresh pool port per tcp socket **the program's command references** (explicit `port` values belong to the base program) |
-| UNIX socket paths | `/tmp/eventide-<module>-<cid>-<socket>.sock`, per unix socket the program references |
-| recordings dir | `<recordings_dir>/<recordings_subdir>-<cid>`, only when the program's command references `{recordings_subdir}` |
+**Uninstalling a module in use by the active graph is allowed**, not
+rejected: every node using one of its programs is dropped from the graph,
+which is then revalidated and, if that removal introduces no new hard
+error, resubmitted automatically (this is what actually stops the removed
+nodes' supervisor programs). If it does introduce an error, the module is
+still removed, but the previous graph is left running unchanged and the
+error is reported — never a silently-applied broken config.
 
-Everything else behaves like the base program: `{arg:...}` / `{socket:...}` /
-`{recordings_subdir}` placeholders resolve per copy; each copy's argument
-values are independently editable (except the instance argument itself —
-remove and re-add the copy to change that); and supervisor settings
-(`autostart`/`autorestart`/`startretries`/`priority`) are shared with the
-base program — editing them via the module's args form re-renders base and
-copies alike. Note that only sockets **the copyable program's own command
-references** are resolved per copy: a sibling program keeps talking to the
-base program's sockets, so copies are self-contained by construction.
+**Recordings and playback** are graph-node-driven the same way: PLAYBACK's
+inner tabs come from the *active graph's* nodes, not installed modules —
+see `recordings_subdir` above.
 
-**Dashboard.** The MODULES tab shows a COPIES section under each copyable
-program in the module card — one sub-panel per copy (value, sockets, service
-row, EDIT / REMOVE) plus an ADD COPY row. Copies of programs that own a
-socket referenced by a [`ui` component](#dashboard-ui-components-ui) also get
-their own copy of that component: the palette groups them per copy
-(`module · cid`), placed widgets are titled `TITLE · cid`, and their traffic
-is proxied per copy at `/proxy/<module>/copy/<cid>/<socket>/<path>`.
-`default: true` components auto-place when a copy is added; removing a copy
-merely hides its widgets (re-adding restores them in place). The PLAYBACK tab
-gets one inner tab per recording copy.
-
-**Install-time behaviour.** Install renders only the base programs (a fresh
-install has no copies) and behaves exactly as it always has — program names
-are unchanged, so existing manifests need no edits. Uninstalling stops and
-removes base programs and all copies. Reinstalling resets copies.
+**The MAIN tab's ＋ COMPONENTS palette** is built from the active graph's
+nodes too, per program's `ui[]` — see
+[Dashboard UI components](#dashboard-ui-components-ui).
 
 ---
 
 ## Network locations (ports & proxying)
 
-Nothing about a module's network presence is hardcoded outside its manifest:
+Nothing about a node's network presence is hardcoded outside the graph:
 
-- **Ports are allocated by eventide.** A TCP socket without an explicit
-  `port` gets one from the backend's pool (`--port-pool`, default
-  `8100-8199`) at install time — the lowest port not used by another
-  installed module and not already bound on the device. The chosen port is
-  persisted in the registry entry's manifest and shown in the MODULES tab.
-  An explicit `port` is still honoured when free (checked against other
-  installed modules), so older manifests keep working. Copies of copyable
-  programs get their own pool-allocated ports at copy-creation time, stored
-  on the copy.
-- **nginx has no per-module locations.** `config/eventide.nginx` only fronts
+- **Addresses are allocated at graph-submit time**, not module-install
+  time (see above) — a TCP port from the backend's pool (`--port-pool`,
+  default `8100-8199`), or a generated unix path, one per (node, output
+  socket). An explicit `port`/`path` in the manifest is still honoured
+  (checked for collisions against other nodes' explicit addresses at
+  submit time).
+- **nginx has no per-node locations.** `config/eventide.nginx` only fronts
   `eventide.py` (`location /`) and the base playback server (`/playback/`).
-  Every HTTP service a module exposes is proxied by the backend itself:
+  Every HTTP service a node exposes is proxied by the backend itself:
 
   ```
-  /proxy/<module>/<socket>/<upstream path>          →  http://127.0.0.1:<port>/<upstream path>
-  /proxy/<module>/copy/<cid>/<socket>/<upstream…>   →  same, for one copy of a copyable program
+  /proxy/node/<node id>/<socket>/<upstream path>   →   http://127.0.0.1:<port>/<upstream path>
   ```
 
-  Responses are streamed, so MJPEG works through it. Examples: a camera
-  module's live stream is `/proxy/evk-datalogger/mjpeg/stream`, its settings
-  API `/proxy/evk-datalogger/mjpeg/api/settings`, the gimbal API
-  `/proxy/gimbal-controller/api/target`.
-- **The dashboard resolves URLs from `/api/modules`.** Camera cells map the
-  cam key (`evk`, `picam`, `ircam`) to the module whose `recordings_subdir`
-  (or name) matches, preferring a TCP socket named `mjpeg`; the gimbal panel
-  looks for the `gimbal-controller` module (falling back to any module
-  exposing the legacy port 5001) and uses its first TCP socket. Follow those
-  naming conventions and new modules light up the UI automatically.
+  Responses are streamed, so MJPEG works through it. Resolved from the
+  *active graph's* resolved addresses at request time — `404` if that
+  node/socket isn't part of the active graph, `502` if the node's server
+  is down.
+- **The dashboard resolves everything from `/api/modules` + `/api/graph`.**
+  A `ui[]` entry's `socket` field names one of its owning program's own
+  sockets; the MAIN tab cross-references the active graph's nodes against
+  their program's `ui[]` to build the palette and proxy URLs — see below.
 
 ---
 
 ## Dashboard UI components (`ui`)
 
 The MAIN tab of the dashboard is a **modular workspace**: a left sidebar, a
-right sidebar, and a tabbed centre workspace. Modules advertise the panels
-they offer in an optional top-level `ui` array; the user places components
-from the palette (＋ COMPONENTS button), drags them between regions, and the
-layout persists in the browser per backend host. Components with
-`"default": true` are placed automatically when the module is installed.
+right sidebar, and a tabbed centre workspace. A program advertises the
+panels its nodes offer in its own optional `ui` array (per-program, like
+`arguments`/`sockets` — see above); the palette is built from the
+**programs currently placed as nodes in the active graph**, not from
+installed modules — every node contributes its own copy of its program's
+`ui[]` entries, so placing a second node of the same program just gets its
+own independent set of components, keyed by node id. The user places
+components from the palette (＋ COMPONENTS button), drags them between
+regions, and the layout persists in the browser per backend host.
+Components with `"default": true` are placed automatically when a node
+using them appears in the active graph.
 
-Every component's traffic goes through the backend proxy —
-`/proxy/<module>/<socket>/<path>` — so `socket` in a `ui` config is always a
-**socket name from the module's own `sockets` list** (tcp), never a port.
+Every component's traffic goes through the backend's node-scoped proxy —
+`/proxy/node/<node id>/<socket>/<path>` — so `socket` in a `ui` config is
+always an **http socket name from that same program's own `sockets`
+list**, resolved for whichever specific node the component was placed
+from.
 
 ### Common fields
 
 | Field    | Type    | Required | Description |
 | -------- | ------- | -------- | ----------- |
-| `id`     | string  | yes      | Component id, `^[a-z0-9][a-z0-9_-]*$`, unique within the module. |
+| `id`     | string  | yes      | Component id, `^[a-z0-9][a-z0-9_-]*$`, unique within the program. |
 | `type`   | string  | yes      | Widget type (below). |
-| `title`  | string  | no       | Panel header text. |
+| `title`  | string  | no       | Panel header text. Gets a `· <node label>` suffix automatically when more than one node shares this program, so the two don't look identical. |
 | `region` | string  | no       | `"sidebar"` (default) or `"center"` — where `default` placement puts it. |
-| `default`| boolean | no       | Auto-place on install (default `false`); otherwise palette-only. |
+| `default`| boolean | no       | Auto-place when a node using this program appears in the active graph (default `false`); otherwise palette-only. |
 
 ### Widget types
+
+These field shapes are unchanged from the pre-graph manifest — only their
+placement (per-program) and what populates the palette (the active graph,
+not the module registry) are new.
 
 | Type       | Region  | Config (in addition to `socket`) |
 | ---------- | ------- | -------------------------------- |
@@ -366,7 +393,7 @@ Every component's traffic goes through the backend proxy —
 | `joystick` | sidebar | `put`, `telemetry_get?`, `paths?: {x, y}`, `fields?: {x, y, frame}`, `gamepad?: {axes?, deadzone?}` — two-axis RC pad seeded from a telemetry poll; the poll is skipped while a pan/tilt box has focus so manual edits aren't overwritten. Any browser-connected gamepad (Xbox/XInput pads included, via the Gamepad API) also drives the pad: the stick sets a deflection-proportional slew rate, mirrored on the knob. `axes` picks the stick (default `[0, 1]`, the left stick; `[2, 3]` for right), `deadzone` is radial (default `0.15`). The pad only appears after its first button press (browser requirement); pointer drags take priority while active. |
 | `table`    | sidebar | `get`, `interval?`, `columns[]` (`{label, path, fmt?}`), `row_action?: {label, method, path, key}`, `stop_action?: {label, method, path}` — polled table with a per-row action button (e.g. ADS-B track/stop). |
 | `map`      | center  | `track?: {socket, get, interval?, lat, lon, heading?, gimbal?, frame?}`, `adsb?: {socket, get, interval?, lat, lon, label?, key?}` — Leaflet map with optional device/track markers. User map clicks are shown as a separate marker from the system target reported by the track endpoint (`target: {lat, lon}`). Without bindings it's a plain map. |
-| `orientation3d` | center | `get`, `interval?` (ms), `paths?: {pan, tilt, roll}` (telemetry keys; default `pan`/`tilt`/`roll`), `warn_delta?` (deg, default 45), `model?` — 3D attitude indicator; drag to orbit the view. `model` names an STL file relative to the module root (served read-only at `/api/modules/<name>/files/<path>`): it is drawn flat-shaded at the stage centre, auto-centred and auto-scaled, and rotated by the telemetry. Model axes: **+Z forward (the pointer direction), +Y up, +X right** — keep meshes small (≲ 10k triangles). If the file is missing or unparseable the widget falls back to its built-in fin shape. |
+| `orientation3d` | center | `get`, `interval?` (ms), `paths?: {pan, tilt, roll}` (telemetry keys; default `pan`/`tilt`/`roll`), `warn_delta?` (deg, default 45), `model?` — 3D attitude indicator; drag to orbit the view. `model` names an STL file relative to the module root (served read-only at `/api/modules/<name>/files/<path>` — module-scoped, since a model file is a static asset shared by every node, not something graph-scoped): it is drawn flat-shaded at the stage centre, auto-centred and auto-scaled, and rotated by the telemetry. Model axes: **+Z forward (the pointer direction), +Y up, +X right** — keep meshes small (≲ 10k triangles). If the file is missing or unparseable the widget falls back to its built-in fin shape. |
 
 `fmt` is one of the dashboard's named formatters: `int`, `f1`, `f2`, `f6`
 (decimal places), `m_km` (metres → m/km).
@@ -375,10 +402,10 @@ Every component's traffic goes through the backend proxy —
 
 | Type          | Region   | Description |
 | ------------- | -------- | ----------- |
-| `master-record` | `sidebar` | Aggregates every installed module's `recording`-type component into one panel with per-source rows and a RECORD ALL / STOP ALL button. RECORD ALL / STOP ALL calls the base backend's `POST /api/recording/trigger` (body `{"recording": bool, "duration_seconds"?: number}`), which fans start/stop out to every recording source server-side (with server-side auto-stop after `duration_seconds`), so it also works with no browser open — that's what the `eventide-core` scheduler below uses. Provided by the built-in `eventide-core` module; no other module should declare it. |
+| `master-record` | `sidebar` | Aggregates every `recording`-type component currently placed **by the active graph** into one RECORDING panel with per-source rows and a RECORD ALL / STOP ALL button. RECORD ALL / STOP ALL calls the base backend's `POST /api/recording/trigger` (body `{"recording": bool, "duration_seconds"?: number}`), which fans start/stop out to every such node server-side (with server-side auto-stop after `duration_seconds`), so it also works with no browser open — that's what the `eventide-core` scheduler below uses. Provided by the built-in `eventide-core` module; no other module should declare it. |
 | `schedule-table` | `sidebar` | Lists cron-triggered recording jobs from a scheduler's CRUD API (`get` → `{"items": [{id, label, cron, duration_seconds, enabled, last_run, last_result}]}`), with a per-row enable/disable checkbox (`PATCH <get>/<id>` with `{"enabled": bool}`) and a delete button (`DELETE <get>/<id>`). A dedicated type rather than `table`, since `table`'s `row_action`/`stop_action` assumes a single globally-active row rather than N independently-toggleable, server-tracked ones. Paired with a plain `form` widget (`put` → `POST` to the same API, fields `label`/`cron`/`duration_seconds`) for creating jobs. Provided by the built-in `eventide-core` module's scheduler service. |
 
-### Example (evk-datalogger)
+### Example (a camera module's `mjpeg_server` program)
 
 ```json
 "ui": [
@@ -394,18 +421,14 @@ Every component's traffic goes through the backend proxy —
       {"key": "streaming", "kind": "toggle",
        "get": "/api/streaming", "put": "/api/streaming"}
     ] },
-  { "id": "biases", "type": "form", "title": "EVK4 BIASES",
-    "region": "sidebar", "default": true, "socket": "http_api",
-    "get": "/api/biases", "put": "/api/biases",
-    "fields": [
-      {"key": "diff_on", "kind": "number", "min": 0, "max": 255},
-      {"key": "diff_off", "kind": "number", "min": 0, "max": 255}
-    ] },
   { "id": "record-control", "type": "recording", "title": "EVK4 RECORD",
-    "region": "sidebar", "default": true, "socket": "http_api",
+    "region": "sidebar", "default": true, "socket": "mjpeg",
     "get": "/api/recording", "put": "/api/recording" }
 ]
 ```
+
+(`socket` here names a socket declared on the **same program**, e.g. one
+tagged `transport: "http"`.)
 
 ---
 
@@ -415,79 +438,51 @@ Installing is a **background job** on the backend. The job moves through these
 statuses:
 
 ```
-pending → cloning|extracting → deps → building → artifacts → configuring → verifying → done
+pending → cloning|extracting → deps → building → artifacts → configuring → done
                                                                               ↘ failed
 ```
 
 | Status        | What happens |
 | ------------- | ------------ |
-| `cloning`     | Repo cloned to a staging dir (`packages/.staging-<job>`). HTTPS is tried first; for `github.com` URLs a SSH (`git@github.com:…`) retry follows automatically. The manifest is read and fully validated here — including name/program/socket conflicts with already-installed modules. |
+| `cloning`     | Repo cloned to a staging dir (`packages/.staging-<job>`). HTTPS is tried first; for `github.com` URLs a SSH (`git@github.com:…`) retry follows automatically. The manifest is read and fully validated here — including name/`recordings_subdir`/explicit-port conflicts with already-installed modules. |
 | `extracting`  | Zip installs only: the uploaded zip is stored under `packages/.uploads/` and extracted into staging (zip-slip paths are rejected). The manifest must sit at the zip root or in a single top-level folder (as GitHub's "Download ZIP" produces). Validation then proceeds exactly as for `cloning`. |
 | `deps`        | `dependencies.apt`, then the module venv is created and `requirements`/`pip` are installed into it, then `dependencies.commands`. |
 | `building`    | `install.commands` run in the repo root. |
-| `artifacts`   | Every `install.artifacts` source is checked for existence, then copied to its destination. `recordings_subdir` is created. |
-| `configuring` | `/etc/supervisor/conf.d/module-<name>.conf` is rendered and written; `supervisorctl reread && supervisorctl update` is run. |
-| `verifying`   | `supervisorctl status` is polled (up to ~10 s) for the module's programs. |
-| `done`        | The module is recorded in `/usr/local/eventide/modules.json`. |
+| `artifacts`   | Every `install.artifacts` source is checked for existence, then copied to its destination. |
+| `configuring` | The module is recorded in `/usr/local/eventide/modules.json`. Nothing is rendered into supervisor conf or started here any more — that's the graph compiler's job, once a node using one of this module's programs is placed and submitted. |
+| `done`        | Install finished; the module's programs are now available in the GRAPH tab's palette. |
 | `failed`      | See rollback below. |
 
 **Rollback.** Any hard failure (clone error, invalid manifest, dependency or
-build command exiting non-zero, missing artifact, supervisor apply error)
-removes everything the job created: copied artifacts, the conf.d file
-(followed by `reread`/`update`), the staging/clone directory, and any partial
-registry entry. The job ends `failed` with the failing command's output in its
-log.
+build command exiting non-zero, missing artifact) removes everything the
+job created: copied artifacts, the staging/clone directory, and any
+partial registry entry. The job ends `failed` with the failing command's
+output in its log.
 
-**Runtime state vs install state.** A program that installs cleanly but then
-fails to start (e.g. its camera is not connected on a bench install) does
-**not** fail the install — it is reported in the job's `warnings` list and is
-visible in the dashboard's SUPERVISOR tab. Hard errors in the install steps
-themselves always fail the job.
+**There's no more install-time "verifying" step**, since install doesn't
+start anything to verify — a program's actual runtime health only exists
+once it's a node in a submitted graph; see `GET /api/graph/status`.
 
 **Concurrency.** One install at a time; concurrent requests are rejected with
-`409 Conflict`.
+`409 Conflict`. A graph import (below) that needs to install several
+modules does them one at a time, holding this same lock per install.
 
 **Updating a module** is uninstall + reinstall (no in-place upgrade yet).
 
 ---
 
-## How supervisor config is generated
-
-The base config `/etc/supervisor/conf.d/00-eventide-base.conf` (installed by
-`install.sh`) holds only `[supervisord]` and `[inet_http_server]`. Each module
-gets its own generated file, `/etc/supervisor/conf.d/module-<name>.conf`,
-holding the base programs plus any copies of copyable programs (named
-`<program>-<cid>`, rendered right after their base program):
-
-```ini
-; Generated by eventide module manager from <repo url> — do not edit by hand.
-[program:pi_camera_datalogger]
-command=/usr/bin/python3 /usr/local/eventide/code/camera_app.py --output-dir /home/tripwire/recordings/picam/ --config /usr/local/eventide/config/camera_config.json
-directory=/usr/local/eventide/code
-autostart=true
-autorestart=true
-startretries=10000
-priority=10
-user=root
-stdout_logfile=/var/log/supervisor/%(program_name)s.log
-```
-
-The file is written atomically (temp file + rename), then applied with
-`supervisorctl reread && supervisorctl update`. Uninstalling a module simply
-deletes its conf file and re-applies — no other module's config is touched,
-and a broken module can never corrupt the rest of the system.
-
----
-
 ## Backend API reference
 
-All endpoints are served by `eventide.py` under `/api/modules` (through nginx
-on the payload, like the rest of `/api`). Errors return
-`{"error": "<message>"}` with a 4xx/5xx status.
+All endpoints are served by `eventide.py` under `/api/modules` and
+`/api/graph` (through nginx on the payload, like the rest of `/api`).
+Errors return `{"error": "<message>"}` with a 4xx/5xx status.
 
-### `GET /api/modules`
+### Module endpoints
 
-List installed modules, merged with live supervisor status.
+#### `GET /api/modules`
+
+List installed modules — the palette the GRAPH tab's node types are built
+from.
 
 ```json
 {
@@ -500,32 +495,35 @@ List installed modules, merged with live supervisor status.
       "repo_url": "https://github.com/you/hello-module",
       "installed_at": "2026-07-24T12:00:00+00:00",
       "recordings_subdir": null,
-      "arguments": [ … ],
-      "sockets":   [ … ],
       "programs": [
-        {"name": "hello_module", "status": "RUNNING",
-         "status_detail": "pid 1234, uptime 0:03:12",
-         "autostart": true, "autorestart": true,
-         "startretries": 10000, "priority": 10,
-         "instance": null, "copies": []}
+        {
+          "name": "hello_module",
+          "command": "…",
+          "arguments": [ … ],
+          "sockets": [ … ],
+          "ui": [ … ],
+          "autostart": true, "autorestart": true,
+          "startretries": 10000, "priority": 10,
+          "active_node_count": 2
+        }
       ]
     }
   ]
 }
 ```
 
-Each program carries its `instance` spec (`{"argument": "…", "label": "…"}`
-or `null` for non-copyable programs) and its live `copies` — each with its
-id, value, per-copy argument values, resolved sockets (allocated ports /
-generated unix paths), recordings subdir, and its supervisor program
-(`<program>-<cid>`) with live status.
+A program has no live status of its own — `arguments`/`sockets`/`ui` are
+templates, not running things. `active_node_count` is a convenience count
+of how many nodes in the **active** graph currently use this program,
+mainly so the dashboard can warn before an uninstall. See
+`GET /api/graph/status` for what's actually executing.
 
-### `GET /api/modules/<name>`
+#### `GET /api/modules/<name>`
 
 Full detail for one installed module (registry entry including the raw
 manifest). `404` if not installed.
 
-### `POST /api/modules/install`
+#### `POST /api/modules/install`
 
 Body: `{"repo_url": "https://github.com/you/module", "ref": "main"}` (`ref`
 optional — branch or tag). Starts a background install job.
@@ -533,20 +531,22 @@ optional — branch or tag). Starts a background install job.
 - `202 Accepted` → `{"job_id": "…", "status": "pending"}`
 - `400` missing/invalid `repo_url` · `409` another install is already running
 
-### `POST /api/modules/install-upload`
+#### `POST /api/modules/install-upload`
 
 Installs a module from an uploaded zip file instead of a git clone. The
 request is `multipart/form-data` with the archive in the `file` field. The
 zip must contain `eventide-module.json` at its root or inside a single
 top-level folder (what GitHub's **Download ZIP** produces). Maximum upload
-size: 100 MB.
+size: 100 MB. A zip-sourced module can't be re-cloned by graph export/import
+(below) — it goes in the exported bundle's `preinstalled_modules` list
+instead.
 
 - `202 Accepted` → `{"job_id": "…", "status": "pending"}` — poll the job as
   usual; the first status is `extracting` instead of `cloning`
 - `400` no file / not a `.zip` · `409` another install is already running ·
   `413` zip too large
 
-### `GET /api/modules/jobs/<job_id>`
+#### `GET /api/modules/jobs/<job_id>`
 
 Job status for polling:
 
@@ -560,103 +560,137 @@ Job status for polling:
 }
 ```
 
-`status` ∈ `pending, cloning, deps, building, artifacts, configuring,
-verifying, done, failed`. When `done`, `module` is the module name and
-`warnings` lists any programs not yet RUNNING. When `failed`, `error` says why.
+`status` ∈ `pending, cloning, deps, building, artifacts, configuring, done,
+failed`. When `done`, `module` is the module name. When `failed`, `error`
+says why.
 
-### `POST /api/modules/<name>/uninstall`
+#### `POST /api/modules/<name>/uninstall`
 
-Stops the module's programs (best-effort), removes its conf file, re-applies
-supervisor, deletes copied artifacts and the cloned repo, and drops the
-registry entry. `404` if not installed.
-
-### `POST /api/modules/<name>/args`
-
-Updates the module's argument values **and per-program supervisor settings**,
-then re-renders the conf.d file and reloads supervisord (running programs
-restart with the new settings). This is what the MODULES tab's EDIT form posts.
+Removes the module's files and registry entry. **Allowed even if the
+module is in use by the active graph** — see
+[The graph](#the-graph-nodes-edges-and-how-supervisor-config-is-generated)
+above for the cascade behaviour. `404` if not installed.
 
 ```json
 {
-  "args":     {"interval": 30},
-  "programs": {"pi_camera_datalogger": {"autostart": true, "autorestart": true,
-                                        "startretries": 10000, "priority": 1}}
+  "ok": true, "removed": "hello-module",
+  "graph_removed_nodes": ["cam1", "cam2"],
+  "graph_regenerated": true,
+  "graph_error": null
 }
 ```
 
-`args` maps declared argument names to values (type-checked); `programs` maps
-program names to any subset of `autostart`/`autorestart` (booleans) and
-`startretries`/`priority` (non-negative ints). Unknown names or wrong types
-return `400` with every problem listed. The conf is re-rendered including
-every copy of copyable programs (copies share their base program's settings).
+`graph_removed_nodes` lists which active-graph nodes used this module (and
+were dropped); `graph_regenerated` says whether the trimmed graph was
+successfully resubmitted; `graph_error` is set (and the *previous* graph
+left running unchanged) if it couldn't be.
 
-### `POST /api/modules/<name>/programs/<prog>/copies`
+#### `/proxy/node/<node id>/<socket>/…`
 
-Creates (and starts) a copy of a **copyable** program (one whose manifest
-entry declares `instance`):
+Generic proxy to the HTTP service behind one active-graph node's socket:
+forwarded (streamed) to `http://127.0.0.1:<resolved port>/<upstream path>`.
+`404` when that node/socket isn't part of the active graph, `502` when the
+node's server is down.
 
-```json
-{ "value": "/dev/ttyS2", "args": { "baud": 115200 } }
-```
+### Graph endpoints
 
-`value` (required, string or int) is the copy identifier — substituted into
-the program's instance argument and slugified into the copy id; `args`
-(optional) overrides other argument defaults for this copy only. Per-copy TCP
-ports are allocated and unix socket paths generated at this point; the module
-conf is re-rendered with the copy added and supervisor reloaded.
-
-- `201 Created` → `{"ok": true, "copy": { … }, "name": "serial_daemon-dev-ttys2"}`
-- `400` missing/empty/duplicate value, value slug collides with an existing
-  copy of that program, invalid `args`, no free port in the pool, program-name
-  collision, or the program is not copyable · `404` module or program not found
-
-### `DELETE /api/modules/<name>/programs/<prog>/copies/<cid>`
-
-Stops the copy's program (best-effort), re-renders the module conf without
-it, reloads supervisor, and drops it from the registry. The base program and
-other copies are unaffected. `404` unknown module, program, or copy id.
-
-### `POST /api/modules/<name>/programs/<prog>/copies/<cid>/args`
-
-Updates one copy's argument values and reloads the supervisor config:
+#### `GET /api/graph`
 
 ```json
-{ "args": { "baud": 115200 } }
+{ "active": { "nodes": [...], "edges": [...] } | null,
+  "draft":  { "nodes": [...], "edges": [...] } | null }
 ```
 
-The copy's instance argument is pinned — changing it returns `400` (remove
-and re-add the copy instead). Supervisor settings are not per-copy; they are
-shared with the base program and edited via `POST /api/modules/<name>/args`.
+A node: `{"id", "label", "module", "program", "args": {...}, "pos": [x, y]}`.
+An edge: `{"id", "from": {"node", "socket"}, "to": {"node", "socket"}}`.
 
-### `GET /api/recordings`
+#### `PUT /api/graph/draft`
 
-Lists the **recording sources** — one per installed module that declares
-`recordings_subdir`, plus one per copy of a copyable program whose command
-uses the recordings dir (named `<subdir>-<cid>`):
+Body: a graph document (`{"nodes": [...], "edges": [...]}`). Autosaved by
+the GRAPH tab as you edit; no validation beyond basic shape, and no effect
+on the running system until submitted.
+
+#### `POST /api/graph/submit`
+
+Body: a graph document (or omit it to submit the current draft). Validates
+and, on success, applies it as the new active graph — see
+[The graph](#the-graph-nodes-edges-and-how-supervisor-config-is-generated).
+
+- `200` → `{"ok": true, "warnings": [{"node", "socket", "message"}, ...]}`
+  — `warnings` are the persistent unconnected-capped-stream-socket kind,
+  not submission blockers.
+- `400` → `{"error": "...", "errors": ["...", ...]}` — every validation
+  problem, nothing applied.
+
+#### `GET /api/graph/status`
 
 ```json
-{"sources": [{"name": "evk", "module": "evk-datalogger"},
-             {"name": "picam", "module": "picam-datalogger"},
-             {"name": "serial-dev-ttys2", "module": "serial-hub (serial_daemon/dev-ttys2)"}]}
+{ "nodes": [{"id", "status", "status_detail"}, ...],
+  "warnings": [{"node", "socket", "message"}, ...] }
 ```
 
-`GET /api/recordings/<source>` lists that source's files;
-`GET /api/recordings/<source>/<file>/download` downloads one. Sources no
-installed module declares return `404` — the dashboard's PLAYBACK tab builds
-its inner tabs from exactly this list.
+Live per-node supervisor status for the active graph, plus the same
+persistent warnings `submit` returns. Per-node start/stop/restart and log
+tailing don't need a dedicated REST endpoint — a node is just a supervisor
+program named after its id, so the existing `/supervisor/` XML-RPC proxy
+(`supervisor.startProcess`/`stopProcess`/`tailProcessStdoutLog`/etc., the
+same one the dashboard already uses) works unchanged, keyed by node id.
 
-### `/proxy/<module>/<socket>/…`
+### Graph export / import
 
-Generic proxy to the HTTP service behind a module's TCP socket:
-`/proxy/<module>/<socket>/<upstream path>` is forwarded (streamed) to
-`http://127.0.0.1:<allocated port>/<upstream path>`. `404` when the module or
-socket isn't installed, `502` when the module's server is down. This is how
-the dashboard reaches camera streams, per-camera settings, and the gimbal
-API — nginx carries no per-module locations.
+Full design: `docs/GRAPH_SUPERVISOR_PLAN.md` §12.
 
-Instanceable programs' copies are proxied **per copy**:
-`/proxy/<module>/copy/<cid>/<socket>/<upstream path>`, resolved from that
-copy's allocated ports. The plain form always reaches the base program.
+#### `GET /api/graph/export?source=active|draft`
+
+Bundles that graph (default `active`) with, for every module it
+references, enough to reinstall it identically elsewhere:
+
+```json
+{
+  "eventide_export_version": 1,
+  "exported_at": "…",
+  "source": "active",
+  "graph": { "nodes": [...], "edges": [...] },
+  "modules": [
+    {"name": "cam-mod", "repo_url": "https://github.com/you/cam-mod", "ref": "main", "commit": "abc123..."}
+  ],
+  "preinstalled_modules": ["eventide-core"]
+}
+```
+
+`modules` lists git-sourced modules with everything needed to re-clone
+them at the *exact* commit that was running. `preinstalled_modules` lists
+modules with no usable `repo_url` (zip-sourced, or one of the base
+platform's own `--install-local` modules like `eventide-core`) by name
+only — the destination is expected to already have these; import checks
+for that up front. `400` if the graph references a module that isn't
+currently installed.
+
+#### `POST /api/graph/import`
+
+Body: an export bundle (as above). Starts a background job that: checks
+every `preinstalled_modules` entry is already present (failing immediately
+and clearly if not); installs each `modules` entry not already present,
+cloning at `ref` and checking out the exact `commit`; then loads `graph`
+as the **draft** — never active — so the operator reviews and explicitly
+submits it on the destination.
+
+- `202 Accepted` → `{"job_id": "…", "status": "pending"}`
+- `400` malformed bundle (missing/wrong-shaped `graph`)
+
+#### `GET /api/graph/import/jobs/<job_id>`
+
+```json
+{
+  "id": "…", "status": "installing",
+  "log": ["module 'cam-mod' already installed — skipping", "…"],
+  "error": null, "warnings": [],
+  "modules_installed": ["…"], "modules_skipped": ["cam-mod"],
+  "created_at": "…", "finished_at": null
+}
+```
+
+`status` ∈ `pending, installing, validating, done, failed`.
 
 ---
 
@@ -667,25 +701,36 @@ copy's allocated ports. The plain form always reaches the base program.
    `python3 -m json.tool eventide-module.json > /dev/null`.
 3. Keep programs **foreground** processes — supervisord manages daemonisation,
    restarts, and logging. Log to stdout/stderr; it lands in
-   `/var/log/supervisor/<program>.log`.
-4. Put everything the program needs at runtime either in `install.artifacts`
+   `/var/log/supervisor/<node id>.log` once placed and submitted.
+4. Put everything a program needs at runtime either in `install.artifacts`
    (copied to a stable location) or reference it inside `{module_dir}` — the
    clone is not removed after install.
-5. Declare every TCP/UNIX socket you bind in `sockets` — reference them from
-   program commands with `{socket:<name>}` and let eventide allocate the TCP
-   ports (omit `port` unless you genuinely need a fixed one).
-6. Push to GitHub and install from the dashboard's MODULES tab — either by
-   repo URL, or by uploading/dragging a zip of the repository (GitHub's
-   "Download ZIP" layout works as-is).
+5. Declare each program's own `arguments` and every socket it binds or
+   attaches to in that same program's `sockets` — tagged
+   `direction`/`transport`/`pattern`/`stream_kind` (see
+   [docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md)) so the GRAPH tab
+   knows what it can be wired to. Reference them from the program's
+   command with `{arg:<name>}`/`{socket:<name>}`, and let eventide
+   allocate ports/paths (omit `port`/`path` unless you genuinely need a
+   fixed one).
+6. Push to GitHub and install from the dashboard: **MODULES → enter the repo URL →
+   INSTALL** — or zip the folder and use **ZIP FILE** (drag & drop works too).
+   Then switch to the **GRAPH** tab, place a node for each program you want
+   running, wire them up, and **SUBMIT**.
 
 ---
 
 ## Porting the existing components
 
-The pre-module `install.sh` cloned and installed four repositories. Each maps
-to a module as follows (the removed install.sh lines become manifest fields):
+The pre-module `install.sh` cloned and installed four repositories. Each
+maps to a module, written against the **pre-graph** manifest shape
+(top-level `arguments`/`sockets`/`ui`, no socket tags) — migrating them to
+the per-program, tagged-socket shape this document describes is tracked
+separately (`docs/GRAPH_SUPERVISOR_PLAN.md` §2, §8, workstream 8) and
+hasn't been done yet, so installing one of these today needs that
+migration first.
 
-### `Y2Kmeltdown/evk_datalogger` → `evk-datalogger` ✅ converted
+### `Y2Kmeltdown/evk_datalogger` → `evk-datalogger`
 
 The repo ships `eventide-module.json` — a two-service module:
 
@@ -702,10 +747,12 @@ The repo ships `eventide-module.json` — a two-service module:
 - `recordings_subdir`: `evk`
 - `programs`: `event_based_camera` (priority 1) and `evk_mjpeg_server`
   (priority 2, viewfinder bound via `--bind 0.0.0.0:{socket:mjpeg}`)
-- `sockets`: unix `/tmp/evk4_events.sock` + `/tmp/evk4_triggers.sock` and
-  tcp `mjpeg` (MJPEG live stream — no `port`; eventide allocates one)
+- sockets to tag: two unix frame/trigger sockets (pick `stream_kind` per
+  what the format actually is) and an `mjpeg` socket that should become
+  `transport: "http"` (it's an MJPEG-over-HTTP stream, not a raw `tcp`
+  socket)
 
-### `Y2Kmeltdown/picam_datalogger` → `picam-datalogger` ✅ converted
+### `Y2Kmeltdown/picam_datalogger` → `picam-datalogger`
 
 The repo ships `eventide-module.json` — a two-service module:
 
@@ -718,10 +765,10 @@ The repo ships `eventide-module.json` — a two-service module:
 - `programs`: `pi_camera_datalogger` (priority 1) and `pi_mjpeg_server`
   (priority 2), both run straight from `{module_dir}` with `{venv_python}` —
   no `install.artifacts` needed for pure-Python modules
-- `sockets`: unix `/tmp/picam_frames.sock` (inter-service frame socket —
-  referenced as `{socket:frames}`) + tcp `mjpeg` (MJPEG; port allocated)
+- sockets to tag: a unix frame socket (`transport: "unix"`,
+  `stream_kind` per the frame format) and `mjpeg` → `transport: "http"`
 
-### `ericltb15/aravis-ir` → `ircam-datalogger` ✅ converted
+### `ericltb15/aravis-ir` → `ircam-datalogger`
 
 The repo ships `eventide-module.json` — a two-service module:
 
@@ -739,8 +786,8 @@ The repo ships `eventide-module.json` — a two-service module:
 - `programs`: `infrared_camera` (priority 1 — records segmented MP4 to
   `{recordings_subdir}`, serves raw 16-bit frames on `{socket:frames}`) and
   `ir_mjpeg_server` (priority 2 — `{venv_python} {install_dir}/ir_mjpeg.py`)
-- `sockets`: unix `/tmp/irstream.sock` (inter-service frame socket) + tcp
-  `mjpeg` (MJPEG; port allocated)
+- sockets to tag: `frames` (unix, `stream_kind` per the raw frame format)
+  and `mjpeg` → `transport: "http"`
 
 ### `j-vanarsdale/tripwire-gimbal-point` → `gimbal-controller`
 
@@ -750,9 +797,8 @@ The repo ships `eventide-module.json` — a two-service module:
 - `programs`: `gimbal_controller` — port the full command line from the old
   `config/supervisor.conf` git history, with `{recordings_subdir}` in place of
   the old `SEDPLACEHOLDER`
-- `sockets`: tcp `api` at explicit `port: 5001` (gimbal API — kept fixed for
-  external clients; the dashboard also finds it as the first tcp socket of
-  `gimbal-controller`)
+- sockets to tag: `api`, kept at explicit `port: 5001` (external clients
+  depend on it) → `transport: "http"` (it's the gimbal's HTTP API)
 
 The old pinned versions in `config/requirements.txt` (`opencv-python-headless`,
 `smbus2`, `spidev`, `gpiozero`, …) belonged to these components — move them
@@ -760,55 +806,16 @@ into the corresponding module manifests, not the base install.
 
 ---
 
-## Making a program copyable
-
-Making an existing program copyable is a small manifest edit plus a
-reinstall. Modules with no `instance` keys need **no changes at all** — they
-keep working unchanged, and even for the module you change, the **base
-program keeps its exact name and behaviour** (copies are added on top).
-
-1. **Add the `instance` key to the program entry** naming the argument that
-   identifies a copy, and make sure that argument exists in `arguments`
-   (type `str` or `int`). Its `default` is what the base program runs with:
-
-   ```json
-   "programs": [
-     { "name": "serial_daemon",
-       "command": "{venv_python} {module_dir}/daemon.py --port {arg:port}",
-       "instance": { "argument": "port", "label": "Serial port" } }
-   ]
-   ```
-
-2. **Omit `port` from TCP sockets the program references** (already the
-   convention) so each copy gets its own pool-allocated port. An explicit
-   `port` is honoured for the base program only; copies always allocate.
-3. **Unix sockets need no changes**: the base program keeps the declared (or
-   generated) path, and copies always get their own generated paths
-   (`/tmp/eventide-<module>-<cid>-<socket>.sock`). Programs keep referencing
-   `{socket:<name>}` either way.
-4. **Keep the placeholders as they are** — `{arg:...}`, `{socket:...}`,
-   `{recordings_subdir}` all resolve per copy. If the program's command uses
-   `{recordings_subdir}`, each copy records to `<subdir>-<cid>` (with one
-   PLAYBACK inner tab per copy).
-5. **Uninstall and reinstall the module** from the MODULES tab. The base
-   program name is unchanged, so nothing external needs to move; new copies
-   appear as `<program>-<cid>` in supervisor (and their logs at
-   `/var/log/supervisor/<program>-<cid>.log`).
-
-Validation will tell you if something's off: an `instance.argument` that
-isn't a declared `str`/`int` argument fails the install with a clear message.
-
----
-
 ## Migrating from a pre-module install
 
-On a payload that already runs the old monolithic setup:
+On a payload that already runs the old monolithic (pre-module) setup:
 
 1. Remove the stale supervisor configs:
    `sudo rm /etc/supervisor/conf.d/supervisor.conf /etc/supervisor/conf.d/supervisord.conf`
    (whichever exists), then `sudo supervisorctl reread && sudo supervisorctl update`.
 2. Run the new `install.sh` (safe to re-run; it installs the base only).
-3. Reinstall each component as a module from the dashboard's MODULES tab.
+3. Reinstall each component as a module from the dashboard's MODULES tab,
+   then place and wire its programs as nodes in the GRAPH tab and SUBMIT.
 
 Fresh installs need no migration — `install.sh` removes the stale files
 itself.
@@ -822,17 +829,29 @@ itself.
   `git@github.com:…` automatically).
 - **Job failed during `building`** — read the job log in the MODULES tab; the
   failing command's stdout/stderr is captured there.
-- **Install `done` but a program is not RUNNING** — check the job `warnings`
-  and the SUPERVISOR tab; hardware-dependent programs legitimately fail on
-  bench installs without their devices attached.
-- **"socket port 8081 already used by module X"** — two modules explicitly
-  request the same TCP port; drop the `port` field from one manifest and let
-  eventide allocate a free one from its pool.
+- **A module installed fine but nothing's running** — this is normal now:
+  install only adds programs to the GRAPH tab's palette. Place a node for
+  each program you want running, wire it up, and SUBMIT.
+- **A node is not RUNNING after SUBMIT** — check `GET /api/graph/status` /
+  the GRAPH tab's per-node status badge; hardware-dependent programs
+  legitimately fail without their devices attached, and a persistent
+  amber warning badge means an unconnected, non-`capped` stream socket
+  (wire it up, or mark it `capped` in the manifest if the producer is
+  already safe to leave unconnected).
+- **"socket port 8081 already used by module X"** — two program templates
+  explicitly request the same TCP/HTTP port; drop the `port` field from one
+  socket and let eventide pool-allocate it.
 - **"no free port in pool 8100-8199 for socket …"** — the allocation pool is
   exhausted (or everything in it is bound); widen it with the backend's
   `--port-pool start-end` flag.
-- **Supervisor didn't pick up a change** — `sudo supervisorctl reread &&
-  sudo supervisorctl update`, then check `/etc/supervisor/conf.d/` for the
-  generated `module-<name>.conf`.
-- **Full install log** — the job log is kept in memory by `eventide.py`;
-  journald has the backend's own output: `journalctl -u eventide.service`.
+- **Submitting a graph fails validation** — the error lists every problem
+  (`errors: [...]`); the most common are a transport/pattern/stream_kind
+  mismatch on an edge, or a stream output with more than one connected
+  edge (insert a Stream Fan-out node instead — see
+  [docs/GRAPH_CONNECTIONS.md](GRAPH_CONNECTIONS.md#the-stream-fan-out-node)).
+- **Supervisor didn't pick up a submitted graph** — `sudo supervisorctl
+  reread && sudo supervisorctl update`, then check
+  `/etc/supervisor/conf.d/eventide-graph.conf` was actually rewritten.
+- **Full install/import log** — job logs are kept in memory by
+  `eventide.py`; journald has the backend's own output:
+  `journalctl -u eventide.service`.

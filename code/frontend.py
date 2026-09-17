@@ -60,6 +60,22 @@ def index():
     return send_file(html_path, mimetype="text/html")
 
 
+# Vendored third-party JS/CSS the dashboard needs (leaflet, gridstack,
+# litegraph.js) — served locally rather than from a CDN, so the dashboard
+# works with no internet access. Since this server (not eventide.py) is
+# what usually serves the HTML page itself, it needs its own copy of this
+# route too — see code/vendor/, alongside dashboard.html in this repo.
+@app.route("/vendor/<path:relpath>")
+def vendor_file(relpath):
+    vendor_dir = Path(cfg.get("vendor_dir") or Path(__file__).resolve().with_name("vendor")).resolve()
+    filepath = (vendor_dir / relpath).resolve()
+    if not filepath.is_relative_to(vendor_dir):
+        abort(400)
+    if not filepath.is_file():
+        abort(404)
+    return send_file(filepath)
+
+
 # ── OSM tile proxy ────────────────────────────────────────────────────────────
 
 @app.route("/tiles/<int:z>/<int:x>/<int:y>.png")
@@ -116,6 +132,11 @@ def main():
         "--html-file", default="dashboard.html",
         help="Path to the dashboard HTML file (default: dashboard.html alongside this script)",
     )
+    parser.add_argument(
+        "--vendor-dir", default=str(Path(__file__).resolve().with_name("vendor")),
+        help="Directory of vendored dashboard JS/CSS (leaflet, gridstack, litegraph.js), "
+             "served at /vendor/... (default: vendor/ alongside this script)",
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
@@ -123,6 +144,7 @@ def main():
     cfg.update(vars(args))
 
     print(f"[frontend] HTML file:   {args.html_file}")
+    print(f"[frontend] Vendor dir:  {args.vendor_dir}")
     print(f"[frontend] Tile proxy:  http://{args.host}:{args.port}/tiles/<z>/<x>/<y>.png  →  {OSM_BASE}")
     print(f"[frontend] Serving at:  http://{args.host}:{args.port}")
 

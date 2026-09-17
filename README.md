@@ -69,8 +69,8 @@ environment variables set before running the script:
   full dashboard or the touchscreen-optimised `/kiosk` UI) instead of a login
   prompt, via `config/setup-display.sh`. Override any of its display/touch
   settings (`KIOSK_URL`, `HDMI_OUTPUT`, `ROTATION`, `SCALE_FACTOR`,
-  `WINDOW_SIZE`, `TOUCH_DEVICE`, `CHROMIUM_BIN`, `FORCE_MODELINE`) the same
-  way, e.g.:
+  `WINDOW_SIZE`, `TOUCH_DEVICE`, `CHROMIUM_BIN`, `FORCE_MODELINE`,
+  `FORCE_KMSDEV`) the same way, e.g.:
 
   ```bash
   SETUP_KIOSK_DISPLAY=1 KIOSK_URL=http://localhost/kiosk TOUCH_DEVICE="wch.cn USB2IIC_CTP_CONTROL" ./install.sh
@@ -82,6 +82,11 @@ environment variables set before running the script:
   `America/New_York`) to override the `Australia/Sydney` default. Like the
   recordings directory, this can also be changed later from the dashboard
   without re-running the installer.
+- **USB-C host mode (Raspberry Pi 5 only)** — set `ENABLE_USBC_HOST=1` to
+  configure the Pi 5's USB-C port as a functioning USB 2.0 host port
+  (`dtoverlay=dwc2,dr_mode=host`), alongside its normal role as power input —
+  the two coexist since power negotiation goes through a separate PMIC, not
+  the dwc2 data role. Off by default.
 
 ## The modular control panel
 

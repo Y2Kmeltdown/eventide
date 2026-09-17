@@ -272,6 +272,11 @@ let lensState = { mode: null, iris: null, ircut: null };   // motorized-lens: no
                                                // (zoom/focus are numeric — they live in cameraFieldValues below)
 let recSources = {};   // camId -> recordings-API source name (e.g. "evk", "basler")
 let recordStartedAt = null;
+// Only hide "not installed" UI once we've actually heard back from /api/modules
+// at least once — camInfo starts out all-null before the first fetch resolves,
+// and a failed fetch keeps the last-known camInfo rather than nulling it out
+// (see the catch block in loadModules), so this only flips true on real data.
+let modulesEverLoaded = false;
 
 let duration = parseInt(localStorage.getItem('eventide-kiosk-duration') || '30', 10);
 if (!Number.isFinite(duration) || duration < 0) duration = 30;
@@ -328,8 +333,10 @@ async function loadModules() {
       mod: lensMod.name,
       settingsForm: { socket: lensForm.socket, get: lensForm.get, put: lensForm.put, method: lensForm.method || 'POST' },
     } : null;
+    modulesEverLoaded = true;
   } catch { /* keep last-known camInfo; retry on next poll */ }
   applyFeeds();
+  applyRecTabVisibility();
 
   try {
     const r = await fetch('/api/recordings');
@@ -362,6 +369,40 @@ function setFeed(imgEl, offEl, info) {
 function applyFeeds() {
   setFeed(document.getElementById('feed-evk'),    document.getElementById('off-evk'),    camInfo.evk);
   setFeed(document.getElementById('feed-basler'), document.getElementById('off-basler'), camInfo.basler);
+
+  if (!modulesEverLoaded) return;
+  const wrapEvk    = document.getElementById('wrap-evk');
+  const wrapBasler = document.getElementById('wrap-basler');
+  wrapEvk.hidden    = !camInfo.evk;
+  wrapBasler.hidden = !camInfo.basler;
+
+  // Whichever wrap is "main" might have just been hidden (its module got
+  // uninstalled) — swap it with the other one if that one's still visible,
+  // rather than leaving the stage showing nothing at all.
+  const mainWrap = document.querySelector('.feed-wrap.main');
+  const pipWrap  = document.querySelector('.feed-wrap.pip');
+  if (mainWrap && mainWrap.hidden && pipWrap && !pipWrap.hidden) {
+    mainWrap.classList.remove('main'); mainWrap.classList.add('pip');
+    pipWrap.classList.remove('pip');   pipWrap.classList.add('main');
+  }
+}
+
+function applyRecTabVisibility() {
+  if (!modulesEverLoaded) return;
+  let activeStillVisible = false;
+  for (const camId of Object.keys(CAMS)) {
+    const tab = document.querySelector(`.rec-tab[data-src="${camId}"]`);
+    if (!tab) continue;
+    tab.hidden = !camInfo[camId];
+    if (camId === activeRecTab && camInfo[camId]) activeStillVisible = true;
+  }
+  if (!activeStillVisible) {
+    const nextTab = document.querySelector('.rec-tab:not([hidden])');
+    if (!nextTab) return;
+    activeRecTab = nextTab.dataset.src;
+    document.querySelectorAll('.rec-tab').forEach(t => t.classList.toggle('active', t === nextTab));
+    if (drawers.recordings.el.classList.contains('open')) loadRecList();
+  }
 }
 
 // ── Camera settings (left drawer) — EVK biases + Basler camera settings +
@@ -403,8 +444,18 @@ function lensToggleLabel(key, val) {
 
 function renderCameraFieldRows() {
   const container = document.getElementById('camera-fields');
+  // Before the first successful /api/modules load, treat every module as
+  // "installed" (unknown, not confirmed absent) so the drawer doesn't flash
+  // empty then populate — same reasoning as applyFeeds()/applyRecTabVisibility().
+  const installed = {
+    evk:    !modulesEverLoaded || !!camInfo.evk,
+    basler: !modulesEverLoaded || !!camInfo.basler,
+    lens:   !modulesEverLoaded || !!camInfo.lens,
+  };
+  const fields = CAMERA_FIELDS.filter(f => installed[f.cam]);
+
   let html = '', lastGroup = null;
-  for (const f of CAMERA_FIELDS) {
+  for (const f of fields) {
     if (f.group !== lastGroup) {
       html += `<div class="section-title">${f.group}</div>`;
       if (f.group === 'LENS CONTROL') html += lensModeRowHtml();
@@ -419,9 +470,14 @@ function renderCameraFieldRows() {
         <button class="mini-stepper" data-field="${id}" data-delta="${f.step}">+</button>
       </div>`;
   }
-  html += `
-    <button class="keypad-toggle-btn" id="lens-ircut-toggle">IR-CUT FILTER: ${lensToggleLabel('ircut', lensState.ircut)}</button>
-    <button class="keypad-toggle-btn" id="lens-iris-toggle">IRIS: ${lensToggleLabel('iris', lensState.iris)}</button>`;
+  if (installed.lens) {
+    html += `
+      <button class="keypad-toggle-btn" id="lens-ircut-toggle">IR-CUT FILTER: ${lensToggleLabel('ircut', lensState.ircut)}</button>
+      <button class="keypad-toggle-btn" id="lens-iris-toggle">IRIS: ${lensToggleLabel('iris', lensState.iris)}</button>`;
+  }
+  if (!fields.length) {
+    html += `<div class="rec-empty">No camera or lens modules installed.</div>`;
+  }
   container.innerHTML = html;
 
   container.querySelectorAll('.mini-stepper').forEach(btn => {
@@ -434,8 +490,8 @@ function renderCameraFieldRows() {
   });
   container.querySelectorAll('.mode-chip').forEach(btn =>
     btn.addEventListener('click', () => setLensMode(btn.dataset.mode)));
-  document.getElementById('lens-ircut-toggle').addEventListener('click', () => toggleLensField('ircut'));
-  document.getElementById('lens-iris-toggle').addEventListener('click', () => toggleLensField('iris'));
+  document.getElementById('lens-ircut-toggle')?.addEventListener('click', () => toggleLensField('ircut'));
+  document.getElementById('lens-iris-toggle')?.addEventListener('click', () => toggleLensField('iris'));
 }
 
 async function loadCameraFields() {

@@ -47,6 +47,20 @@ FORCE_MODELINE="${FORCE_MODELINE:-}"         # leave blank for a normal display 
                                               # declared sync range. Format: "<mode-name> <modeline
                                               # params>", e.g.
                                               # "480x640_60 32.00 480 490 500 570 640 660 680 760 -hsync -vsync"
+FORCE_KMSDEV="${FORCE_KMSDEV:-}"             # leave blank normally. Only set this if Xorg fails with
+                                              # "(EE) No devices detected." / "no screens found" even
+                                              # though the console/tty clearly shows a working display —
+                                              # seen on Raspberry Pi 5 (BCM2712), which exposes v3d (its
+                                              # 3D-only GPU, no display outputs) as its own separate DRM
+                                              # card device alongside vc4 (the real display device); with
+                                              # no PCI bus to rank them, Xorg's "which GPU is primary"
+                                              # guess can land on v3d instead. Check the Xorg log
+                                              # (~/.local/share/xorg/Xorg.0.log) for lines like
+                                              # "Adding drm device (/dev/dri/cardN)" — the one whose
+                                              # "Platform probe" path does NOT contain "v3d" is the one to
+                                              # set here, e.g. FORCE_KMSDEV=/dev/dri/card1. Device numbering
+                                              # comes from device-tree probe order, so it's stable across
+                                              # reboots on a given board but can differ between boards/images.
 # ---- end configuration ----
 
 # Coordinate Transformation Matrix per rotation direction (only used if TOUCH_DEVICE is set)
@@ -59,6 +73,18 @@ case "$ROTATION" in
 esac
 
 echo "== Eventide kiosk setup for user: $KIOSK_USER =="
+
+# KIOSK_USER defaults to "eventide", which usually isn't the account this
+# script is actually being run as (e.g. a stock Raspberry Pi OS install's
+# default user is "pi") — check now and fail with a clear message, rather
+# than a confusing "~eventide/.bash_profile: No such file or directory"
+# later at step 4 once ~$KIOSK_USER fails to expand for a user that doesn't
+# exist.
+id "$KIOSK_USER" > /dev/null 2>&1 || {
+    echo "ERROR: user '$KIOSK_USER' does not exist on this system." >&2
+    echo "Set KIOSK_USER to your actual login user, e.g.: KIOSK_USER=pi ./setup-display.sh" >&2
+    exit 1
+}
 
 # ---- 1. Install required packages ----
 echo "-- Installing packages --"
@@ -88,6 +114,24 @@ EndSection
 EOF
 else
   echo "-- Skipping Xorg monitor override (FORCE_MODELINE not set; using normal EDID detection) --"
+fi
+
+# ---- 2b. Xorg GPU device pin (opt-in) ----
+# Only needed when Xorg's automatic "which GPU is primary" guess picks the
+# wrong DRM device (see FORCE_KMSDEV above for the symptom and how to find
+# the right value). Skipped by default.
+if [ -n "$FORCE_KMSDEV" ]; then
+  echo "-- Writing Xorg GPU device override ($FORCE_KMSDEV) --"
+  sudo mkdir -p /etc/X11/xorg.conf.d
+  sudo tee /etc/X11/xorg.conf.d/20-modesetting.conf > /dev/null << EOF
+Section "Device"
+    Identifier "GPU"
+    Driver "modesetting"
+    Option "kmsdev" "$FORCE_KMSDEV"
+EndSection
+EOF
+else
+  echo "-- Skipping Xorg GPU device override (FORCE_KMSDEV not set; using normal GPU auto-detection) --"
 fi
 
 # ---- 3. Console autologin on tty1 ----

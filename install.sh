@@ -46,10 +46,18 @@ RECORDINGS_SD_MOUNTPOINT="${RECORDINGS_SD_MOUNTPOINT:-/media/eventide}"
 # headless or only ever accessed remotely). When set, config/setup-display.sh
 # runs with its own defaults (see that file's CONFIGURATION block) — override
 # any of KIOSK_URL, HDMI_OUTPUT, ROTATION, SCALE_FACTOR, WINDOW_SIZE,
-# TOUCH_DEVICE, CHROMIUM_BIN, FORCE_MODELINE the same way, as environment
-# variables set before running this installer, e.g.:
+# TOUCH_DEVICE, CHROMIUM_BIN, FORCE_MODELINE, FORCE_KMSDEV the same way, as
+# environment variables set before running this installer, e.g.:
 #   SETUP_KIOSK_DISPLAY=1 KIOSK_URL=http://localhost/kiosk TOUCH_DEVICE="wch.cn USB2IIC_CTP_CONTROL" ./install.sh
 SETUP_KIOSK_DISPLAY="${SETUP_KIOSK_DISPLAY:-}"
+
+# Optional (Raspberry Pi 5 only): configure the USB-C port as a functioning
+# USB 2.0 host port (dtoverlay=dwc2,dr_mode=host), in addition to its normal
+# role as power input — the two coexist since power negotiation goes through
+# a separate PMIC, not the dwc2 data role. Off by default: most installs
+# don't need it, and it's specific to the Pi 5's USB-C controller (harmless
+# to leave set on an older Pi, but it won't do anything there either).
+ENABLE_USBC_HOST="${ENABLE_USBC_HOST:-}"
 
 step() { echo; echo "==> $*"; }
 fail() { echo; echo "[FAIL] $*" >&2; echo "[FAIL] full log: $LOG_FILE" >&2; exit 1; }
@@ -168,6 +176,13 @@ os_configure_raspbian() {
     sudo sed -i 's/dtparam=i2c_arm=on/dtparam=i2c_arm=on,i2c_arm_baudrate=400000/g' "$boot_config"
     echo "usb_max_current_enable=1" | sudo tee -a "$boot_config" > /dev/null
     echo "dtoverlay=i2c-rtc,ds3231" | sudo tee -a "$boot_config" > /dev/null
+
+    if [ -n "$ENABLE_USBC_HOST" ]; then
+        echo "[INFO] enabling USB-C port as a USB 2.0 host port (dtoverlay=dwc2,dr_mode=host)"
+        echo "dtoverlay=dwc2,dr_mode=host" | sudo tee -a "$boot_config" > /dev/null
+    else
+        echo "[INFO] ENABLE_USBC_HOST not set — USB-C port stays power-input-only"
+    fi
 
     # Pi hardware watchdog (used by watchdog.service).
     echo "RuntimeWatchdogSec=15" | sudo tee -a /etc/systemd/system.conf > /dev/null
@@ -508,6 +523,9 @@ if [ -n "$SETUP_KIOSK_DISPLAY" ]; then
 fi
 if [ "$OS" = "cubie" ]; then
     echo "Cubie A7Z UART/I2C/RTC overlays installed — take effect after this reboot. Verify with the commands config/setup_cubie_a7z_ports.sh printed above."
+fi
+if [ -n "$ENABLE_USBC_HOST" ]; then
+    echo "USB-C port configured as a USB 2.0 host port — takes effect after this reboot."
 fi
 echo "Rebooting in 10 seconds (Ctrl-C to cancel)."
 sleep 10

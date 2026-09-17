@@ -6,6 +6,13 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/usr/local/eventide
+# The board id on the line below is filled in by install_watchdog_service()
+# in install.sh (see code/watchdog.py's BOARDS dict for what it selects).
+Environment=EVENTIDE_BOARD=BOARD_PLACEHOLDER
+# Python fully-buffers stdout when it isn't a TTY (i.e. always, under
+# systemd) — without this, the init/feed log lines can sit unflushed for a
+# long time before ever reaching the journal.
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /usr/local/eventide/code/watchdog.py
 Restart=on-failure
 RestartSec=5s

@@ -69,6 +69,23 @@ install_service() {
     echo "[OK] $name.service installed and enabled"
 }
 
+# watchdog.service is shared by every board (code/watchdog.py is one script
+# for all of them, see its own header) — the only per-board difference is
+# which BOARDS entry it should use, passed in via EVENTIDE_BOARD. Rather
+# than templating $EVENTIDE_DIR-style with sed on the checked-out file, this
+# stamps the value into the copy under /lib/systemd/system at install time.
+install_watchdog_service() {
+    local board=$1
+    check_file "/usr/local/eventide/config/watchdog.service"
+    sudo sed "s/BOARD_PLACEHOLDER/$board/" /usr/local/eventide/config/watchdog.service \
+        | sudo tee /lib/systemd/system/watchdog.service > /dev/null
+    sudo chmod 644 /lib/systemd/system/watchdog.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable watchdog.service
+    INSTALLED_SERVICES+=("watchdog")
+    echo "[OK] watchdog.service installed and enabled (board=$board)"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════
 # OS SUPPORT
 # ───────────────────────────────────────────────────────────────────────────
@@ -90,20 +107,31 @@ install_service() {
 # Overridable for testing:  OS_RELEASE_FILE=/tmp/fake-os-release ./install.sh
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 DEVICE_TREE_MODEL="${DEVICE_TREE_MODEL:-/proc/device-tree/model}"
+ARMBIAN_RELEASE_FILE="${ARMBIAN_RELEASE_FILE:-/etc/armbian-release}"
 
 detect_os() {
-    # 1. Identify ARM boards from the device-tree model. This must come FIRST:
-    #    newer Raspberry Pi OS releases report ID=debian in os-release, so the
-    #    ID check alone can't tell a Pi from a generic Debian machine. The
-    #    device-tree file only exists on ARM boards, so x86/other Debian and
-    #    Ubuntu systems fall through to the ID check below.
+    # 1. Identify the Radxa Cubie A7Z specifically via Armbian's own board-id
+    #    file — the same check config/setup_cubie_a7z_ports.sh uses itself.
+    #    This must come before the device-tree/os-release checks below:
+    #    Armbian on this SoC reports a generic model string and ID=debian
+    #    like several other boards, so neither check on its own can tell a
+    #    Cubie A7Z apart from them.
+    if [ -r "$ARMBIAN_RELEASE_FILE" ] && grep -q '^BOARD=cubie-a7z$' "$ARMBIAN_RELEASE_FILE"; then
+        echo "cubie"; return
+    fi
+    # 2. Identify other ARM boards from the device-tree model. This must come
+    #    before the os-release ID check: newer Raspberry Pi OS releases
+    #    report ID=debian in os-release, so the ID check alone can't tell a
+    #    Pi from a generic Debian machine. The device-tree file only exists
+    #    on ARM boards, so x86/other Debian and Ubuntu systems fall through
+    #    to the ID check below.
     if [ -r "$DEVICE_TREE_MODEL" ]; then
         case "$(tr -d '\0' < "$DEVICE_TREE_MODEL")" in
             *"Raspberry Pi"*) echo "raspbian"; return ;;
             *"Orange Pi"*)    echo "orangepi"; return ;;
         esac
     fi
-    # 2. Identify from the os-release ID.
+    # 3. Identify from the os-release ID.
     local id=""
     if [ -r "$OS_RELEASE_FILE" ]; then
         id=$(bash -c ". '$OS_RELEASE_FILE'; echo \"\${ID:-}\"")
@@ -146,12 +174,9 @@ os_configure_raspbian() {
 }
 
 os_services_raspbian() {
-    # Hardware-specific services: Pi watchdog + DS3231 I2C RTC.
-    # watchdog.service always execs code/watchdog.py — select the Pi's
-    # gpiozero-based implementation before installing it (see
-    # code/watchdog_raspbian.py).
-    cp /usr/local/eventide/code/watchdog_raspbian.py /usr/local/eventide/code/watchdog.py
-    install_service watchdog
+    # Hardware-specific services: watchdog (code/watchdog.py, "raspbian"
+    # entry in its BOARDS dict) + DS3231 I2C RTC.
+    install_watchdog_service raspbian
     install_service rtc
 }
 
@@ -212,21 +237,55 @@ DTS
 
 os_packages_orangepi() {
     sudo apt-get install -y gpiod libgpiod-dev python3-dev
-    sudo pip3 install gpiod smbus2 --break-system-packages
+    # `python3 -m pip install` rather than bare `pip3 install` — confirmed
+    # live that the latter can silently land in the invoking user's
+    # ~/.local site-packages even under sudo (root then can't import it;
+    # watchdog.service runs as root). See the same fix in
+    # config/setup_cubie_a7z_ports.sh.
+    sudo python3 -m pip install gpiod smbus2 --break-system-packages
 }
 
 os_services_orangepi() {
-    # watchdog.service always execs code/watchdog.py — select the Orange
-    # Pi's libgpiod-based implementation before installing it (see
-    # code/watchdog_orangepi.py).
-    cp /usr/local/eventide/code/watchdog_orangepi.py /usr/local/eventide/code/watchdog.py
-    install_service watchdog
+    # Hardware-specific services: watchdog (code/watchdog.py, "orangepi"
+    # entry in its BOARDS dict) + DS1307-compatible RTC.
+    install_watchdog_service orangepi
 
     # The RTC (DS1307-compatible, 0x68 on i2c-2) isn't bound by a
     # device-tree overlay like the Pi's, so bind it explicitly before the
     # generic rtc.service (hwclock -s -f /dev/rtc1) can find it.
     install_service orangepi-i2c-rtc
     install_service rtc
+}
+
+# ── Radxa Cubie A7Z (Allwinner A733 / sun60iw2, Armbian) ────────────────────
+# UART/I2C pin routing and DS3231 RTC bring-up for this exact board are
+# fully handled by the standalone, already-hardware-verified
+# config/setup_cubie_a7z_ports.sh (derived and verified against real
+# hardware — see that script's own header for details and re-verification
+# notes) rather than duplicated inline here; this hook just runs it
+# non-interactively (-y). No RTC install_service() call needed — the ports
+# script installs its own ds3231-hwclock.service directly.
+os_configure_cubie() {
+    echo "[INFO] running Cubie A7Z port/RTC bring-up (config/setup_cubie_a7z_ports.sh)"
+    sudo bash config/setup_cubie_a7z_ports.sh -y
+}
+
+os_packages_cubie() {
+    # smbus2 for the watchdog IC's I2C registers (code/watchdog.py's
+    # "cubie" BOARDS entry) — its GPIO feed pin uses python-periphery
+    # instead of gpiod, which setup_cubie_a7z_ports.sh already installs
+    # (in os_configure_cubie above, which runs before this hook).
+    # `python3 -m pip install` rather than bare `pip3 install` — see the
+    # note on the same fix in os_packages_orangepi above.
+    sudo python3 -m pip install smbus2 --break-system-packages
+}
+
+os_services_cubie() {
+    # Watchdog IC confirmed present on TWI7 (i2c bus 7) via a register-read
+    # probe, feed pin confirmed as pin 13 / PL6 (gpiochip1 line 6) via the
+    # kernel's own pinctrl debugfs table — see the "cubie" entry's comment
+    # in code/watchdog.py's BOARDS dict for how these were verified.
+    install_watchdog_service cubie
 }
 
 ## PREFLIGHT
@@ -446,6 +505,9 @@ if [ -n "$RECORDINGS_SD_LABEL" ]; then
 fi
 if [ -n "$SETUP_KIOSK_DISPLAY" ]; then
     echo "Touchscreen kiosk configured — will boot straight into it after this reboot. Re-run config/setup-display.sh any time to adjust display/touch settings."
+fi
+if [ "$OS" = "cubie" ]; then
+    echo "Cubie A7Z UART/I2C/RTC overlays installed — take effect after this reboot. Verify with the commands config/setup_cubie_a7z_ports.sh printed above."
 fi
 echo "Rebooting in 10 seconds (Ctrl-C to cancel)."
 sleep 10

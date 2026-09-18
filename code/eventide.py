@@ -218,6 +218,14 @@ DEFAULT_SETTINGS = {
     # dry run never requires opting in first.
     "retention_days": None,
     "retention_enabled": False,
+    # Hardware watchdog (I2C, see _watchdog_i2c_write/_push_watchdog_config_to_mcu
+    # below) — the Pi-side values here are the durable source of truth; the MCU
+    # itself has no flash/EEPROM and forgets everything on a real power loss, so
+    # these get re-pushed to it over I2C on every backend startup.
+    "watchdog_enabled": True,
+    "watchdog_wait_secs": 60,
+    "watchdog_cycle_secs": 1,
+    "watchdog_recovery_secs": 120,
 }
 
 _settings: dict = {}
@@ -925,6 +933,12 @@ def api_settings_post():
         if not isinstance(days, (int, float)) or isinstance(days, bool) or days <= 0:
             return jsonify({"error": "retention_days must be a positive number, or null to disable"}), 400
 
+    for key in ("watchdog_wait_secs", "watchdog_cycle_secs", "watchdog_recovery_secs"):
+        if key in data:
+            val = data[key]
+            if not isinstance(val, (int, float)) or isinstance(val, bool) or val <= 0:
+                return jsonify({"error": f"{key} must be a positive number"}), 400
+
     warnings: list[str] = []
     if new_hostname is not None and new_hostname != current_hostname():
         ok, msg = _set_hostname(new_hostname)
@@ -955,6 +969,12 @@ def api_settings_post():
                 resp["error"] = f"settings saved, but failed to redirect modules: {exc}"
                 return jsonify(resp), 500
 
+        changed_wd_keys = _WATCHDOG_KEYS.intersection(data)
+        if changed_wd_keys:
+            wd_warning = _push_watchdog_config_to_mcu(changed_wd_keys)
+            if wd_warning:
+                warnings.append(wd_warning)
+
         resp = dict(_settings)
         resp["_modules_redirected"] = redirected
         resp["hostname"] = current_hostname()
@@ -962,6 +982,209 @@ def api_settings_post():
         if warnings:
             resp["_warnings"] = warnings
         return jsonify(resp)
+
+
+# ── Hardware watchdog (I2C) ─────────────────────────────────────────────────────
+# The watchdog board is a CH32V003 MCU acting as an I2C slave (address 0x67,
+# register map shared with code/watchdog.py and the MCU firmware's main.c —
+# keep all three in sync). watchdog.py only touches I2C once at its own
+# startup (arm + set timeout) then spends the rest of its life toggling a
+# GPIO feed pin, so occasional reads/writes from this process don't meaningfully
+# contend with it. The MCU has no flash/EEPROM: it forgets everything on a
+# real power loss, so _push_watchdog_config_to_mcu() re-applies the Pi's saved
+# settings every time this backend starts (see main()), not just when the
+# user changes them from the dashboard.
+
+_WATCHDOG_I2C_ADDR = 0x67
+_WATCHDOG_REG_ON_OFF        = 0x01
+_WATCHDOG_REG_TIME          = 0x02
+_WATCHDOG_REG_STATE         = 0x04
+_WATCHDOG_REG_FW_VERSION    = 0x05
+_WATCHDOG_REG_CYCLE_TIME    = 0x06
+_WATCHDOG_REG_RECOVERY_TIME = 0x07
+_WATCHDOG_VAL_ON  = 0x03
+_WATCHDOG_VAL_OFF = 0x02
+_WATCHDOG_FW_VERSION = 0x01
+
+# i2c_bus per board — mirrors code/watchdog.py's BOARDS dict (that file is the
+# hardware-verified source of truth; only the bus number is duplicated here,
+# not the GPIO feed-pin wiring this process has no reason to touch).
+_WATCHDOG_I2C_BUS_BY_BOARD = {"raspbian": 1, "orangepi": 2, "cubie": 7}
+
+_WATCHDOG_KEYS = frozenset((
+    "watchdog_enabled", "watchdog_wait_secs", "watchdog_cycle_secs", "watchdog_recovery_secs",
+))
+
+
+def _watchdog_i2c_bus():
+    """The smbus2.SMBus for this board, or raises RuntimeError/OSError with a
+    clear reason. Opened fresh per call — this is a low-frequency control
+    path (settings changes + once at startup), not worth holding a handle."""
+    board = os.environ.get("EVENTIDE_BOARD")
+    if not board or board not in _WATCHDOG_I2C_BUS_BY_BOARD:
+        raise RuntimeError(f"no I2C bus known for EVENTIDE_BOARD={board!r}")
+    try:
+        import smbus2
+    except ImportError as exc:
+        raise RuntimeError("smbus2 not installed") from exc
+    return smbus2.SMBus(_WATCHDOG_I2C_BUS_BY_BOARD[board])
+
+
+def _watchdog_i2c_write(reg: int, value: int, width: int = 1) -> None:
+    bus = _watchdog_i2c_bus()
+    try:
+        if width == 1:
+            bus.write_i2c_block_data(_WATCHDOG_I2C_ADDR, reg, [value & 0xFF])
+        else:
+            bus.write_i2c_block_data(_WATCHDOG_I2C_ADDR, reg, [value & 0xFF, (value >> 8) & 0xFF])
+    finally:
+        bus.close()
+
+
+def _watchdog_i2c_read(reg: int, width: int = 1) -> int:
+    bus = _watchdog_i2c_bus()
+    try:
+        data = bus.read_i2c_block_data(_WATCHDOG_I2C_ADDR, reg, width)
+        return data[0] if width == 1 else data[0] + (data[1] << 8)
+    finally:
+        bus.close()
+
+
+def _watchdog_mcu_reachable() -> bool:
+    try:
+        return _watchdog_i2c_read(_WATCHDOG_REG_FW_VERSION) == _WATCHDOG_FW_VERSION
+    except (RuntimeError, OSError):
+        return False
+
+
+def _push_watchdog_config_to_mcu(keys=None) -> str | None:
+    """Write the given (default: all) watchdog_* settings to the MCU over
+    I2C. Returns None on success, or a warning string if the MCU couldn't be
+    reached — the setting stays persisted in settings.json regardless and
+    takes effect next time the MCU is reachable."""
+    keys = keys or _WATCHDOG_KEYS
+    try:
+        if "watchdog_enabled" in keys:
+            _watchdog_i2c_write(_WATCHDOG_REG_ON_OFF,
+                                 _WATCHDOG_VAL_ON if _settings["watchdog_enabled"] else _WATCHDOG_VAL_OFF)
+        if "watchdog_wait_secs" in keys:
+            _watchdog_i2c_write(_WATCHDOG_REG_TIME, int(_settings["watchdog_wait_secs"]), width=2)
+        if "watchdog_cycle_secs" in keys:
+            _watchdog_i2c_write(_WATCHDOG_REG_CYCLE_TIME, int(_settings["watchdog_cycle_secs"]), width=2)
+        if "watchdog_recovery_secs" in keys:
+            _watchdog_i2c_write(_WATCHDOG_REG_RECOVERY_TIME, int(_settings["watchdog_recovery_secs"]), width=2)
+        return None
+    except (RuntimeError, OSError) as exc:
+        return f"could not reach watchdog MCU over I2C: {exc}"
+
+
+# Read-only: reports live MCU reachability alongside the persisted settings.
+# Setting changes themselves go through the generic POST /api/settings (see
+# the watchdog validation block + _push_watchdog_config_to_mcu call there) —
+# the watchdog fields need no special-cased apply route, only this extra
+# read for the SETTINGS tab's status badge.
+@app.route("/api/watchdog/config")
+def api_watchdog_config_get():
+    resp = {k: _settings.get(k, DEFAULT_SETTINGS[k]) for k in _WATCHDOG_KEYS}
+    resp["mcu_reachable"] = _watchdog_mcu_reachable()
+    return jsonify(resp)
+
+
+# ── Tailscale ─────────────────────────────────────────────────────────────────
+# install.sh installs and enables tailscaled but deliberately never runs
+# `tailscale up` — connecting is entirely a SETTINGS-tab action here, since no
+# auth key exists at install time. The auth key is only ever used once (in
+# api_tailscale_connect) and never persisted anywhere by this process —
+# tailscaled's own state under /var/lib/tailscale is what survives reboots,
+# the same way the SSH deploy key flow never re-derives its key from
+# settings.json.
+
+def _tailscale_status() -> dict:
+    if not shutil.which("tailscale"):
+        return {"installed": False, "connected": False, "ip": None, "hostname": None}
+    try:
+        proc = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        data = json.loads(proc.stdout) if proc.stdout else {}
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
+        return {"installed": True, "connected": False, "ip": None, "hostname": None}
+
+    self_info = data.get("Self") or {}
+    ips = self_info.get("TailscaleIPs") or []
+    online = bool(self_info.get("Online")) or bool(ips)
+    return {
+        "installed": True,
+        "connected": online,
+        "ip": ips[0] if ips else None,
+        "hostname": self_info.get("DNSName", "").rstrip(".") or None,
+    }
+
+
+@app.route("/api/tailscale/status")
+def api_tailscale_status():
+    return jsonify(_tailscale_status())
+
+
+@app.route("/api/tailscale/connect", methods=["POST"])
+def api_tailscale_connect():
+    if not shutil.which("tailscale"):
+        return jsonify({"error": "tailscale is not installed on this device"}), 500
+    data = request.get_json(silent=True) or {}
+    authkey = data.get("authkey")
+    if not isinstance(authkey, str) or not authkey.strip():
+        return jsonify({"error": "authkey must be a non-empty string"}), 400
+    try:
+        proc = subprocess.run(
+            ["tailscale", "up", f"--authkey={authkey.strip()}", f"--hostname={current_hostname()}"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return jsonify({"error": f"tailscale up failed: {exc}"}), 500
+    if proc.returncode != 0:
+        return jsonify({"error": f"tailscale up failed: {proc.stderr.strip() or proc.stdout.strip()}"}), 500
+    return jsonify(_tailscale_status())
+
+
+@app.route("/api/tailscale/disconnect", methods=["POST"])
+def api_tailscale_disconnect():
+    if not shutil.which("tailscale"):
+        return jsonify({"error": "tailscale is not installed on this device"}), 500
+    try:
+        proc = subprocess.run(["tailscale", "down"], capture_output=True, text=True, timeout=15)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return jsonify({"error": f"tailscale down failed: {exc}"}), 500
+    if proc.returncode != 0:
+        return jsonify({"error": f"tailscale down failed: {proc.stderr.strip() or proc.stdout.strip()}"}), 500
+    return jsonify(_tailscale_status())
+
+
+# ── System power ──────────────────────────────────────────────────────────────
+# Both eventide.service and watchdog.service already run as root (see
+# config/eventide.service), so no sudo/password handling is needed here.
+# systemctl poweroff/reboot signal systemd and return immediately — the actual
+# shutdown sequence runs asynchronously — so a plain subprocess.run + jsonify
+# response is enough; no threading required to answer the HTTP request first.
+# The dashboard is responsible for the "type SHUTDOWN/REBOOT to confirm" gate;
+# these routes trust whatever calls them.
+
+@app.route("/api/system/shutdown", methods=["POST"])
+def api_system_shutdown():
+    try:
+        subprocess.run(["systemctl", "poweroff"], check=True, capture_output=True, text=True, timeout=10)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        return jsonify({"error": f"shutdown failed: {exc}"}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/system/reboot", methods=["POST"])
+def api_system_reboot():
+    try:
+        subprocess.run(["systemctl", "reboot"], check=True, capture_output=True, text=True, timeout=10)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        return jsonify({"error": f"reboot failed: {exc}"}), 500
+    return jsonify({"ok": True})
 
 
 # ── Recordings ────────────────────────────────────────────────────────────────
@@ -3187,6 +3410,13 @@ def main():
     # Load persisted system settings.
     global _settings
     _settings = load_settings()
+
+    # The watchdog MCU has no flash/EEPROM — a real power loss resets it to
+    # firmware defaults. Re-push the Pi's saved config every startup so that
+    # case self-heals instead of silently running on stale MCU defaults.
+    wd_warning = _push_watchdog_config_to_mcu()
+    if wd_warning:
+        print(f"[backend] WARNING: {wd_warning}")
 
     if args.install_local:
         job = _install_local_module(args.install_local)

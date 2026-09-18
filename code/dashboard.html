@@ -525,6 +525,10 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .settings-recdir-badge.low{border-color:var(--amber);color:var(--amber)}
 .settings-retention-box{border:1px solid var(--border);border-radius:var(--r);padding:12px;gap:8px;background:var(--surface2)}
 .settings-checkbox-row{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text)}
+.settings-danger-box{border:1px solid var(--warn);border-radius:var(--r);padding:12px;margin:16px 0 0;background:var(--surface2)}
+.settings-danger-actions{display:flex;gap:10px}
+.settings-confirm-row{display:flex;align-items:center;gap:8px}
+.tailscale-connect-row{display:flex;gap:8px;margin-top:8px}
 .settings-warn-text{color:var(--warn)}
 .retention-item{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);font-size:9px}
 .retention-item .ri-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -754,20 +758,6 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
         <input type="file" id="mod-zip-input" accept=".zip,application/zip"
                style="display:none" onchange="modZipSelected(this)">
       </div>
-      <div class="ssh-panel">
-        <div class="ssh-head">
-          <span class="ssh-title">GITHUB SSH KEY</span>
-          <span class="ssh-status" id="ssh-status">checking…</span>
-          <div class="super-spacer"></div>
-          <button class="super-btn" id="ssh-copy-btn" style="display:none" onclick="copySshKey()">⧉ COPY</button>
-          <button class="super-btn s-green" id="ssh-gen-btn" onclick="generateSshKey()">⚿ GENERATE KEY</button>
-        </div>
-        <pre class="ssh-key" id="ssh-key-box" style="display:none"></pre>
-        <div class="ssh-hint" id="ssh-hint" style="display:none">
-          Copy this public key into GitHub (repo → Settings → Deploy keys, or your account → SSH keys).
-          Private repos can then be installed above, via HTTPS or git@ URLs.
-        </div>
-      </div>
       <div class="mod-list" id="mod-list">
         <div class="mod-empty">Loading…</div>
       </div>
@@ -851,12 +841,87 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
           are never deleted, but everything else past the cutoff is gone for good. Run a preview above (with your
           current days value) before this checkbox unlocks.</div>
       </div>
+      <div class="settings-row">
+        <label class="form-label">Watchdog
+          <span class="settings-recdir-badge" id="watchdog-badge"></span>
+        </label>
+        <label class="settings-checkbox-row">
+          <input type="checkbox" name="watchdog_enabled" id="watchdog-enabled-input">
+          Power-cycle this device if the software heartbeat stops
+        </label>
+      </div>
+      <div class="settings-row">
+        <label class="form-label">Watchdog wait time (s)</label>
+        <input class="form-input" type="number" name="watchdog_wait_secs" min="1" step="1" value="60">
+        <div class="settings-hint">Seconds the heartbeat can stop before a power cycle triggers.</div>
+      </div>
+      <div class="settings-row">
+        <label class="form-label">Watchdog cycle time (s)</label>
+        <input class="form-input" type="number" name="watchdog_cycle_secs" min="1" step="1" value="1">
+        <div class="settings-hint">Seconds power stays off during a power cycle (the MCU enforces a 1s minimum).</div>
+      </div>
+      <div class="settings-row">
+        <label class="form-label">Watchdog recovery time (s)</label>
+        <input class="form-input" type="number" name="watchdog_recovery_secs" min="1" step="1" value="120">
+        <div class="settings-hint">Seconds to wait for the heartbeat to resume after power returns before
+          triggering another power cycle — must comfortably exceed this device's boot time. The watchdog
+          hardware has no persistent storage of its own; these values reset to firmware defaults after a real
+          power outage, but this backend re-applies them automatically every time it starts.</div>
+      </div>
       <div class="settings-actions">
         <button type="submit" class="apply-btn">↺ APPLY</button>
         <button type="button" class="btn-sm" onclick="loadSettings()">↻ RESET</button>
         <span class="settings-status" id="settings-status"></span>
       </div>
     </form>
+
+    <div class="ssh-panel">
+      <div class="ssh-head">
+        <span class="ssh-title">GITHUB SSH KEY</span>
+        <span class="ssh-status" id="ssh-status">checking…</span>
+        <div class="super-spacer"></div>
+        <button class="super-btn" id="ssh-copy-btn" style="display:none" onclick="copySshKey()">⧉ COPY</button>
+        <button class="super-btn s-green" id="ssh-gen-btn" onclick="generateSshKey()">⚿ GENERATE KEY</button>
+      </div>
+      <pre class="ssh-key" id="ssh-key-box" style="display:none"></pre>
+      <div class="ssh-hint" id="ssh-hint" style="display:none">
+        Copy this public key into GitHub (repo → Settings → Deploy keys, or your account → SSH keys).
+        Private repos can then be installed from the MODULES tab, via HTTPS or git@ URLs.
+      </div>
+    </div>
+
+    <div class="ssh-panel" id="tailscale-panel">
+      <div class="ssh-head">
+        <span class="ssh-title">TAILSCALE</span>
+        <span class="ssh-status" id="tailscale-status">checking…</span>
+        <div class="super-spacer"></div>
+        <button class="super-btn s-warn" id="tailscale-disconnect-btn" style="display:none" onclick="disconnectTailscale()">DISCONNECT</button>
+      </div>
+      <div class="tailscale-connect-row" id="tailscale-connect-row" style="display:none">
+        <input class="form-input mod-input" type="password" id="tailscale-authkey-input"
+               placeholder="tskey-auth-…" spellcheck="false" style="flex:1">
+        <button class="super-btn s-green" onclick="connectTailscale()">CONNECT</button>
+      </div>
+      <div class="ssh-hint">Generate an auth key from the Tailscale admin console, paste it above and connect —
+        the key is used once and never stored here; Tailscale's own state keeps the device connected across
+        reboots.</div>
+    </div>
+
+    <div class="settings-danger-box">
+      <div class="settings-title" style="margin-bottom:8px">DANGER ZONE</div>
+      <div class="settings-danger-actions" id="danger-buttons">
+        <button class="super-btn s-warn" onclick="confirmSystemAction('shutdown')">⏻ SHUTDOWN</button>
+        <button class="super-btn s-warn" onclick="confirmSystemAction('reboot')">↻ REBOOT</button>
+      </div>
+      <div class="settings-confirm-row" id="danger-confirm-row" style="display:none">
+        <input class="form-input mod-input" type="text" id="danger-confirm-input"
+               spellcheck="false" autocomplete="off" oninput="_dangerConfirmInputChanged()">
+        <button class="super-btn s-warn" id="danger-confirm-btn" disabled onclick="_dangerConfirmSubmit()">CONFIRM</button>
+        <button class="btn-sm" onclick="_dangerConfirmCancel()">CANCEL</button>
+      </div>
+      <div class="settings-hint settings-warn-text">Immediately shuts down or reboots this device. Any recording
+        in progress is interrupted.</div>
+    </div>
   </div>
 </div><!-- /ws-settings -->
 
@@ -2931,7 +2996,8 @@ function onBackendIpChange(raw) {
     await refreshModuleInfo();
     reconcileLayout();
     fetchPlaybackSettings();
-    if (activeTab === 'modules') { loadModules(); loadSshKey(); }
+    if (activeTab === 'modules') { loadModules(); }
+    if (activeTab === 'settings') { loadSshKey(); refreshTailscaleStatus(); }
     // New host not answering yet (payload still booting) — keep probing so
     // the workspace populates on its own once it comes up.
     if (!_modInfo) retryModuleInfo();
@@ -2994,7 +3060,6 @@ function switchTab(tab) {
   if (tab === 'playback') loadRecordingSources().then(loadAllRecordings);
   if (tab === 'modules') {
     loadModules();
-    loadSshKey();
     if (!modPollTimer) modPollTimer = setInterval(loadModules, 5000);
   } else {
     clearInterval(modPollTimer);
@@ -3002,7 +3067,9 @@ function switchTab(tab) {
   }
   if (tab === 'settings') {
     loadSettings();
-    if (!settingsHealthTimer) settingsHealthTimer = setInterval(refreshRecdirHealth, 15000);
+    loadSshKey();
+    refreshTailscaleStatus();
+    if (!settingsHealthTimer) settingsHealthTimer = setInterval(refreshSettingsHealth, 15000);
   } else {
     clearInterval(settingsHealthTimer);
     settingsHealthTimer = null;
@@ -3045,6 +3112,7 @@ async function loadSettings() {
       }
     });
     renderRecdirHealth(data);
+    refreshWatchdogStatus();
     // A fresh load means no preview has run yet against whatever's now in
     // the days field — require one again before automatic deletion unlocks.
     document.getElementById('retention-enabled-input').disabled = true;
@@ -3251,6 +3319,158 @@ async function previewRetention() {
     }
   });
 })();
+
+// Live MCU-reachability badge for the watchdog fields — same "own light
+// interval while the tab is active" treatment as renderRecdirHealth/
+// refreshRecdirHealth above (see refreshSettingsHealth, wired in switchTab()).
+function renderWatchdogBadge(data) {
+  const badge = document.getElementById('watchdog-badge');
+  if (!badge) return;
+  if (data.mcu_reachable) {
+    badge.textContent = 'MCU OK';
+    badge.className = 'settings-recdir-badge ok';
+  } else {
+    badge.textContent = 'MCU UNREACHABLE';
+    badge.className = 'settings-recdir-badge warn';
+  }
+}
+
+async function refreshWatchdogStatus() {
+  try {
+    const r = await fetch(apiUrl('/watchdog/config'), { signal: timeoutSignal(5000) });
+    if (r.ok) renderWatchdogBadge(await r.json());
+  } catch { /* stale badge until the next successful poll */ }
+}
+
+// Shared poll for every SETTINGS-tab live-status badge (recordings-dir
+// health, watchdog MCU reachability, Tailscale connection) on one timer —
+// see switchTab().
+function refreshSettingsHealth() {
+  refreshRecdirHealth();
+  refreshWatchdogStatus();
+  refreshTailscaleStatus();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TAILSCALE
+// ═══════════════════════════════════════════════════════════
+// install.sh installs+enables tailscaled but never runs `tailscale up` —
+// connecting is entirely this panel's job. The auth key is sent once to
+// POST /tailscale/connect and never stored by this page or the backend;
+// Tailscale's own state keeps the device connected across reboots.
+
+function renderTailscaleStatus(data) {
+  const st = document.getElementById('tailscale-status');
+  const connectRow = document.getElementById('tailscale-connect-row');
+  const disconnectBtn = document.getElementById('tailscale-disconnect-btn');
+  if (!st) return;
+  if (!data.installed) {
+    st.textContent = 'not installed';
+    st.className = 'ssh-status';
+    connectRow.style.display = 'none';
+    disconnectBtn.style.display = 'none';
+  } else if (data.connected) {
+    st.textContent = 'connected' + (data.ip ? ' · ' + data.ip : '');
+    st.className = 'ssh-status ok';
+    connectRow.style.display = 'none';
+    disconnectBtn.style.display = '';
+  } else {
+    st.textContent = 'not connected';
+    st.className = 'ssh-status';
+    connectRow.style.display = 'flex';
+    disconnectBtn.style.display = 'none';
+  }
+}
+
+async function refreshTailscaleStatus() {
+  try {
+    const r = await fetch(apiUrl('/tailscale/status'), { signal: timeoutSignal(5000) });
+    if (r.ok) renderTailscaleStatus(await r.json());
+  } catch {
+    const st = document.getElementById('tailscale-status');
+    if (st) { st.textContent = 'backend unreachable'; st.className = 'ssh-status'; }
+  }
+}
+
+async function connectTailscale() {
+  const input = document.getElementById('tailscale-authkey-input');
+  const key = input.value.trim();
+  if (!key) { toast('Enter an auth key first', 'err'); return; }
+  try {
+    const r = await fetch(apiUrl('/tailscale/connect'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authkey: key }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    input.value = '';
+    renderTailscaleStatus(data);
+    toast('Tailscale connected', 'ok');
+  } catch (e) {
+    toast('Tailscale connect failed: ' + e.message, 'err');
+  }
+}
+
+async function disconnectTailscale() {
+  if (!confirm('Disconnect this device from Tailscale?')) return;
+  try {
+    const r = await fetch(apiUrl('/tailscale/disconnect'), { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    renderTailscaleStatus(data);
+    toast('Tailscale disconnected', 'ok');
+  } catch (e) {
+    toast('Tailscale disconnect failed: ' + e.message, 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DANGER ZONE — shutdown / reboot, type-to-confirm
+// ═══════════════════════════════════════════════════════════
+let _dangerAction = null;
+
+function confirmSystemAction(action) {
+  _dangerAction = action;
+  document.getElementById('danger-buttons').style.display = 'none';
+  const row = document.getElementById('danger-confirm-row');
+  const input = document.getElementById('danger-confirm-input');
+  const btn = document.getElementById('danger-confirm-btn');
+  input.placeholder = `Type ${action.toUpperCase()} to confirm`;
+  input.value = '';
+  btn.disabled = true;
+  btn.textContent = action === 'shutdown' ? 'CONFIRM SHUTDOWN' : 'CONFIRM REBOOT';
+  row.style.display = 'flex';
+  input.focus();
+}
+
+function _dangerConfirmInputChanged() {
+  const input = document.getElementById('danger-confirm-input');
+  const btn = document.getElementById('danger-confirm-btn');
+  btn.disabled = !_dangerAction || input.value !== _dangerAction.toUpperCase();
+}
+
+function _dangerConfirmCancel() {
+  _dangerAction = null;
+  document.getElementById('danger-confirm-row').style.display = 'none';
+  document.getElementById('danger-buttons').style.display = 'flex';
+}
+
+async function _dangerConfirmSubmit() {
+  const action = _dangerAction;
+  if (!action) return;
+  const btn = document.getElementById('danger-confirm-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch(apiUrl(`/system/${action}`), { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    toast(action === 'shutdown' ? 'Shutting down…' : 'Rebooting…', 'ok');
+  } catch (e) {
+    toast(`${action} failed: ` + e.message, 'err');
+    btn.disabled = false;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════
 //  INNER TABS (Playback)

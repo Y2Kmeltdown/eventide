@@ -386,9 +386,29 @@ sudo apt install -y \
     python3-requests \
     nginx \
     supervisor
+# smbus2 for eventide.py's own watchdog I2C register access (SETTINGS tab
+# watchdog config) — previously only OS-specific hooks installed this for
+# watchdog.py's sake; the base backend now needs it on every board.
+# `python3 -m pip install` rather than bare `pip3 install` — confirmed live
+# elsewhere in this installer that the latter can silently land in the
+# invoking user's ~/.local site-packages even under sudo, where root
+# (eventide.service's user) can't import it.
+sudo python3 -m pip install smbus2 --break-system-packages
 
 step "OS-specific packages ($OS)"
 run_os_hook packages
+
+## TAILSCALE (optional, generic — board-agnostic, same reasoning as nginx/
+## supervisor already being generic). Installs and enables tailscaled only;
+## deliberately never runs `tailscale up` here — no auth key exists at
+## install time, connecting is entirely a SETTINGS-tab action afterward.
+step "Tailscale"
+if command -v tailscale > /dev/null; then
+    echo "[INFO] tailscale already installed — skipping"
+else
+    curl -fsSL https://tailscale.com/install.sh | sh
+fi
+sudo systemctl enable --now tailscaled
 
 ## RECORDINGS SD CARD (optional, generic — not an OS-specific hook; the
 ## same labeled-mount approach works identically on any board)
@@ -540,6 +560,7 @@ fi
 if [ -n "$ENABLE_USBC_HOST" ]; then
     echo "USB-C port configured as a USB 2.0 host port — takes effect after this reboot."
 fi
+echo "Tailscale installed but not connected — configure it from the dashboard SETTINGS tab."
 echo "Rebooting in 10 seconds (Ctrl-C to cancel)."
 sleep 10
 sudo reboot

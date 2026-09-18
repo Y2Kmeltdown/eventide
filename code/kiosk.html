@@ -271,7 +271,7 @@ const CAMS = {
   basler: { module: 'basler-camera',  label: 'BASLER' },
 };
 
-let camInfo  = { evk: null, basler: null, lens: null };   // camId -> {mod, streamUrl, rec:{...}, settingsForm:{...}}
+let camInfo  = { evk: null, basler: null, lens: null, basler_circular: null, evk_buffer: null };   // camId -> {mod, streamUrl, rec:{...}, settingsForm:{...}}
                                                // ('lens' is not a camera — no feed/rec, just settingsForm)
 let camState = {                              // camId -> live polled recording state
   evk:    { recording: false, control: true, offline: true },
@@ -341,6 +341,35 @@ async function loadModules() {
     camInfo.lens = lensForm ? {
       mod: lensMod.name,
       settingsForm: { socket: lensForm.socket, get: lensForm.get, put: lensForm.put, method: lensForm.method || 'POST' },
+    } : null;
+
+    // Basler pre-roll (circular buffer) duration — its own component/
+    // endpoint pair (/api/record/status GET, /api/record/config PUT),
+    // separate from camera-settings. Modeled as a pseudo-cam so it reuses
+    // the exact same CAMERA_FIELDS/loadCameraFields/setCameraField
+    // machinery as a real camera's settings form, unchanged.
+    const baslerMod = modules.find(mm => mm.name === CAMS.basler.module);
+    const circularForm = baslerMod ? (baslerMod.ui || []).find(c => c.type === 'form' && c.id === 'circular-buffer') : null;
+    camInfo.basler_circular = circularForm ? {
+      mod: baslerMod.name,
+      settingsForm: { socket: circularForm.socket, get: circularForm.get, put: circularForm.put, method: circularForm.method || 'POST' },
+    } : null;
+
+    // EVK circular buffer max-age — the "recording" component declares no
+    // top-level get/put of its own, only per-field overrides (both its
+    // fields point at the same /api/buffer endpoint), so pull get/put from
+    // the field rather than the component.
+    const evkMod = modules.find(mm => mm.name === CAMS.evk.module);
+    const evkBufferForm = evkMod ? (evkMod.ui || []).find(c => c.type === 'form' && c.id === 'recording') : null;
+    const evkBufferField = evkBufferForm?.fields?.find(f => f.key === 'max_age_secs');
+    camInfo.evk_buffer = evkBufferField ? {
+      mod: evkMod.name,
+      settingsForm: {
+        socket: evkBufferForm.socket,
+        get: evkBufferField.get || evkBufferForm.get,
+        put: evkBufferField.put || evkBufferForm.put,
+        method: evkBufferForm.method || 'PUT',
+      },
     } : null;
     modulesEverLoaded = true;
   } catch { /* keep last-known camInfo; retry on next poll */ }
@@ -427,11 +456,13 @@ function applyRecTabVisibility() {
 const CAMERA_FIELDS = [
   { group: 'EVK4 BIASES',      cam: 'evk',    key: 'diff_on',       label: 'Diff ON',           min: 0, max: 255,    step: 5,   decimals: 0 },
   { group: 'EVK4 BIASES',      cam: 'evk',    key: 'diff_off',      label: 'Diff OFF',          min: 0, max: 255,    step: 5,   decimals: 0 },
+  { group: 'EVK4 BUFFER',      cam: 'evk_buffer', key: 'max_age_secs', label: 'Buffer max age (s)', min: 0, max: 60, step: 1, decimals: 0 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'exposure_us',   label: 'Exposure (µs)',     min: 0, max: 1000000, step: 100, decimals: 0 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'gain',          label: 'Gain (dB)',         min: 0, max: 48,     step: 0.5, decimals: 1 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'frame_rate_hz', label: 'Frame rate (Hz)',   min: 0, max: 500,    step: 5,   decimals: 0 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'black_level',   label: 'Black level',       min: 0, max: 255,    step: 1,   decimals: 0 },
   { group: 'BASLER SETTINGS',  cam: 'basler', key: 'gamma',         label: 'Gamma',             min: 0, max: 4,      step: 0.1, decimals: 2 },
+  { group: 'BASLER SETTINGS',  cam: 'basler_circular', key: 'circular_buffer_seconds', label: 'Pre-roll (s)', min: 0, max: 30, step: 1, decimals: 0 },
   { group: 'LENS CONTROL',     cam: 'lens',   key: 'zoom',          label: 'Zoom %',            min: 0, max: 100,   step: 5,   decimals: 0 },
   { group: 'LENS CONTROL',     cam: 'lens',   key: 'focus',         label: 'Focus %',           min: 0, max: 100,   step: 5,   decimals: 0 },
 ];
@@ -457,9 +488,11 @@ function renderCameraFieldRows() {
   // "installed" (unknown, not confirmed absent) so the drawer doesn't flash
   // empty then populate — same reasoning as applyFeeds()/applyRecTabVisibility().
   const installed = {
-    evk:    !modulesEverLoaded || !!camInfo.evk,
-    basler: !modulesEverLoaded || !!camInfo.basler,
-    lens:   !modulesEverLoaded || !!camInfo.lens,
+    evk:             !modulesEverLoaded || !!camInfo.evk,
+    basler:          !modulesEverLoaded || !!camInfo.basler,
+    lens:            !modulesEverLoaded || !!camInfo.lens,
+    basler_circular: !modulesEverLoaded || !!camInfo.basler_circular,
+    evk_buffer:      !modulesEverLoaded || !!camInfo.evk_buffer,
   };
   const fields = CAMERA_FIELDS.filter(f => installed[f.cam]);
 
@@ -504,7 +537,7 @@ function renderCameraFieldRows() {
 }
 
 async function loadCameraFields() {
-  for (const camId of ['evk', 'basler', 'lens']) {
+  for (const camId of ['evk', 'basler', 'lens', 'basler_circular', 'evk_buffer']) {
     const info = camInfo[camId];
     if (!info || !info.settingsForm) continue;
     try {

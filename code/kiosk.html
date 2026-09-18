@@ -78,9 +78,14 @@ button{font-family:var(--mono);-webkit-user-select:none}
    closed, and at the drawer's new edge (not overlapping its content) once
    open, with no separate open/closed positioning rules needed. */
 .edge-tab{position:absolute;z-index:1;background:var(--surface2);border:1px solid var(--border2);
-  color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;
-  font-size:15px;line-height:1}
+  color:var(--accent);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;font-size:15px;line-height:1}
+/* Identifying icon, shown only while the drawer is closed (see closeDrawer/
+   toggleDrawer) — the arrow alone doesn't say what's behind it. */
+.edge-tab-icon{display:flex;align-items:center;justify-content:center;opacity:.85}
+.edge-tab-icon svg{width:13px;height:13px;display:block}
 .edge-tab-bottom{left:50%;top:-30px;transform:translateX(-50%);width:72px;height:30px;
+  flex-direction:row;gap:6px;
   border-bottom:none;border-top-left-radius:8px;border-top-right-radius:8px}
 .edge-tab-right{left:-30px;top:50%;transform:translateY(-50%);width:30px;height:72px;
   border-right:none;border-top-left-radius:8px;border-bottom-left-radius:8px}
@@ -205,7 +210,10 @@ button{font-family:var(--mono);-webkit-user-select:none}
   <button class="refresh-btn" id="refresh-btn" title="Reload">↻</button>
 
   <div class="drawer drawer-bottom" id="drawer-recordings">
-    <button class="edge-tab edge-tab-bottom" id="tab-recordings">▲</button>
+    <button class="edge-tab edge-tab-bottom" id="tab-recordings">
+      <span class="edge-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg></span>
+      <span class="edge-tab-arrow">▲</span>
+    </button>
     <div class="rec-tabs">
       <button class="rec-tab" data-src="evk">EVK4</button>
       <button class="rec-tab" data-src="basler">BASLER</button>
@@ -215,7 +223,10 @@ button{font-family:var(--mono);-webkit-user-select:none}
   </div>
 
   <div class="drawer drawer-right" id="drawer-settings">
-    <button class="edge-tab edge-tab-right" id="tab-settings">◀</button>
+    <button class="edge-tab edge-tab-right" id="tab-settings">
+      <span class="edge-tab-arrow">◀</span>
+      <span class="edge-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
+    </button>
     <div class="settings-body">
       <div class="section-title">AUTO-STOP RECORDING AFTER</div>
       <div class="duration-readout" id="duration-readout">30s</div>
@@ -242,7 +253,10 @@ button{font-family:var(--mono);-webkit-user-select:none}
   </div>
 
   <div class="drawer drawer-left" id="drawer-camera">
-    <button class="edge-tab edge-tab-left" id="tab-camera">▶</button>
+    <button class="edge-tab edge-tab-left" id="tab-camera">
+      <span class="edge-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg></span>
+      <span class="edge-tab-arrow">▶</span>
+    </button>
     <div class="settings-body" id="camera-fields"><div class="rec-empty">Loading…</div></div>
   </div>
 
@@ -833,14 +847,23 @@ const drawers = {
   settings:   { el: document.getElementById('drawer-settings'),   tab: document.getElementById('tab-settings'),   openGlyph: '▶', closedGlyph: '◀' },
   camera:     { el: document.getElementById('drawer-camera'),     tab: document.getElementById('tab-camera'),     openGlyph: '◀', closedGlyph: '▶', onOpen: loadCameraFields },
 };
-function closeDrawer(d) { d.el.classList.remove('open'); d.tab.textContent = d.closedGlyph; }
+// Each tab button holds a separate .edge-tab-arrow (glyph, always shown) and
+// .edge-tab-icon (identifies the drawer, shown only while closed — once open
+// the drawer's own content makes that obvious, and the icon would just be
+// clutter next to the now-larger drawer).
+function closeDrawer(d) {
+  d.el.classList.remove('open');
+  d.tab.querySelector('.edge-tab-arrow').textContent = d.closedGlyph;
+  d.tab.querySelector('.edge-tab-icon').style.display = '';
+}
 function toggleDrawer(name) {
   const target = drawers[name];
   const wasOpen = target.el.classList.contains('open');
   Object.values(drawers).forEach(closeDrawer);
   if (!wasOpen) {
     target.el.classList.add('open');
-    target.tab.textContent = target.openGlyph;
+    target.tab.querySelector('.edge-tab-arrow').textContent = target.openGlyph;
+    target.tab.querySelector('.edge-tab-icon').style.display = 'none';
     if (target.onOpen) target.onOpen();
   }
 }

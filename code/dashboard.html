@@ -416,6 +416,8 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .icon-btn.fav-btn.favorited{color:var(--amber);border-color:rgba(255,184,48,.4)}
 .icon-btn.del-btn:hover{border-color:var(--warn);color:var(--warn);background:var(--warn-dim)}
 .rec-item.favorited{background:rgba(255,184,48,.06)}
+.rec-item.pending{opacity:.65;cursor:default}
+.rec-item.pending:hover{background:none}
 .empty{padding:20px 12px;text-align:center;color:var(--text-dim);line-height:1.8;font-size:10px}
 .playback-main{background:#020810;display:flex;flex-direction:column;overflow:hidden}
 .playback-screen{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -3922,6 +3924,13 @@ function extBadge(ext) {
   const c = EXT_COLORS[ext?.toLowerCase()] || 'var(--text-mid)';
   return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;border:1px solid ${c};color:${c};flex-shrink:0">${(ext||'?').toUpperCase()}</span>`;
 }
+// A recording still being staged/copied into place (e.g. basler-camera's
+// tmp-recordings-then-migrate feature) shows up under its real eventual
+// name with pending:true — the file doesn't exist under that name on disk
+// yet, so it gets no favorite/play/download/delete controls, just this tag.
+function pendingBadge() {
+  return `<span style="font-size:7px;letter-spacing:.1em;padding:1px 5px;border-radius:2px;border:1px solid var(--amber);color:var(--amber);flex-shrink:0">PENDING</span>`;
+}
 // Recording sources come from the backend: one per installed module that
 // declares recordings_subdir (GET /api/recordings → {sources: [...]}).
 let recSources = [];   // [{name, module}]
@@ -3969,7 +3978,16 @@ async function loadRecordings(cam) {
     const res  = await fetch(apiUrl('/recordings/' + cam));
     const data = await res.json();
     if (!data.files?.length) { el.innerHTML = '<div class="empty">No recordings found.</div>'; return; }
-    el.innerHTML = data.files.map(f => `
+    el.innerHTML = data.files.map(f => f.pending ? `
+      <div class="rec-item pending" id="ri-${CSS.escape(f.name)}">
+        <span class="rec-icon">◈</span>
+        <div class="rec-info">
+          <div class="rec-name" title="${f.name}">${fmtName(f.name)}</div>
+          <div class="rec-meta" style="display:flex;align-items:center;gap:5px;margin-top:3px">
+            ${extBadge(f.ext)}<span>${fmtSize(f.size)}</span>${pendingBadge()}
+          </div>
+        </div>
+      </div>` : `
       <div class="rec-item ${playingFile===f.name?'playing':''} ${f.favorited?'favorited':''}" id="ri-${CSS.escape(f.name)}">
         <span class="rec-icon">◈</span>
         <div class="rec-info">

@@ -106,8 +106,11 @@ button{font-family:var(--mono);-webkit-user-select:none}
 .rec-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .rec-list{flex:1;overflow-y:auto;padding:8px}
 .rec-item{display:flex;align-items:center;gap:10px;padding:12px 10px;border-bottom:1px solid var(--border)}
+.rec-item.pending{opacity:.65}
 .rec-item .rec-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .rec-item .rec-size{font-size:10px;color:var(--text-dim);flex-shrink:0;margin-right:6px}
+.pending-tag{font-size:9px;letter-spacing:.1em;padding:3px 7px;border-radius:2px;border:1px solid var(--amber);
+  color:var(--amber);flex-shrink:0}
 .rec-icon-btn{width:44px;height:44px;flex-shrink:0;border-radius:var(--r);border:1px solid var(--border2);
   background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer;display:flex;
   align-items:center;justify-content:center}
@@ -768,7 +771,12 @@ async function loadRecList() {
     if (requestedTab !== activeRecTab) return;
     const files = sortRecordingsByRecency(data.files || []);
     if (!files.length) { list.innerHTML = '<div class="rec-empty">No recordings.</div>'; return; }
-    list.innerHTML = files.map(f => `
+    list.innerHTML = files.map(f => f.pending ? `
+      <div class="rec-item pending">
+        <span class="rec-name" title="${f.name}">${fmtName(f.name)}</span>
+        <span class="rec-size">${fmtSize(f.size)}</span>
+        <span class="pending-tag">PENDING</span>
+      </div>` : `
       <div class="rec-item">
         <span class="rec-name" title="${f.name}">${fmtName(f.name)}</span>
         <span class="rec-size">${fmtSize(f.size)}</span>

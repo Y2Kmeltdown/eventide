@@ -1038,8 +1038,9 @@ RECORDING_EXTENSIONS = ("*.raw", "*.mp4", "*.h264", "*.jsonl", "*.basler")
 
 def _scan_recordings(source: str) -> list[dict]:
     """Every recording file for `source`: {name, size, ext, favorited,
-    mtime}. Shared by the file-list endpoint and retention (preview +
-    sweep) below, so both agree on exactly what counts as a recording."""
+    mtime, pending}. Shared by the file-list endpoint and retention
+    (preview + sweep) below, so both agree on exactly what counts as a
+    recording."""
     recordings_dir = _recordings_dir(source)
     if not recordings_dir.exists():
         return []
@@ -1057,7 +1058,32 @@ def _scan_recordings(source: str) -> list[dict]:
                     "ext": f.suffix.lstrip("."),
                     "favorited": f.name in favorites,
                     "mtime": st.st_mtime,
+                    "pending": False,
                 })
+    # Recordings still being staged/copied into place (e.g. a module that
+    # writes to a fast local cache first and migrates to the true
+    # recordings directory afterward, like basler-camera's tmp-recordings
+    # feature) show up here as "<final-name>.part" while the copy is in
+    # progress. Surface them so the browser shows the file exists and is
+    # still being saved, rather than a gap until the copy completes — name
+    # is the eventual real name (the .part suffix stripped), not the
+    # literal in-progress filename on disk.
+    for f in recordings_dir.glob("*.part"):
+        if not f.is_file():
+            continue
+        final_name = f.name[: -len(".part")]
+        if final_name in seen:
+            continue
+        seen.add(final_name)
+        st = f.stat()
+        entries.append({
+            "name": final_name,
+            "size": st.st_size,
+            "ext": Path(final_name).suffix.lstrip("."),
+            "favorited": False,
+            "mtime": st.st_mtime,
+            "pending": True,
+        })
     return entries
 
 
@@ -1135,7 +1161,9 @@ def _retention_candidates(days: float) -> list[dict]:
     candidates = []
     for source in _recording_sources():
         for f in _scan_recordings(source["name"]):
-            if not f["favorited"] and f["mtime"] < cutoff:
+            # Never sweep a recording that's still being written/copied
+            # into place — it isn't really "here" yet under that name.
+            if not f["favorited"] and not f["pending"] and f["mtime"] < cutoff:
                 candidates.append({
                     "source": source["name"],
                     "name": f["name"],

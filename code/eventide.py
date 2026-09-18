@@ -226,6 +226,11 @@ DEFAULT_SETTINGS = {
     "watchdog_wait_secs": 60,
     "watchdog_cycle_secs": 1,
     "watchdog_recovery_secs": 120,
+    # Touchscreen kiosk UI prefs (code/kiosk.html) — persisted here rather than
+    # in the browser's own localStorage so they survive a Chromium profile
+    # reset/reflash and are the same regardless of which screen is attached.
+    "kiosk_main_cam": "evk",
+    "kiosk_duration_secs": 30,
 }
 
 _settings: dict = {}
@@ -938,6 +943,14 @@ def api_settings_post():
             val = data[key]
             if not isinstance(val, (int, float)) or isinstance(val, bool) or val <= 0:
                 return jsonify({"error": f"{key} must be a positive number"}), 400
+
+    if "kiosk_duration_secs" in data:
+        val = data["kiosk_duration_secs"]
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or val < 0 or val > 3600:
+            return jsonify({"error": "kiosk_duration_secs must be a number between 0 and 3600"}), 400
+
+    if "kiosk_main_cam" in data and not isinstance(data["kiosk_main_cam"], str):
+        return jsonify({"error": "kiosk_main_cam must be a string"}), 400
 
     warnings: list[str] = []
     if new_hostname is not None and new_hostname != current_hostname():

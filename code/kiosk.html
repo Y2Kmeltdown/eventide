@@ -290,8 +290,10 @@ let recordStartedAt = null;
 // (see the catch block in loadModules), so this only flips true on real data.
 let modulesEverLoaded = false;
 
-let duration = parseInt(localStorage.getItem('eventide-kiosk-duration') || '30', 10);
-if (!Number.isFinite(duration) || duration < 0) duration = 30;
+// Real value is loaded from the backend (persisted in settings.json, not
+// this browser's own storage — see loadKioskPrefs()) — this is just the
+// paint-before-that-resolves default.
+let duration = 30;
 
 function proxyUrl(mod, socket, path) { return `/proxy/${mod}/${socket}${path}`; }
 function dotPath(obj, path) { return String(path).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj); }
@@ -615,19 +617,19 @@ function swapMain(el) {
     w.classList.toggle('pip');
   });
   const mainCam = document.querySelector('.feed-wrap.main').dataset.cam;
-  localStorage.setItem('eventide-kiosk-main', mainCam);
+  saveKioskPrefs({ kiosk_main_cam: mainCam });
 }
 document.getElementById('wrap-evk').addEventListener('click', function () { swapMain(this); });
 document.getElementById('wrap-basler').addEventListener('click', function () { swapMain(this); });
 
 document.getElementById('refresh-btn').addEventListener('click', () => location.reload());
 
-(function restoreMain() {
-  const saved = localStorage.getItem('eventide-kiosk-main');
-  if (saved && saved !== 'evk') {
+function applyMainCam(cam) {
+  const current = document.querySelector('.feed-wrap.main')?.dataset.cam;
+  if (cam && cam !== 'evk' && current === 'evk') {
     document.querySelectorAll('.feed-wrap').forEach(w => { w.classList.toggle('main'); w.classList.toggle('pip'); });
   }
-})();
+}
 
 // ── Recording status polling + the record button ────────────────────────────
 async function pollCam(camId) {
@@ -864,11 +866,11 @@ function attachStepper(btn, delta, getVal, setVal) {
 // ── Duration: stepper + keypad ──────────────────────────────────────────────
 function renderDuration() {
   document.getElementById('duration-readout').textContent = duration > 0 ? duration + 's' : 'MANUAL STOP';
-  localStorage.setItem('eventide-kiosk-duration', String(duration));
 }
 function setDuration(v) {
   duration = Math.max(0, Math.min(3600, Math.round(v)));
   renderDuration();
+  saveKioskPrefsDebounced({ kiosk_duration_secs: duration });
 }
 document.querySelectorAll('#duration-steppers .stepper-btn').forEach(btn =>
   attachStepper(btn, parseInt(btn.dataset.delta, 10), () => duration, setDuration));
@@ -1048,12 +1050,49 @@ async function deleteSchedule(id) {
   } catch (e) { toast('Delete failed: ' + e.message); }
 }
 
+// ── Kiosk prefs ──────────────────────────────────────────────────────────────
+// Persisted server-side (settings.json, via the same /api/settings the
+// dashboard SETTINGS tab uses) rather than this browser's own localStorage,
+// so the main/PiP swap and slideshow duration survive a Chromium profile
+// reset and are consistent no matter which screen is attached to the device.
+
+async function loadKioskPrefs() {
+  try {
+    const r = await fetch('/api/settings');
+    if (!r.ok) throw new Error(r.statusText);
+    const data = await r.json();
+    if (Number.isFinite(data.kiosk_duration_secs)) {
+      duration = Math.max(0, Math.min(3600, Math.round(data.kiosk_duration_secs)));
+      renderDuration();
+    }
+    applyMainCam(data.kiosk_main_cam);
+  } catch (e) {
+    // Backend unreachable at boot — keep the paint-before-load defaults;
+    // the next successful save still persists whatever the user picks.
+  }
+}
+
+function saveKioskPrefs(updates) {
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  }).catch(() => { /* best-effort — a failed save just means this pref reverts to the last-saved value on next load */ });
+}
+
+let _saveKioskPrefsTimer = null;
+function saveKioskPrefsDebounced(updates) {
+  clearTimeout(_saveKioskPrefsTimer);
+  _saveKioskPrefsTimer = setTimeout(() => saveKioskPrefs(updates), 500);
+}
+
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 // The first poll round must wait for module discovery to resolve at least
 // once — otherwise pollCam() races ahead of loadModules() with camInfo still
 // null, marks both cameras offline, and (since nothing re-triggers it) the
 // record button stays incorrectly disabled until the next 3s interval tick.
 (async function bootstrap() {
+  loadKioskPrefs();  // independent of module discovery — don't block on it
   await loadModules();
   await Promise.all(Object.keys(CAMS).map(pollCam));
 })();

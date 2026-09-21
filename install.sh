@@ -116,6 +116,7 @@ install_watchdog_service() {
 # Overridable for testing:  OS_RELEASE_FILE=/tmp/fake-os-release ./install.sh
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 DEVICE_TREE_MODEL="${DEVICE_TREE_MODEL:-/proc/device-tree/model}"
+DEVICE_TREE_COMPATIBLE="${DEVICE_TREE_COMPATIBLE:-/proc/device-tree/compatible}"
 ARMBIAN_RELEASE_FILE="${ARMBIAN_RELEASE_FILE:-/etc/armbian-release}"
 
 detect_os() {
@@ -135,9 +136,30 @@ detect_os() {
     #    on ARM boards, so x86/other Debian and Ubuntu systems fall through
     #    to the ID check below.
     if [ -r "$DEVICE_TREE_MODEL" ]; then
-        case "$(tr -d '\0' < "$DEVICE_TREE_MODEL")" in
+        local model model_key compat=""
+        model=$(tr -d '\0' < "$DEVICE_TREE_MODEL")
+        if [ -r "$DEVICE_TREE_COMPATIBLE" ]; then
+            compat=$(tr '\0' ' ' < "$DEVICE_TREE_COMPATIBLE")
+        fi
+        # Lowercased with spaces stripped, so "Orange Pi Zero 3W" and
+        # "OrangePi Zero3W" both become "orangepizero3w".
+        model_key=$(echo "$model" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+        case "$model" in
             *"Raspberry Pi"*) echo "raspbian"; return ;;
-            *"Orange Pi"*)    echo "orangepi"; return ;;
+        esac
+        # "Orange Pi" is a brand, not a SoC: the boards under it use different
+        # chips (RK3588, Allwinner A733, ...) that need different I2C/overlay/
+        # boot-file setup, so the per-board hooks can't be keyed on the brand
+        # alone. Zero 3W is matched on the model name (it's unique to that
+        # board); the RK3588 hooks additionally require an RK3588 SoC.
+        case "$model_key" in
+            *orangepi*zero3w*) echo "orangepi_zero3w"; return ;;
+            *orangepi*)
+                case "$compat" in
+                    *rk3588*) echo "orangepi"; return ;;
+                esac
+                echo "[WARN] Orange Pi board '$model' is not a recognised RK3588 or Zero 3W model — not applying the RK3588 setup to it; falling back to the generic install." >&2
+                ;;
         esac
     fi
     # 3. Identify from the os-release ID.
@@ -196,7 +218,11 @@ os_services_raspbian() {
     install_service rtc
 }
 
-# ── Orange Pi (edge kernel, e.g. Orange Pi 5 Max) ───────────────────────────
+# ── Orange Pi, RK3588 boards only (edge kernel, e.g. Orange Pi 5 Max) ───────
+# Everything in this section is RK3588-specific (the i2c2m0 overlay targets
+# rockchip,rk3588; the bus/GPIO numbers are that SoC's) — detect_os() only
+# selects "orangepi" when the device tree reports an RK3588, and other Orange
+# Pi boards (see orangepi_zero3w below) get their own id instead.
 # The watchdog IC and RTC live on the same I2C bus as the Pi builds (same
 # addresses, 0x67 and 0x68), but this board's newer/edge kernel doesn't
 # expose i2c2 or the watchdog's GPIO feed pin the same way a Pi does:
@@ -272,6 +298,19 @@ os_services_orangepi() {
     install_service orangepi-i2c-rtc
     install_service rtc
 }
+
+# ── Orange Pi Zero 3W (Allwinner A733) ───────────────────────────────────────
+# Deliberately NO os_configure/packages/services hooks yet — it gets the
+# generic install only. Its I2C bus, watchdog feed pin and RTC wiring are
+# Allwinner-specific and none of them have been confirmed on this board, so
+# nothing is guessed here (the RK3588 hooks above must not be reused, and the
+# Cubie A7Z script below is specific to that board's own pin routing even
+# though it's the same SoC). To add them, first confirm on the device:
+#   i2cdetect -l ; i2cdetect -y <bus> -r   (bus with 0x67 watchdog / 0x68 RTC)
+#   gpioinfo                               (feed pin's gpiochip + line)
+# then add os_configure_orangepi_zero3w / os_services_orangepi_zero3w hooks
+# here and a matching entry in code/watchdog.py's BOARDS (and the bus in
+# code/eventide.py's _WATCHDOG_I2C_BUS_BY_BOARD).
 
 # ── Radxa Cubie A7Z (Allwinner A733 / sun60iw2, Armbian) ────────────────────
 # UART/I2C pin routing and DS3231 RTC bring-up for this exact board are
@@ -553,6 +592,9 @@ if [ -n "$RECORDINGS_SD_LABEL" ]; then
 fi
 if [ -n "$SETUP_KIOSK_DISPLAY" ]; then
     echo "Touchscreen kiosk configured — will boot straight into it after this reboot. Re-run config/setup-display.sh any time to adjust display/touch settings."
+fi
+if [ "$OS" = "orangepi_zero3w" ]; then
+    echo "Orange Pi Zero 3W: generic install only — I2C, RTC and watchdog are not configured for this board yet (see the orangepi_zero3w note in install.sh)."
 fi
 if [ "$OS" = "cubie" ]; then
     echo "Cubie A7Z UART/I2C/RTC overlays installed — take effect after this reboot. Verify with the commands config/setup_cubie_a7z_ports.sh printed above."

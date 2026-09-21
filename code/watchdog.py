@@ -25,6 +25,8 @@ WATCH_TIME        = 0x02
 WATCH_REMAIN_TIME = 0x03
 WATCH_STATE       = 0x04
 WATCH_FwVersion   = 0x05
+WATCH_CYCLE_TIME    = 0x06
+WATCH_RECOVERY_TIME = 0x07
 
 WATCH_ON  = 0x03
 WATCH_OFF = 0x02
@@ -51,7 +53,6 @@ BOARDS = {
     # BCM4 (physical header pin 7), watchdog IC on I2C1 (physical pins 3/5).
     "raspbian": {
         "i2c_bus": 1,
-        "restart_time": 8,
         "gpio_backend": "gpiozero",
         "gpiozero_pin": 4,
     },
@@ -61,7 +62,6 @@ BOARDS = {
     # (see os_configure_orangepi in install.sh) — it isn't enabled by default.
     "orangepi": {
         "i2c_bus": 2,
-        "restart_time": 5,
         "gpio_backend": "gpiod",
         "gpio_chip": "/dev/gpiochip1",
         "gpio_line": 7,
@@ -81,7 +81,6 @@ BOARDS = {
     # alongside it.
     "cubie": {
         "i2c_bus": 7,
-        "restart_time": 8,
         "gpio_backend": "periphery",
         "gpio_chip": "/dev/gpiochip1",
         "gpio_line": 6,
@@ -104,6 +103,36 @@ if board not in BOARDS:
          f"I2C bus and feed-pin numbers haven't been confirmed against real hardware yet.")
 
 cfg = BOARDS[board]
+
+# The dashboard SETTINGS tab's watchdog fields (enabled / wait / cycle /
+# recovery) live in eventide's settings.json, and eventide.py also pushes them
+# to the MCU whenever it starts. Both this script and the backend write the
+# same registers at their own startup, in no guaranteed order — so this reads
+# the same file with the same defaults (see DEFAULT_SETTINGS in eventide.py;
+# keep the two in sync) rather than a hardcoded value that could silently
+# override the user's saved config after a reboot.
+SETTINGS_FILE = os.environ.get("EVENTIDE_SETTINGS_FILE", "/usr/local/eventide/data/settings.json")
+WATCHDOG_SETTING_DEFAULTS = {
+    "watchdog_enabled": True,
+    "watchdog_wait_secs": 60,
+    "watchdog_cycle_secs": 1,
+    "watchdog_recovery_secs": 120,
+}
+
+
+def load_watchdog_settings():
+    settings = dict(WATCHDOG_SETTING_DEFAULTS)
+    try:
+        import json
+        with open(SETTINGS_FILE) as fh:
+            saved = json.load(fh)
+        for key in settings:
+            if key in saved:
+                settings[key] = saved[key]
+    except (OSError, ValueError):
+        pass  # no/unreadable settings file yet: the defaults above apply
+    return settings
+
 
 import smbus2
 bus = smbus2.SMBus(cfg["i2c_bus"])
@@ -155,10 +184,13 @@ else:
 try:
     if read(WATCH_FwVersion) == WATCH_version:
         print(f"[watchdog] init succeed (board={board}, i2c bus={cfg['i2c_bus']})")
-        write(WATCH_ON_OFF, WATCH_ON)
+        ws = load_watchdog_settings()
+        write(WATCH_ON_OFF, WATCH_ON if ws["watchdog_enabled"] else WATCH_OFF)
         time.sleep(0.5)
         write(WATCH_STATE, WATCH_ON_LED | WATCH_NO_Timeout)
-        write_word(WATCH_TIME, cfg["restart_time"])
+        write_word(WATCH_TIME, int(ws["watchdog_wait_secs"]))
+        write_word(WATCH_CYCLE_TIME, int(ws["watchdog_cycle_secs"]))
+        write_word(WATCH_RECOVERY_TIME, int(ws["watchdog_recovery_secs"]))
     else:
         print("[watchdog] init fail — firmware version mismatch")
 

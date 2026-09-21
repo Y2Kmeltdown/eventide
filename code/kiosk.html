@@ -446,7 +446,10 @@ function applyFeeds() {
 
 function applyRecTabVisibility() {
   if (!modulesEverLoaded) return;
-  let activeStillVisible = false;
+  // The SCHEDULE tab isn't a camera (so it's not in CAMS and never hidden by
+  // module state) — without this it always looked "no longer visible" and
+  // every 10s module poll bounced the user back to the first camera tab.
+  let activeStillVisible = activeRecTab === 'schedule';
   for (const camId of Object.keys(CAMS)) {
     const tab = document.querySelector(`.rec-tab[data-src="${camId}"]`);
     if (!tab) continue;

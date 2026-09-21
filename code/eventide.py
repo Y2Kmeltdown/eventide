@@ -76,7 +76,7 @@ _ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 @app.after_request
 def add_cors(response):
     response.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
@@ -85,7 +85,7 @@ def add_cors(response):
 def cors_preflight(path=""):
     resp = app.make_default_options_response()
     resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return resp
 
@@ -555,7 +555,7 @@ def playback_proxy(rest):
     if request.method == "OPTIONS":
         resp = app.make_default_options_response()
         resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp
 
@@ -645,7 +645,7 @@ def _module_tcp_port(module: str, socket_name: str) -> int | None:
 def _proxy_options_response():
     resp = app.make_default_options_response()
     resp.headers["Access-Control-Allow-Origin"]  = _ALLOWED_ORIGIN
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return resp
 
@@ -688,9 +688,9 @@ def _proxy_to_port(port: int, rest: str, desc: str):
 
 
 @app.route("/proxy/<module>/<socket_name>/", defaults={"rest": ""},
-           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+           methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 @app.route("/proxy/<module>/<socket_name>/<path:rest>",
-           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+           methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 def module_socket_proxy(module, socket_name, rest):
     port = _module_tcp_port(module, socket_name)
     if port is None:
@@ -704,9 +704,9 @@ def module_socket_proxy(module, socket_name, rest):
 
 
 @app.route("/proxy/<module>/copy/<cid>/<socket_name>/", defaults={"rest": ""},
-           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+           methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 @app.route("/proxy/<module>/copy/<cid>/<socket_name>/<path:rest>",
-           methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+           methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 def module_copy_socket_proxy(module, cid, socket_name, rest):
     port = _copy_tcp_port(module, cid, socket_name)
     if port is None:
@@ -1029,11 +1029,37 @@ _WATCHDOG_KEYS = frozenset((
 ))
 
 
+_WATCHDOG_UNIT_PATHS = (
+    "/etc/systemd/system/watchdog.service",
+    "/lib/systemd/system/watchdog.service",
+)
+
+
+def _watchdog_board() -> str | None:
+    """Which BOARDS entry this device is. EVENTIDE_BOARD is only stamped into
+    watchdog.service's environment by install.sh (see install_watchdog_service),
+    not eventide.service's — so if it isn't set here, read it back out of that
+    unit file rather than guessing the board (a wrong guess means talking to
+    the wrong I2C bus)."""
+    board = os.environ.get("EVENTIDE_BOARD")
+    if board:
+        return board
+    for unit in _WATCHDOG_UNIT_PATHS:
+        try:
+            text = Path(unit).read_text()
+        except OSError:
+            continue
+        m = re.search(r"^\s*Environment=EVENTIDE_BOARD=(\S+)\s*$", text, re.MULTILINE)
+        if m:
+            return m.group(1)
+    return None
+
+
 def _watchdog_i2c_bus():
     """The smbus2.SMBus for this board, or raises RuntimeError/OSError with a
     clear reason. Opened fresh per call — this is a low-frequency control
     path (settings changes + once at startup), not worth holding a handle."""
-    board = os.environ.get("EVENTIDE_BOARD")
+    board = _watchdog_board()
     if not board or board not in _WATCHDOG_I2C_BUS_BY_BOARD:
         raise RuntimeError(f"no I2C bus known for EVENTIDE_BOARD={board!r}")
     try:

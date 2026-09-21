@@ -1114,7 +1114,7 @@ def api_watchdog_config_get():
 
 def _tailscale_status() -> dict:
     if not shutil.which("tailscale"):
-        return {"installed": False, "connected": False, "ip": None, "hostname": None}
+        return {"installed": False, "connected": False, "state": None, "ip": None, "hostname": None}
     try:
         proc = subprocess.run(
             ["tailscale", "status", "--json"],
@@ -1122,16 +1122,22 @@ def _tailscale_status() -> dict:
         )
         data = json.loads(proc.stdout) if proc.stdout else {}
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
-        return {"installed": True, "connected": False, "ip": None, "hostname": None}
+        return {"installed": True, "connected": False, "state": None, "ip": None, "hostname": None}
 
+    # BackendState is the authoritative signal ("Running", "Stopped",
+    # "NeedsLogin", "Starting", ...). Don't infer it from Self/TailscaleIPs: a
+    # stopped or logged-out node keeps reporting its last-known IPs, which
+    # made a disconnected device look connected.
+    state = data.get("BackendState")
+    connected = state == "Running"
     self_info = data.get("Self") or {}
     ips = self_info.get("TailscaleIPs") or []
-    online = bool(self_info.get("Online")) or bool(ips)
     return {
         "installed": True,
-        "connected": online,
-        "ip": ips[0] if ips else None,
-        "hostname": self_info.get("DNSName", "").rstrip(".") or None,
+        "connected": connected,
+        "state": state,
+        "ip": ips[0] if connected and ips else None,
+        "hostname": (self_info.get("DNSName", "").rstrip(".") or None) if connected else None,
     }
 
 
@@ -1148,9 +1154,16 @@ def api_tailscale_connect():
     authkey = data.get("authkey")
     if not isinstance(authkey, str) or not authkey.strip():
         return jsonify({"error": "authkey must be a non-empty string"}), 400
+    # Also used to re-point an already-configured device at a different key/
+    # tailnet, so both flags matter: without --force-reauth an already-logged-
+    # in node silently ignores the new key, and without --reset `up` refuses
+    # to run whenever earlier flags (e.g. --hostname) differ from defaults and
+    # aren't all restated. The dashboard owns this config, so resetting
+    # anything set by hand via the CLI is the intended trade.
     try:
         proc = subprocess.run(
-            ["tailscale", "up", f"--authkey={authkey.strip()}", f"--hostname={current_hostname()}"],
+            ["tailscale", "up", f"--authkey={authkey.strip()}", f"--hostname={current_hostname()}",
+             "--reset", "--force-reauth"],
             capture_output=True, text=True, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError) as exc:

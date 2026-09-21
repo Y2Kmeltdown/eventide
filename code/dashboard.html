@@ -900,11 +900,12 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
       <div class="tailscale-connect-row" id="tailscale-connect-row" style="display:none">
         <input class="form-input mod-input" type="password" id="tailscale-authkey-input"
                placeholder="tskey-auth-…" spellcheck="false" style="flex:1">
-        <button class="super-btn s-green" onclick="connectTailscale()">CONNECT</button>
+        <button class="super-btn s-green" id="tailscale-connect-btn" onclick="connectTailscale()">CONNECT</button>
       </div>
       <div class="ssh-hint">Generate an auth key from the Tailscale admin console, paste it above and connect —
         the key is used once and never stored here; Tailscale's own state keeps the device connected across
-        reboots.</div>
+        reboots. To switch to a different key or tailnet, enter the new key and press RECONNECT — if you're
+        viewing this page over Tailscale it may drop briefly while the device re-authenticates.</div>
     </div>
 
     <div class="settings-danger-box">
@@ -3359,25 +3360,37 @@ function refreshSettingsHealth() {
 // POST /tailscale/connect and never stored by this page or the backend;
 // Tailscale's own state keeps the device connected across reboots.
 
+let _tailscaleConnected = false;
+
 function renderTailscaleStatus(data) {
   const st = document.getElementById('tailscale-status');
   const connectRow = document.getElementById('tailscale-connect-row');
+  const connectBtn = document.getElementById('tailscale-connect-btn');
+  const keyInput = document.getElementById('tailscale-authkey-input');
   const disconnectBtn = document.getElementById('tailscale-disconnect-btn');
   if (!st) return;
+  _tailscaleConnected = !!data.connected;
   if (!data.installed) {
     st.textContent = 'not installed';
     st.className = 'ssh-status';
     connectRow.style.display = 'none';
     disconnectBtn.style.display = 'none';
-  } else if (data.connected) {
+    return;
+  }
+  // The key row stays available even while connected, so an already-set-up
+  // device can be re-pointed at a different key/tailnet without a shell.
+  connectRow.style.display = 'flex';
+  connectBtn.textContent = data.connected ? 'RECONNECT' : 'CONNECT';
+  keyInput.placeholder = data.connected ? 'new auth key to switch tailnet…' : 'tskey-auth-…';
+  if (data.connected) {
     st.textContent = 'connected' + (data.ip ? ' · ' + data.ip : '');
     st.className = 'ssh-status ok';
-    connectRow.style.display = 'none';
     disconnectBtn.style.display = '';
   } else {
-    st.textContent = 'not connected';
+    st.textContent = data.state === 'NeedsLogin' ? 'needs login'
+                   : data.state === 'Stopped'    ? 'disconnected'
+                   : 'not connected';
     st.className = 'ssh-status';
-    connectRow.style.display = 'flex';
     disconnectBtn.style.display = 'none';
   }
 }
@@ -3396,6 +3409,9 @@ async function connectTailscale() {
   const input = document.getElementById('tailscale-authkey-input');
   const key = input.value.trim();
   if (!key) { toast('Enter an auth key first', 'err'); return; }
+  if (_tailscaleConnected && !confirm(
+      'Re-authenticate this device with the new key?\n\nThis replaces the current Tailscale login '
+      + '(and may briefly drop this page if you are viewing it over Tailscale).')) return;
   try {
     const r = await fetch(apiUrl('/tailscale/connect'), {
       method: 'POST',

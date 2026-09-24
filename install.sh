@@ -469,13 +469,20 @@ else
     fi
 
     sudo mkdir -p "$RECORDINGS_SD_MOUNTPOINT"
-    # While no card is mounted, make the empty mountpoint immutable so nothing
+    # While no card is mounted, make the EMPTY mountpoint immutable so nothing
     # can be written into it — otherwise a recorder pointed here with the card
     # absent would silently fill the OS drive instead. A mounted card covers
     # the directory, so this doesn't affect it. Best-effort (needs a
-    # filesystem that supports chattr), and skipped if a card is mounted right
-    # now, or the flag would land on the card's own root directory.
-    if ! mountpoint -q "$RECORDINGS_SD_MOUNTPOINT"; then
+    # filesystem that supports chattr). Skipped if a card is mounted right now
+    # (the flag would land on the card's own root directory) and if the
+    # directory already has content: that means recordings have already been
+    # written into it with no card mounted (and may still be in use), and
+    # locking it would break them — leave that for the user to resolve.
+    if mountpoint -q "$RECORDINGS_SD_MOUNTPOINT"; then
+        :
+    elif [ -n "$(sudo ls -A "$RECORDINGS_SD_MOUNTPOINT")" ]; then
+        echo "[WARN] $RECORDINGS_SD_MOUNTPOINT already contains files on the OS drive (recordings written while no card was mounted?) — NOT locking it. A card mounted there will hide them; move them first if you want them on the card."
+    else
         sudo chattr +i "$RECORDINGS_SD_MOUNTPOINT" 2> /dev/null \
             || echo "[INFO] could not mark $RECORDINGS_SD_MOUNTPOINT immutable (filesystem doesn't support it) — skipping"
     fi

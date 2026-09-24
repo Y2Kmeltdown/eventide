@@ -18,10 +18,10 @@ dev="/dev/$name"
 
 log() { echo "[eventide-sd] $*"; }
 
-[ -b "$dev" ] || { log "$dev is not a block device"; exit 1; }
-
 case "$action" in
 mount)
+    [ -b "$dev" ] || { log "$dev is not a block device"; exit 1; }
+
     # Never take over the disk the OS is running from: on a board that boots
     # from its SD slot, that card is an SD card too and matches the udev rule.
     parent=$(lsblk -no PKNAME "$dev" 2>/dev/null | head -n1)
@@ -37,7 +37,12 @@ mount)
         exit 0
     fi
 
-    fstype=$(blkid -o value -s TYPE "$dev" 2>/dev/null)
+    # Prefer the type udev recorded when it probed the device on insertion —
+    # that's what the rule matched on. A second, independent blkid probe can
+    # fail on a marginal card even though udev's first one succeeded, so it's
+    # only the fallback.
+    fstype=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_FS_TYPE=//p')
+    [ -n "$fstype" ] || fstype=$(blkid -o value -s TYPE "$dev" 2>/dev/null)
     if [ -z "$fstype" ]; then
         log "no recognisable filesystem on $dev — not mounting it"
         exit 0
@@ -63,6 +68,9 @@ mount)
     ;;
 
 umount)
+    # No block-device check here: this runs when the card is being removed,
+    # by which point /dev/$name is usually already gone — and the stale mount
+    # it left behind is exactly what has to be cleaned up.
     # Only unmount our own card — never something else that's since been
     # mounted at the same mountpoint.
     [ "$(findmnt -n -o SOURCE "$MOUNTPOINT" 2>/dev/null)" = "$dev" ] || exit 0

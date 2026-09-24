@@ -46,24 +46,21 @@ directory can also be overridden with a positional argument
 (`./install.sh /path/to/dir`), and can be changed later at any time from the
 dashboard's SETTINGS tab.
 
+**SD cards auto-mount** (on by default; `AUTOMOUNT_SD=0` skips it). Any SD
+card inserted is mounted at `/media/eventide` (override with
+`RECORDINGS_SD_MOUNTPOINT`) and unmounted when it's removed. Cards are
+recognised by their kernel `mmc` type — not by label or device name — so no
+formatting or labeling is needed first, and USB storage (including USB
+SD-card readers) is deliberately never matched. It's built for a single card
+slot used for external storage: a second card is left alone, and a card on
+the disk the OS boots from is never mounted. It only sets up the mount — you
+still need to point the dashboard's SETTINGS tab at the mountpoint to
+actually record there. While no card is mounted the empty mountpoint is made
+immutable, so a recorder pointed at it can't silently fill the OS drive.
+
 A few extra install steps are optional and off by default, controlled by
 environment variables set before running the script:
 
-- **Recordings directory / SD card** — pass a directory as the first
-  argument, or set `RECORDINGS_SD_LABEL` to have `install.sh` set up a
-  dedicated recordings SD card instead, mounted by filesystem label (not
-  `/dev/mmcblkN`, which isn't stable across reboots or reader swaps). Format
-  and label the card yourself first (`sudo mkfs.ext4 -L mylabel /dev/...`),
-  then run:
-
-  ```bash
-  RECORDINGS_SD_LABEL=mylabel ./install.sh
-  ```
-
-  This writes a `nofail` systemd `.mount` unit so a missing/removed card
-  never blocks boot. It only sets up the mount — you still need to point the
-  dashboard's SETTINGS tab at the mountpoint (`/media/eventide` by default,
-  override with `RECORDINGS_SD_MOUNTPOINT`) to actually record there.
 - **Touchscreen kiosk display** — set `SETUP_KIOSK_DISPLAY=1` to configure
   the device to boot straight into a full-screen Chromium kiosk (either the
   full dashboard or the touchscreen-optimised `/kiosk` UI) instead of a login

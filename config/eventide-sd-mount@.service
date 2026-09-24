@@ -1,0 +1,14 @@
+[Unit]
+Description=Mount SD card %I at the Eventide recordings mountpoint
+# Tied to the device: when the card is removed the .device unit goes away, this
+# service stops, and ExecStop unmounts.
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Filled in by install.sh (RECORDINGS_SD_MOUNTPOINT).
+Environment=EVENTIDE_SD_MOUNTPOINT=MOUNTPOINT_PLACEHOLDER
+ExecStart=/usr/local/sbin/eventide-sd-mount mount %I
+ExecStop=/usr/local/sbin/eventide-sd-mount umount %I

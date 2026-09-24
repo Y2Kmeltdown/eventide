@@ -30,13 +30,16 @@ EVENTIDE_USER="${SUDO_USER:-$USER}"
 # re-running this installer.
 INSTALL_TIMEZONE="${INSTALL_TIMEZONE:-Australia/Sydney}"
 
-# Optional: auto-mount a dedicated recordings SD card by filesystem label
-# (not by /dev/mmcblkN or /dev/sdN — those aren't guaranteed stable across
-# reboots or reader swaps). Leave RECORDINGS_SD_LABEL empty to skip this
-# entirely — most installs just record to main storage. Format the card
-# once yourself first: sudo mkfs.ext4 -L "$RECORDINGS_SD_LABEL" /dev/<part>
-# then set the label below and re-run (or run just this installer again).
-RECORDINGS_SD_LABEL="${RECORDINGS_SD_LABEL:-}"
+# SD card auto-mount: any SD card inserted is mounted at
+# RECORDINGS_SD_MOUNTPOINT (and unmounted when removed). Cards are detected
+# by their kernel "mmc" type, not by label or device number, so no
+# formatting/labeling is needed first — and USB storage is deliberately never
+# matched. Assumes ONE card slot in use for external storage (a second card
+# is left alone), and never touches the disk the OS boots from. Set
+# AUTOMOUNT_SD=0 to skip this entirely. Doesn't change where recordings go:
+# set the mountpoint as the Recordings directory in the dashboard SETTINGS
+# tab to actually record to the card.
+AUTOMOUNT_SD="${AUTOMOUNT_SD:-1}"
 RECORDINGS_SD_MOUNTPOINT="${RECORDINGS_SD_MOUNTPOINT:-/media/eventide}"
 
 # Optional: set up a local touchscreen kiosk (config/setup-display.sh) as
@@ -449,37 +452,52 @@ else
 fi
 sudo systemctl enable --now tailscaled
 
-## RECORDINGS SD CARD (optional, generic — not an OS-specific hook; the
-## same labeled-mount approach works identically on any board)
-step "Recordings SD card auto-mount"
-if [ -z "$RECORDINGS_SD_LABEL" ]; then
-    echo "[INFO] RECORDINGS_SD_LABEL not set — skipping SD card auto-mount setup"
+## SD CARD AUTO-MOUNT (generic — not an OS-specific hook; udev/systemd work
+## identically on any board). A udev rule selects SD cards by their kernel
+## "mmc" type and starts a per-partition service that mounts/unmounts them —
+## see config/99-eventide-sd.rules and config/eventide-sd-mount.sh.
+step "SD card auto-mount"
+if [ "$AUTOMOUNT_SD" = "0" ]; then
+    echo "[INFO] AUTOMOUNT_SD=0 — skipping SD card auto-mount setup"
 else
-    # Never format automatically — the card may already hold data from a
-    # previous use. Require it to already exist and be labeled.
-    if ! sudo blkid -L "$RECORDINGS_SD_LABEL" > /dev/null 2>&1; then
-        fail "no filesystem labeled '$RECORDINGS_SD_LABEL' found. Format the card first, e.g.: sudo mkfs.ext4 -L $RECORDINGS_SD_LABEL /dev/<the card's partition> — then re-run this installer."
+    # Older installs mounted a card by filesystem label via a .mount unit at
+    # this same mountpoint; that would fight the udev-driven mount below.
+    if [ -e /etc/systemd/system/media-eventide.mount ]; then
+        echo "[INFO] removing the old label-based media-eventide.mount (replaced by SD-type detection)"
+        sudo systemctl disable --now media-eventide.mount 2> /dev/null || true
+        sudo rm -f /etc/systemd/system/media-eventide.mount
     fi
-    sudo tee "/etc/systemd/system/media-eventide.mount" > /dev/null << EOF
-[Unit]
-Description=Eventide recordings SD card
 
-[Mount]
-What=LABEL=$RECORDINGS_SD_LABEL
-Where=$RECORDINGS_SD_MOUNTPOINT
-Options=defaults,nofail,x-systemd.device-timeout=10
+    sudo mkdir -p "$RECORDINGS_SD_MOUNTPOINT"
+    # While no card is mounted, make the empty mountpoint immutable so nothing
+    # can be written into it — otherwise a recorder pointed here with the card
+    # absent would silently fill the OS drive instead. A mounted card covers
+    # the directory, so this doesn't affect it. Best-effort (needs a
+    # filesystem that supports chattr), and skipped if a card is mounted right
+    # now, or the flag would land on the card's own root directory.
+    if ! mountpoint -q "$RECORDINGS_SD_MOUNTPOINT"; then
+        sudo chattr +i "$RECORDINGS_SD_MOUNTPOINT" 2> /dev/null \
+            || echo "[INFO] could not mark $RECORDINGS_SD_MOUNTPOINT immutable (filesystem doesn't support it) — skipping"
+    fi
 
-[Install]
-WantedBy=multi-user.target
-EOF
+    # Helper goes in root-owned /usr/local/sbin (not the eventide-user-owned
+    # /usr/local/eventide tree) since a root service runs it.
+    check_file /usr/local/eventide/config/eventide-sd-mount.sh
+    sudo install -m 0755 -o root -g root /usr/local/eventide/config/eventide-sd-mount.sh /usr/local/sbin/eventide-sd-mount
+    sudo sed "s|MOUNTPOINT_PLACEHOLDER|$RECORDINGS_SD_MOUNTPOINT|" /usr/local/eventide/config/eventide-sd-mount@.service \
+        | sudo tee /etc/systemd/system/eventide-sd-mount@.service > /dev/null
+    sudo chmod 644 /etc/systemd/system/eventide-sd-mount@.service
+    sudo install -m 0644 -o root -g root /usr/local/eventide/config/99-eventide-sd.rules /etc/udev/rules.d/99-eventide-sd.rules
     sudo systemctl daemon-reload
-    sudo systemctl enable media-eventide.mount
-    # Best-effort: nofail already means boot/install must not block on the
-    # card being present, so a failure here is a warning, not a fail().
-    if sudo systemctl start media-eventide.mount; then
+    sudo udevadm control --reload
+    # Replay "add" for block devices so a card that's already inserted is
+    # picked up now, not only after the next insertion/boot.
+    sudo udevadm trigger --action=add --subsystem-match=block
+    sudo udevadm settle --timeout=10 || true
+    if mountpoint -q "$RECORDINGS_SD_MOUNTPOINT"; then
         echo "[OK] SD card mounted at $RECORDINGS_SD_MOUNTPOINT"
     else
-        echo "[WARN] media-eventide.mount enabled but did not mount now — check the card is inserted; it will retry on next boot/access"
+        echo "[OK] SD auto-mount installed — no card mounted right now; insert one and it will appear at $RECORDINGS_SD_MOUNTPOINT"
     fi
 fi
 
@@ -587,8 +605,8 @@ echo "Detected OS: $OS"
 echo "Base config: /etc/supervisor/conf.d/00-eventide-base.conf"
 echo "To view running processes visit http://$HOSTNAME.local or run: supervisorctl status"
 echo "Install modules (cameras, gimbal, ...) from the dashboard MODULES tab — see docs/MODULES.md."
-if [ -n "$RECORDINGS_SD_LABEL" ]; then
-    echo "SD card mounted at $RECORDINGS_SD_MOUNTPOINT — set this as the Recordings directory in the dashboard SETTINGS tab to actually use it."
+if [ "$AUTOMOUNT_SD" != "0" ]; then
+    echo "SD cards auto-mount at $RECORDINGS_SD_MOUNTPOINT (SD only — USB storage is ignored) — set this as the Recordings directory in the dashboard SETTINGS tab to actually use it."
 fi
 if [ -n "$SETUP_KIOSK_DISPLAY" ]; then
     echo "Touchscreen kiosk configured — will boot straight into it after this reboot. Re-run config/setup-display.sh any time to adjust display/touch settings."

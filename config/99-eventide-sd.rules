@@ -1,0 +1,11 @@
+# Auto-mount SD cards (and only SD cards) at the Eventide recordings mountpoint.
+#
+# The card is identified by how it attaches to the kernel, not by a label or
+# device number: it sits under the "mmc" subsystem and the card device's sysfs
+# `type` attribute reads "SD" (eMMC reads "MMC"). USB storage — including a USB
+# SD-card reader — is a different subsystem and never matches.
+#
+# Names 99-* so it sorts after 60-persistent-storage.rules, which is what sets
+# ID_FS_USAGE. eventide-sd-mount@.service does the mount and unmounts again when
+# the device disappears; see config/eventide-sd-mount.sh.
+ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]*", SUBSYSTEMS=="mmc", ATTRS{type}=="SD", ENV{ID_FS_USAGE}=="filesystem", TAG+="systemd", ENV{SYSTEMD_WANTS}+="eventide-sd-mount@%k.service"

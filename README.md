@@ -91,6 +91,15 @@ environment variables set before running the script:
   (`dtoverlay=dwc2,dr_mode=host`), alongside its normal role as power input —
   the two coexist since power negotiation goes through a separate PMIC, not
   the dwc2 data role. Off by default.
+- **SD slot speed limit (Raspberry Pi 5 only)** — set `SD_DISABLE_UHS=1` if the
+  SD card sits behind an extension ribbon (or any long/poor SD path) that
+  can't carry UHS-I reliably. The symptoms are I/O errors at the same
+  sectors, sequential reads of only a few MB/s, and a card that won't mount.
+  This installs `config/eventide-sd-no-uhs.dts` as a device-tree overlay
+  (`dtoverlay=eventide-sd-no-uhs`) that stops the card switching to 1.8 V
+  signalling, so it runs 3.3 V High-Speed (50 MHz, roughly 20 MB/s) instead of
+  SDR104. It caps the slot's speed, so leave it off if the card is directly in
+  the Pi's slot. Takes effect after the install's final reboot. Off by default.
 
 ## The modular control panel
 

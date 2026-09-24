@@ -1,0 +1,28 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Raspberry Pi 5: run the SD slot in 3.3 V High-Speed mode (50 MHz, ~20 MB/s)
+ * instead of UHS-I (SDR104, 200 MHz, 1.8 V).
+ *
+ * Needed when the card sits behind an SD extension ribbon that can't carry
+ * UHS-I reliably: the symptoms are I/O errors at the same sectors, sequential
+ * reads of a few MB/s (constant retries), the bus flapping between SDR104 and
+ * legacy timing, and a card that won't mount. `no-1-8-v` stops the card ever
+ * switching to 1.8 V signalling, which removes every UHS mode.
+ *
+ * (max-frequency does NOT work as a milder cap here: sdhci-brcmstb ignores it.)
+ *
+ * install.sh compiles this to eventide-sd-no-uhs.dtbo when SD_DISABLE_UHS is
+ * set; `sdio1` is the Pi 5's SD controller (mmc@fff000) in the base tree.
+ */
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&sdio1>;
+		__overlay__ {
+			no-1-8-v;
+		};
+	};
+};

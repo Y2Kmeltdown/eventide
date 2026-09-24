@@ -63,6 +63,15 @@ SETUP_KIOSK_DISPLAY="${SETUP_KIOSK_DISPLAY:-}"
 # to leave set on an older Pi, but it won't do anything there either).
 ENABLE_USBC_HOST="${ENABLE_USBC_HOST:-}"
 
+# Optional (Raspberry Pi 5 only): run the SD slot at 3.3 V High-Speed (50 MHz,
+# ~20 MB/s) instead of UHS-I. Set this when the SD card sits behind an
+# extension ribbon (or other long/poor SD path) that can't carry UHS-I
+# (SDR104, 200 MHz) reliably — symptoms are read errors, a card that won't
+# mount, and sequential reads of only a few MB/s. Off by default: it caps the
+# slot's speed, so leave it unset if your card is directly in the Pi's slot.
+# Takes effect after the reboot at the end of this install.
+SD_DISABLE_UHS="${SD_DISABLE_UHS:-}"
+
 step() { echo; echo "==> $*"; }
 fail() { echo; echo "[FAIL] $*" >&2; echo "[FAIL] full log: $LOG_FILE" >&2; exit 1; }
 trap 'fail "installation aborted at line $LINENO (command: $BASH_COMMAND)"' ERR
@@ -208,6 +217,24 @@ os_configure_raspbian() {
         echo "dtoverlay=dwc2,dr_mode=host" | sudo tee -a "$boot_config" > /dev/null
     else
         echo "[INFO] ENABLE_USBC_HOST not set — USB-C port stays power-input-only"
+    fi
+
+    if [ -n "$SD_DISABLE_UHS" ]; then
+        if ! tr -d '\0' < "$DEVICE_TREE_MODEL" | grep -q "Raspberry Pi 5"; then
+            echo "[WARN] SD_DISABLE_UHS is only supported on the Raspberry Pi 5 (the overlay targets its SD controller) — skipping"
+        else
+            echo "[INFO] limiting the SD slot to 3.3 V High-Speed (dtoverlay=eventide-sd-no-uhs)"
+            command -v dtc > /dev/null || sudo apt-get install -y device-tree-compiler
+            check_file config/eventide-sd-no-uhs.dts
+            dtc -@ -I dts -O dtb -o /tmp/eventide-sd-no-uhs.dtbo config/eventide-sd-no-uhs.dts
+            sudo install -m 0644 -o root -g root /tmp/eventide-sd-no-uhs.dtbo "$(dirname "$boot_config")/overlays/eventide-sd-no-uhs.dtbo"
+            rm -f /tmp/eventide-sd-no-uhs.dtbo
+            if ! grep -q '^dtoverlay=eventide-sd-no-uhs' "$boot_config"; then
+                echo "dtoverlay=eventide-sd-no-uhs" | sudo tee -a "$boot_config" > /dev/null
+            fi
+        fi
+    else
+        echo "[INFO] SD_DISABLE_UHS not set — SD slot keeps UHS-I speeds"
     fi
 
     # Pi hardware watchdog (used by watchdog.service).

@@ -204,6 +204,12 @@ EOF
 fi
 cat >> "$USER_HOME/.xinitrc" << EOF
 openbox-session &
+# Clear any stale profile lock first. One left by an unclean shutdown normally
+# clears itself, but not once the hostname has changed since (renaming it is
+# offered in the dashboard SETTINGS tab): Chromium then assumes the profile is
+# in use on another computer and exits, which takes the whole X session with
+# it. This session only ever runs one Chromium, so nothing else can hold it.
+rm -f "\$HOME"/.config/chromium/Singleton* "\$HOME"/snap/chromium/common/chromium/Singleton*
 $CHROMIUM_BIN --noerrdialogs --disable-infobars --kiosk --no-first-run \\
   --force-device-scale-factor=$SCALE_FACTOR \\
   --window-size=$WINDOW_SIZE --window-position=0,0 --start-fullscreen \\

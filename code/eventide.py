@@ -1148,6 +1148,14 @@ def api_watchdog_config_get():
 # The kiosk supplies each module's endpoint (it already discovers them from
 # the manifests), which is stored with the values; the module's port is still
 # resolved from the registry at apply time.
+#
+# PROVISIONAL — this is a stopgap, not the intended design, and is due to be
+# rewritten. Known gaps: only the kiosk writes the profile (dashboard changes
+# aren't saved), the saved values silently win over a module's startup args at
+# every start, and there's no way to view or clear it in the UI. The likely
+# direction is for each module to declare which of its settings persist, and
+# their defaults, in its eventide-module.json, with the platform owning the
+# storage and re-apply. Don't build further on this shape until that's decided.
 
 _CAM_ID_RE = re.compile(r"^[a-z0-9_]{1,30}$")
 _CAM_KEY_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
@@ -1258,15 +1266,15 @@ def camera_profile_loop() -> None:
                         pending.pop(cam, None)
                 if pending.get(cam):
                     if _camera_profile_apply(entry):
-                        print(f"[camera-profile] restored {cam}: {', '.join(entry['values'])}")
+                        print(f"[camera-profile] restored {cam}: {', '.join(entry['values'])}", flush=True)
                         pending.pop(cam)
                     else:
                         pending[cam] -= 1
                         if pending[cam] <= 0:
-                            print(f"[camera-profile] gave up restoring {cam} (module kept rejecting the settings)")
+                            print(f"[camera-profile] gave up restoring {cam} (module kept rejecting the settings)", flush=True)
                             pending.pop(cam)
             except Exception as exc:  # one bad entry must not stop the rest, or the thread
-                print(f"[camera-profile] error handling {cam}: {exc}")
+                print(f"[camera-profile] error handling {cam}: {exc}", flush=True)
 
 
 # ── Tailscale ─────────────────────────────────────────────────────────────────

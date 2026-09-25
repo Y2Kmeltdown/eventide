@@ -1122,6 +1122,9 @@ function saveKioskPrefsDebounced(updates) {
 // endpoint (module/socket/get/put/method) is sent along since this page is
 // what already knows it. Batched per camera: the steppers fire every 120ms
 // while held, and only the final value matters.
+// PROVISIONAL: a stopgap slated for a rewrite (likely persistent settings
+// declared per module in eventide-module.json) — see the "Camera profile"
+// note in eventide.py before extending this.
 const _cameraProfilePending = {};   // camId -> { key: value } not yet sent
 let _cameraProfileTimer = null;
 

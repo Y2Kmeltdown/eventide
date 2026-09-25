@@ -231,6 +231,10 @@ DEFAULT_SETTINGS = {
     # reset/reflash and are the same regardless of which screen is attached.
     "kiosk_main_cam": "evk",
     "kiosk_duration_secs": 30,
+    # Last-set camera/lens settings from the kiosk, re-applied whenever the
+    # module comes up — see "Camera profile" below. Shape:
+    # {cam_id: {"target": {module, socket, get, put, method}, "values": {key: value}}}
+    "camera_profile": {},
 }
 
 _settings: dict = {}
@@ -916,6 +920,10 @@ def api_settings_post():
     # hostname/timezone are OS state, not persisted settings.json values —
     # pulled out of data before the generic merge below (see current_
     # hostname()/current_timezone()) and applied directly via systemd tools.
+    # Only the validated /api/camera-profile route may write this: it holds
+    # endpoints the backend later calls on its own.
+    data.pop("camera_profile", None)
+
     new_hostname = data.pop("hostname", None)
     if new_hostname is not None:
         err = _validate_hostname(new_hostname)
@@ -1127,6 +1135,138 @@ def api_watchdog_config_get():
     resp = {k: _settings.get(k, DEFAULT_SETTINGS[k]) for k in _WATCHDOG_KEYS}
     resp["mcu_reachable"] = _watchdog_mcu_reachable()
     return jsonify(resp)
+
+
+# ── Camera profile ────────────────────────────────────────────────────────────
+# The camera modules (EVK, Basler, motorized lens) keep settings changed at
+# runtime — biases, exposure, zoom, ... — only in memory, so a restart or
+# reboot puts them back to their CLI defaults. The kiosk reports every change
+# here; it's saved in settings.json and camera_profile_loop() re-applies it
+# whenever a module's settings API comes (back) up. That's once per
+# down->up transition, not continuously, so a value changed afterwards from
+# somewhere else (the dashboard, say) isn't fought over until the next restart.
+# The kiosk supplies each module's endpoint (it already discovers them from
+# the manifests), which is stored with the values; the module's port is still
+# resolved from the registry at apply time.
+
+_CAM_ID_RE = re.compile(r"^[a-z0-9_]{1,30}$")
+_CAM_KEY_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
+_CAM_PATH_RE = re.compile(r"^/[\w./-]{0,199}$")
+_CAM_PROFILE_POLL_S = 5
+_CAM_PROFILE_APPLY_TRIES = 12   # a camera can answer its API before it's ready to take settings
+_CAM_PROFILE_DOWN_AFTER = 3     # consecutive failed probes before "down" — a busy module mustn't flap
+
+
+@app.route("/api/camera-profile")
+def api_camera_profile_get():
+    return jsonify((_settings or {}).get("camera_profile") or {})
+
+
+@app.route("/api/camera-profile", methods=["POST"])
+def api_camera_profile_post():
+    global _settings
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "body must be a JSON object"}), 400
+    cam, target, values = data.get("cam"), data.get("target"), data.get("values")
+    if not isinstance(cam, str) or not _CAM_ID_RE.match(cam):
+        return jsonify({"error": "cam must be a short lowercase identifier"}), 400
+    if not isinstance(target, dict):
+        return jsonify({"error": "target must be an object"}), 400
+    module, sock = target.get("module"), target.get("socket")
+    get_path, put_path, method = target.get("get"), target.get("put"), target.get("method")
+    if not (isinstance(module, str) and isinstance(sock, str) and 0 < len(module) <= 100 and 0 < len(sock) <= 100):
+        return jsonify({"error": "target.module and target.socket must be non-empty strings"}), 400
+    if not (isinstance(get_path, str) and _CAM_PATH_RE.match(get_path)
+            and isinstance(put_path, str) and _CAM_PATH_RE.match(put_path)):
+        return jsonify({"error": "target.get and target.put must be plain URL paths"}), 400
+    if method not in ("POST", "PUT", "PATCH"):
+        return jsonify({"error": "target.method must be POST, PUT or PATCH"}), 400
+    if _module_tcp_port(module, sock) is None:
+        return jsonify({"error": f"no such module tcp socket: {module}/{sock}"}), 400
+    if not isinstance(values, dict) or not values or len(values) > 30:
+        return jsonify({"error": "values must be a non-empty object"}), 400
+    for k, v in values.items():
+        ok_type = isinstance(v, (bool, str)) and (not isinstance(v, str) or len(v) <= 64) \
+            or (isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf"))
+        if not _CAM_KEY_RE.match(str(k)) or not ok_type:
+            return jsonify({"error": f"invalid value for {k!r}"}), 400
+
+    with _settings_lock:
+        _settings = load_settings()
+        profile = dict(_settings.get("camera_profile") or {})
+        if cam not in profile and len(profile) >= 20:
+            return jsonify({"error": "too many cameras in the profile"}), 400
+        merged = dict((profile.get(cam) or {}).get("values") or {})
+        merged.update(values)
+        profile[cam] = {
+            "target": {"module": module, "socket": sock, "get": get_path, "put": put_path, "method": method},
+            "values": merged,
+        }
+        _settings["camera_profile"] = profile
+        save_settings(_settings)
+        return jsonify(profile[cam])
+
+
+def _camera_profile_apply(entry: dict) -> bool:
+    """PUT/POST each saved value to its module, one key per request (the same
+    shape the kiosk itself sends). True only if every one was accepted."""
+    t = entry["target"]
+    port = _module_tcp_port(t["module"], t["socket"])
+    if port is None:
+        return False
+    url = f"http://127.0.0.1:{port}{t['put']}"
+    # "mode" first: a lens's zoom/focus only mean something once its focus mode is set.
+    ok = True
+    for key in sorted(entry["values"], key=lambda k: (k != "mode", k)):
+        try:
+            r = _http.request(t["method"], url, json={key: entry["values"][key]}, timeout=5)
+            if not r.ok:
+                ok = False
+        except _http.exceptions.RequestException:
+            ok = False
+    return ok
+
+
+def camera_profile_loop() -> None:
+    reachable: dict = {}   # cam -> settings API answered on the last check that counted
+    fails: dict = {}       # cam -> consecutive failed probes
+    pending: dict = {}     # cam -> apply attempts left
+    while True:
+        time.sleep(_CAM_PROFILE_POLL_S)
+        # Snapshot: the API handlers replace the profile from other threads.
+        profile = json.loads(json.dumps((_settings or {}).get("camera_profile") or {}))
+        for cam, entry in profile.items():
+            try:
+                t = entry["target"]
+                port = _module_tcp_port(t["module"], t["socket"])
+                up = False
+                if port is not None:
+                    try:
+                        up = _http.get(f"http://127.0.0.1:{port}{t['get']}", timeout=3).ok
+                    except _http.exceptions.RequestException:
+                        up = False
+                if up:
+                    fails[cam] = 0
+                    if not reachable.get(cam):
+                        reachable[cam] = True
+                        pending[cam] = _CAM_PROFILE_APPLY_TRIES
+                else:
+                    fails[cam] = fails.get(cam, 0) + 1
+                    if fails[cam] >= _CAM_PROFILE_DOWN_AFTER:
+                        reachable[cam] = False
+                        pending.pop(cam, None)
+                if pending.get(cam):
+                    if _camera_profile_apply(entry):
+                        print(f"[camera-profile] restored {cam}: {', '.join(entry['values'])}")
+                        pending.pop(cam)
+                    else:
+                        pending[cam] -= 1
+                        if pending[cam] <= 0:
+                            print(f"[camera-profile] gave up restoring {cam} (module kept rejecting the settings)")
+                            pending.pop(cam)
+            except Exception as exc:  # one bad entry must not stop the rest, or the thread
+                print(f"[camera-profile] error handling {cam}: {exc}")
 
 
 # ── Tailscale ─────────────────────────────────────────────────────────────────
@@ -3506,6 +3646,7 @@ def main():
         print("[backend] Auto-started live viewfinder.")
 
     threading.Thread(target=retention_sweep_loop, daemon=True).start()
+    threading.Thread(target=camera_profile_loop, daemon=True).start()
 
     app.run(host=args.host, port=args.port, debug=False)
 

@@ -593,6 +593,7 @@ async function setCameraField(f, rawValue) {
       body: JSON.stringify({ [f.key]: v }),
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+    saveCameraProfile(f.cam, { [f.key]: v });
   } catch (e) { toast(`${f.label} failed: ${e.message}`); }
 }
 
@@ -609,6 +610,7 @@ async function postLensControl(patch, label) {
       body: JSON.stringify(patch),
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.statusText); }
+    saveCameraProfile('lens', patch);
   } catch (e) { toast(`${label} failed: ${e.message}`); }
 }
 
@@ -1110,6 +1112,43 @@ let _saveKioskPrefsTimer = null;
 function saveKioskPrefsDebounced(updates) {
   clearTimeout(_saveKioskPrefsTimer);
   _saveKioskPrefsTimer = setTimeout(() => saveKioskPrefs(updates), 500);
+}
+
+// ── Camera settings persistence ──────────────────────────────────────────────
+// The camera/lens modules only hold what's sent to them in memory, so after a
+// reboot they're back at their defaults. Every accepted change is also
+// reported to the backend, which saves it and re-applies it whenever that
+// module comes up again (see camera_profile_loop in eventide.py). The
+// endpoint (module/socket/get/put/method) is sent along since this page is
+// what already knows it. Batched per camera: the steppers fire every 120ms
+// while held, and only the final value matters.
+const _cameraProfilePending = {};   // camId -> { key: value } not yet sent
+let _cameraProfileTimer = null;
+
+function saveCameraProfile(camId, patch) {
+  if (!camInfo[camId]?.settingsForm) return;
+  _cameraProfilePending[camId] = { ...(_cameraProfilePending[camId] || {}), ...patch };
+  clearTimeout(_cameraProfileTimer);
+  _cameraProfileTimer = setTimeout(flushCameraProfile, 800);
+}
+
+function flushCameraProfile() {
+  for (const camId of Object.keys(_cameraProfilePending)) {
+    const info = camInfo[camId];
+    const values = _cameraProfilePending[camId];
+    delete _cameraProfilePending[camId];
+    if (!info?.settingsForm) continue;
+    const sf = info.settingsForm;
+    fetch('/api/camera-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cam: camId,
+        target: { module: info.mod, socket: sf.socket, get: sf.get, put: sf.put, method: sf.method },
+        values,
+      }),
+    }).catch(() => { /* best-effort — this change just won't survive a reboot */ });
+  }
 }
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────

@@ -42,10 +42,39 @@ _tile_cache: dict[tuple, bytes] = {}
 _tile_lock  = threading.Lock()
 
 OSM_BASE    = "https://tile.openstreetmap.org"
+# OSM tile usage policy: identify the app with a real User-Agent (with a contact
+# URL/email) and do NOT spoof the Referer.  Override the contact via env.
+OSM_CONTACT = os.environ.get("EVENTIDE_TILE_CONTACT",
+                             "https://github.com/Y2Kmeltdown/eventide")
 OSM_HEADERS = {
-    "User-Agent": "Eventide-Frontend-Server/1.0",
-    "Referer":    "https://www.openstreetmap.org/",
+    "User-Agent": f"Eventide-Frontend-Server/1.0 ({OSM_CONTACT})",
 }
+
+# Disk-backed tile cache so tiles survive restarts (avoids refetch bursts).
+TILE_DIR = Path(os.environ.get("EVENTIDE_TILE_CACHE",
+                               Path.home() / ".cache" / "eventide" / "tiles"))
+
+
+def _tile_disk_path(z, x, y) -> Path:
+    return TILE_DIR / str(z) / str(x) / f"{y}.png"
+
+
+def _tile_disk_read(z, x, y):
+    try:
+        return _tile_disk_path(z, x, y).read_bytes()
+    except OSError:
+        return None
+
+
+def _tile_disk_write(z, x, y, data: bytes) -> None:
+    try:
+        p = _tile_disk_path(z, x, y)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(p)
+    except OSError:
+        pass
 
 # ── Static HTML ───────────────────────────────────────────────────────────────
 
@@ -77,6 +106,13 @@ def tile_proxy(z, x, y):
     key = (z, x, y)
     with _tile_lock:
         cached = _tile_cache.get(key)
+    if not cached:
+        cached = _tile_disk_read(z, x, y)
+        if cached:
+            with _tile_lock:
+                if len(_tile_cache) >= 4000:
+                    del _tile_cache[next(iter(_tile_cache))]
+                _tile_cache[key] = cached
 
     if cached:
         resp = make_response(cached)
@@ -100,6 +136,7 @@ def tile_proxy(z, x, y):
             oldest = next(iter(_tile_cache))
             del _tile_cache[oldest]
         _tile_cache[key] = data
+    _tile_disk_write(z, x, y, data)
 
     resp = make_response(data)
     resp.headers["Content-Type"]  = upstream.headers.get("Content-Type", "image/png")

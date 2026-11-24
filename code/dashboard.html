@@ -2399,6 +2399,11 @@ const WIDGET_RENDERERS = {
       maxZoom: 19,
     }).addTo(map);
     setTimeout(() => map.invalidateSize(), 50);
+    // Leaflet caches the container size; keep it in sync with any layout change
+    // (IP change / refresh rebuilds widgets before layout has settled).
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => map.invalidateSize()).observe(bodyEl.querySelector('.map-host'));
+    }
 
     const devIcon = L.divIcon({
       className: '',
@@ -2421,7 +2426,8 @@ const WIDGET_RENDERERS = {
     // pollTrack below), so a reloaded map always starts on the platform.
     bodyEl.querySelector('.map-recenter').addEventListener('click', () => {
       if (!hasFix) { toast('No platform position yet', 'err'); return; }
-      map.panTo(device.getLatLng());
+      map.invalidateSize();
+      map.setView(device.getLatLng(), map.getZoom());
     });
 
     map.on('click', e => {
@@ -2448,7 +2454,7 @@ const WIDGET_RENDERERS = {
           if (typeof lat !== 'number' || typeof lon !== 'number') return;
           device.setLatLng([lat, lon]);
           device.setTooltipContent(`DEVICE\n${lat.toFixed(6)}, ${lon.toFixed(6)}`);
-          if (!hasFix) { hasFix = true; map.setView([lat, lon], Math.max(map.getZoom(), 15)); }
+          if (!hasFix) { hasFix = true; map.invalidateSize(); map.setView([lat, lon], Math.max(map.getZoom(), 15)); }
           const el = device.getElement();
           if (el) {
             let hdg = t.heading ? dotPath(d, t.heading) : null;

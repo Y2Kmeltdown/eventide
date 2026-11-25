@@ -317,8 +317,13 @@ body.gs-busy .ui-tile-body, body.gs-busy .ui-widget-body{pointer-events:none !im
 .rc-joystick-grid{display:grid;grid-template-columns:26px 110px 26px;grid-template-rows:26px 110px 26px;gap:4px;align-items:center;justify-items:center}
 .rc-joystick-grid .rc-joystick{grid-column:2;grid-row:2}
 .rc-arrow{width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;background:none;border:1px solid var(--border2);color:var(--text-dim);border-radius:var(--r);cursor:pointer;transition:all .12s}
-.rc-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.rc-toggle-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;margin-bottom:8px}
 .rc-toggle-item{display:flex;align-items:center;gap:6px}
+.rc-seg{display:inline-flex;border:1px solid var(--border2);border-radius:var(--r);overflow:hidden}
+.rc-seg button{padding:3px 6px;font-family:var(--mono);font-size:7px;letter-spacing:.1em;background:none;border:none;border-left:1px solid var(--border2);color:var(--text-dim);cursor:pointer;transition:all .12s}
+.rc-seg button:first-child{border-left:none}
+.rc-seg button:hover{color:var(--amber)}
+.rc-seg button.on{background:var(--amber-dim);color:var(--amber)}
 .rc-arrow:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-dim)}
 .rc-arrow:active{background:var(--amber);color:var(--bg)}
 .rc-arrow.up{grid-column:2;grid-row:1}
@@ -2178,11 +2183,22 @@ const WIDGET_RENDERERS = {
     const fx = comp.fields?.x || 'pan', fy = comp.fields?.y || 'tilt';
     const ff = comp.fields?.frame || 'frame';
     const px = comp.paths?.x || 'pan_out', py = comp.paths?.y || 'tilt_out';
+    // Optional multi-state frame selector. Each entry is {value, label?,
+    // offset?}; `value` is sent as the frame field. An `offset` frame treats
+    // pan/tilt as offsets from the module's current output, seeded from
+    // paths.offset_x / offset_y. Without `frames` the legacy boolean FRAME
+    // toggle is used.
+    const frames = Array.isArray(comp.frames) && comp.frames.length ? comp.frames : null;
+    const pox = comp.paths?.offset_x, poy = comp.paths?.offset_y, pf = comp.paths?.frame;
+    const frameCtl = frames
+      ? `<div class="rc-seg" data-j="frameseg">${frames.map((f, i) =>
+          `<button type="button" data-i="${i}">${escHtml(f.label || f.value)}</button>`).join('')}</div>`
+      : `<label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>`;
     bodyEl.innerHTML = `
       <div class="form-row" style="margin-bottom:2px">
-        <div class="form-col"><label class="form-label">Pan (°)</label>
+        <div class="form-col"><label class="form-label" data-role="xlabel">Pan (°)</label>
           <input class="form-input" type="number" data-j="x" step="0.1" min="-180" max="180"></div>
-        <div class="form-col"><label class="form-label">Tilt (°)</label>
+        <div class="form-col"><label class="form-label" data-role="ylabel">Tilt (°)</label>
           <input class="form-input" type="number" data-j="y" step="0.1" min="-90" max="90"></div>
       </div>
       <div class="rc-joystick-wrap">
@@ -2202,7 +2218,7 @@ const WIDGET_RENDERERS = {
         </div>
         <div class="rc-toggle-item">
           <span class="form-label" style="margin:0">FRAME</span>
-          <label class="toggle-switch amber-toggle"><input type="checkbox" data-j="frame"><div class="toggle-track"></div></label>
+          ${frameCtl}
         </div>
       </div>
       <div class="rc-btn-row">
@@ -2213,12 +2229,53 @@ const WIDGET_RENDERERS = {
     const xEl = bodyEl.querySelector('[data-j="x"]');
     const yEl = bodyEl.querySelector('[data-j="y"]');
     const frameEl = bodyEl.querySelector('[data-j="frame"]');
+    const segEl = bodyEl.querySelector('[data-j="frameseg"]');
+    const xLabel = bodyEl.querySelector('[data-role="xlabel"]');
+    const yLabel = bodyEl.querySelector('[data-role="ylabel"]');
+    const homeBtn = bodyEl.querySelector('[data-j="home"]');
     const axisLockEl = bodyEl.querySelector('[data-j="axislock"]');
     const hintEl = bodyEl.querySelector('[data-role="joystick-hint"]');
     const pad  = bodyEl.querySelector('.rc-joystick');
     const knob = bodyEl.querySelector('.rc-joystick-knob');
     let lastX = 0, lastY = 0, dead = false, dragging = false, maxR = 0, dx = 0, dy = 0, tickTimer = null;
     let axisLock = false, lockedAxis = null; // lockedAxis: 'x' | 'y' | null — set once per drag
+    let frameIdx = 0, frameSeeded = false, lastTelem = null;
+    const isOffset = () => !!(frames && frames[frameIdx].offset);
+    const frameValue = () => frames ? frames[frameIdx].value : frameEl.checked;
+
+    // Pull pan/tilt for the selected frame out of a telemetry snapshot: the
+    // offset paths in an offset frame (0 when unmapped), the output otherwise.
+    function applyTelem(d) {
+      const off = isOffset();
+      const sx = off ? (pox ? dotPath(d, pox) : 0) : dotPath(d, px);
+      const sy = off ? (poy ? dotPath(d, poy) : 0) : dotPath(d, py);
+      if (typeof sx === 'number') { lastX = sx; xEl.value = +sx.toFixed(1); }
+      if (typeof sy === 'number') { lastY = sy; yEl.value = +sy.toFixed(1); }
+    }
+    function renderFrame() {
+      const off = isOffset();
+      if (segEl) segEl.querySelectorAll('button').forEach(b =>
+        b.classList.toggle('on', +b.dataset.i === frameIdx));
+      xLabel.textContent = off ? 'Pan offset (°)' : 'Pan (°)';
+      yLabel.textContent = off ? 'Tilt offset (°)' : 'Tilt (°)';
+      homeBtn.title = off ? 'Zero the offset (back on target)' : 'Return to 0,0 in this frame';
+      updateHint();
+    }
+    // Switching frame only changes what the next command means; nothing is
+    // sent until the operator moves the gimbal. The boxes are re-seeded so
+    // the next nudge is relative to the new frame's baseline, not the old one.
+    function selectFrame(i) {
+      if (i === frameIdx) return;
+      frameIdx = i;
+      if (lastTelem) applyTelem(lastTelem);
+      else if (isOffset()) { lastX = lastY = 0; xEl.value = 0; yEl.value = 0; }
+      renderFrame();
+      seed();   // the cached snapshot may predate the last command — refresh now
+    }
+    if (segEl) segEl.addEventListener('click', e => {
+      const b = e.target.closest('button[data-i]');
+      if (b) { frameSeeded = true; selectFrame(+b.dataset.i); }
+    });
 
     // Gamepad state. Browsers never expose XInput directly — Chrome/Edge/
     // Firefox map Xbox pads onto the standard Gamepad layout, so any XInput
@@ -2229,9 +2286,10 @@ const WIDGET_RENDERERS = {
     let gpIdx = null, gpHot = false, gpAccX = 0, gpAccY = 0, gpT = 0, gpSent = 0, gpRaf = null;
 
     function updateHint() {
-      hintEl.textContent = (axisLock
-        ? '⊕ AXIS LOCK · ONE AXIS PER DRAG ±5°'
-        : '↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°')
+      hintEl.textContent = (isOffset() ? 'OFFSET · ' : '')
+        + (axisLock
+          ? '⊕ AXIS LOCK · ONE AXIS PER DRAG ±5°'
+          : '↔ PAN · ↕ TILT · DRAG OR ARROWS ±5°')
         + (gpIdx !== null ? ' · 🎮 PAD LIVE' : '');
     }
     axisLockEl.addEventListener('change', () => {
@@ -2244,7 +2302,7 @@ const WIDGET_RENDERERS = {
       try {
         const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.put), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [fx]: x, [fy]: y, [ff]: frameEl.checked }),
+          body: JSON.stringify({ [fx]: x, [fy]: y, [ff]: frameValue() }),
         });
         if (r.ok) { lastX = x; lastY = y; }
       } catch { /* module offline */ }
@@ -2261,8 +2319,10 @@ const WIDGET_RENDERERS = {
       const x = parseFloat(xEl.value), y = parseFloat(yEl.value);
       if (Number.isFinite(x) && Number.isFinite(y)) send(x, y);
     });
-    // Home: return pan/tilt to 0,0 and send immediately.
-    bodyEl.querySelector('[data-j="home"]').addEventListener('click', () => {
+    // Home: 0,0 in the selected frame, sent immediately. In a direct frame
+    // that is absolute 0,0 (and the module drops back to RC control); in an
+    // offset frame it zeroes the offset, so targeting/tracking carries on.
+    homeBtn.addEventListener('click', () => {
       xEl.value = 0; yEl.value = 0;
       send(0, 0);
     });
@@ -2370,11 +2430,19 @@ const WIDGET_RENDERERS = {
         const r = await fetch(proxyUrl(comp.mod, comp.copy, comp.socket, comp.telemetry_get));
         if (!r.ok) return;
         const d = await r.json();
-        const sx = dotPath(d, px), sy = dotPath(d, py);
-        if (typeof sx === 'number') { lastX = sx; xEl.value = +sx.toFixed(1); }
-        if (typeof sy === 'number') { lastY = sy; yEl.value = +sy.toFixed(1); }
+        if (dead || dragging) return;
+        lastTelem = d;
+        // Pick up the module's current frame once, so a reload shows the
+        // frame the gimbal is actually in; after that the selector is local.
+        if (frames && !frameSeeded && pf) {
+          frameSeeded = true;
+          const i = frames.findIndex(f => f.value === dotPath(d, pf));
+          if (i >= 0) { frameIdx = i; renderFrame(); }
+        }
+        applyTelem(d);
       } catch { /* module offline */ }
     }
+    renderFrame();
     seed();
     const seedTimer = setInterval(seed, 3000);
     return { destroy() {
@@ -2460,8 +2528,10 @@ const WIDGET_RENDERERS = {
             let hdg = t.heading ? dotPath(d, t.heading) : null;
             hdg = (typeof hdg === 'number' && Number.isFinite(hdg)) ? ((hdg % 360) + 360) % 360 : null;
             let pan = t.gimbal ? dotPath(d, t.gimbal) : null;
-            // vehicle-frame pan is relative to the vehicle nose
-            const vf = t.frame ? Number(dotPath(d, t.frame)) === 1 : false;
+            // vehicle-frame pan is relative to the vehicle nose. track.frame
+            // names a field that is true / 1 / "vehicle" when that applies.
+            const fv = t.frame ? dotPath(d, t.frame) : null;
+            const vf = fv === true || fv === 1 || fv === 'vehicle';
             if (typeof pan === 'number') {
               if (vf && hdg !== null) pan += hdg;
               pan = ((pan % 360) + 360) % 360;

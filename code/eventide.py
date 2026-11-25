@@ -2107,6 +2107,14 @@ def validate_manifest(m) -> list[str]:
                 _check_sock(cid, comp.get("socket"), "socket")
                 if not _is_path(comp.get("put")):
                     errors.append(f"ui '{cid}' needs a 'put' path")
+                frames = comp.get("frames")
+                if frames is not None and (
+                    not isinstance(frames, list)
+                    or not frames
+                    or not all(isinstance(f, dict) and isinstance(f.get("value"), str)
+                               for f in frames)
+                ):
+                    errors.append(f"ui '{cid}' frames must be a non-empty list of {{value, label?, offset?}}")
             elif ctype == "table":
                 _check_sock(cid, comp.get("socket"), "socket")
                 if not _is_path(comp.get("get")):
